@@ -7404,3 +7404,104 @@ CONFIG_QCOM_WCD939X_I2C=n
 CONFIG_ARCH_SUNXI=n
 CONFIG_SUNXI_SRAM=n
 CONFIG_SUNXI_MBUS=n
+
+
+
+#
+# Integration of Proprietary drivers (WIP)
+#
+
+# ============================================================
+# Display Driver Configuration for Pineapple (e3q)
+# ============================================================
+
+# Core DRM MSM Display Driver
+CONFIG_DRM_MSM=y
+
+# Snapdragon Display Engine (SDE)
+CONFIG_DRM_MSM_SDE=y
+
+# Display Synchronization
+CONFIG_SYNC_FILE=y
+
+# DSI (Display Serial Interface)
+CONFIG_DRM_MSM_DSI=y
+
+# DSI Parser
+CONFIG_DSI_PARSER=y
+
+# DisplayPort Support
+CONFIG_DRM_MSM_DP=y
+
+# DisplayPort Multi-Stream Transport (MST)
+CONFIG_DRM_MSM_DP_MST=y
+
+# SDE Writeback Engine
+CONFIG_DRM_SDE_WB=y
+
+# SDE Resource State Coordinator (RSC)
+CONFIG_DRM_SDE_RSC=y
+
+# MSM Register Logging (Debug)
+CONFIG_DRM_MSM_REGISTER_LOGGING=y
+
+# QCOM MDSS PLL Support
+CONFIG_QCOM_MDSS_PLL=y
+
+# HDCP via QSEECOM
+CONFIG_HDCP_QSEECOM=y
+
+# SDE Virtual Machine Support
+CONFIG_DRM_SDE_VM=y
+
+# QTI Hardware Fence
+CONFIG_QTI_HW_FENCE=y
+
+# QCOM Spec Sync
+CONFIG_QCOM_SPEC_SYNC=y
+
+# MSM Multimedia Resource Manager
+CONFIG_MSM_MMRM=y
+
+# External Display Support
+CONFIG_MSM_EXT_DISPLAY=y
+
+# Thermal Management
+CONFIG_THERMAL_OF=y
+
+# SDE Rotator (for image rotation support)
+CONFIG_MSM_SDE_ROTATOR=y
+
+# ============================================================
+# Samsung Display Support (Proprietary)
+# ============================================================
+
+# Enable Samsung Display Support
+CONFIG_DISPLAY_SAMSUNG=y
+
+# Samsung E3 S6E3HAE Panel (AMB681AZ01) - WQHD
+CONFIG_PANEL_E3_S6E3HAE_AMB681AZ01_WQHD=y
+
+# Samsung E3 S6E3HAF Panel (AMB679FN01) - WQHD
+# CONFIG_PANEL_E3_S6E3HAF_AMB679FN01_WQHD
+
+# ============================================================
+# Samsung Display Features
+# ============================================================
+
+# Samsung Debug Display
+# CONFIG_SAMSUNG_DEBUG_DISPLAY=n
+
+# Partial Update Support
+# CONFIG_PARTIAL_UPDATE=n
+
+# CABC (Content Adaptive Backlight Control)
+# CONFIG_CABC_FUNCTION=n
+
+# POC Flash Support
+# CONFIG_SUPPORT_POC_FLASH=n
+
+# Opcode Parser
+# CONFIG_OPCODE_PARSER=n
+
+# end of Integration of Proprietary drivers.

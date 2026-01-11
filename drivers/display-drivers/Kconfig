@@ -1,0 +1,260 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Display Driver Configuration for MSM/Qualcomm
+#
+# Copyright (c) 2021, The Linux Foundation. All rights reserved.
+# Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+
+config DRM_MSM
+	tristate "MSM DRM"
+	depends on DRM
+	select DRM_KMS_HELPER
+	select SYNC_FILE
+	help
+	  Qualcomm MSM DRM driver for display subsystem.
+	  Supports SDE (Snapdragon Display Engine) and various display interfaces.
+
+config DRM_MSM_SDE
+	bool "Snapdragon Display Engine (SDE)"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable Snapdragon Display Engine support for advanced display capabilities.
+
+config DRM_MSM_DSI
+	bool "DSI (Display Serial Interface) support"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable DSI display interface support.
+
+config DSI_PARSER
+	bool "DSI Parser"
+	depends on DRM_MSM_DSI
+	default y
+	help
+	  Enable DSI panel parser support.
+
+config DRM_MSM_DP
+	bool "DisplayPort support"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable DisplayPort interface support.
+
+config DRM_MSM_DP_MST
+	bool "DisplayPort Multi-Stream Transport (MST)"
+	depends on DRM_MSM_DP
+	default y
+	help
+	  Enable DisplayPort MST support for multi-display configurations.
+
+config DRM_MSM_DP_USBPD_LEGACY
+	bool "DisplayPort USB PD (Legacy)"
+	depends on DRM_MSM_DP
+	default n
+	help
+	  Enable legacy USB PD support for DisplayPort.
+
+config DRM_SDE_WB
+	bool "SDE Writeback"
+	depends on DRM_MSM_SDE
+	default y
+	help
+	  Enable SDE writeback engine support.
+
+config DRM_SDE_RSC
+	bool "SDE Resource State Coordinator (RSC)"
+	depends on DRM_MSM_SDE
+	default y
+	help
+	  Enable SDE RSC for power optimization.
+
+config DRM_SDE_VM
+	bool "SDE Virtual Machine support"
+	depends on DRM_MSM_SDE
+	default n
+	help
+	  Enable SDE virtual machine support.
+
+config DRM_MSM_REGISTER_LOGGING
+	bool "MSM DRM Register Logging"
+	depends on DRM_MSM
+	default n
+	help
+	  Enable register access logging for debugging.
+
+config QCOM_MDSS_PLL
+	bool "QCOM MDSS PLL support"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable Qualcomm MDSS PLL support.
+
+config HDCP_QSEECOM
+	bool "HDCP via QSEECOM"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable HDCP support via QSEECOM.
+
+config MSM_SDE_ROTATOR
+	bool "MSM SDE Rotator"
+	depends on DRM_MSM_SDE
+	default y
+	help
+	  Enable SDE rotator engine support.
+
+config THERMAL_OF
+	bool "Thermal management via Device Tree"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable thermal management support via device tree.
+
+config MSM_MMRM
+	bool "MSM Multimedia Resource Manager"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable MSM Multimedia Resource Manager.
+
+config QTI_HW_FENCE
+	bool "QTI Hardware Fence"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable QTI hardware fence support.
+
+config QCOM_SPEC_SYNC
+	bool "QCOM Spec Sync"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable QCOM spec sync support.
+
+config MSM_EXT_DISPLAY
+	bool "MSM External Display"
+	depends on DRM_MSM
+	default y
+	help
+	  Enable external display support.
+
+config QCOM_WCD939X_I2C
+	bool "QCOM WCD939X I2C"
+	depends on DRM_MSM
+	default n
+	help
+	  Enable QCOM WCD939X I2C support.
+
+config SECDP
+	bool "Samsung SecureDP"
+	depends on DRM_MSM_DP
+	default n
+	help
+	  Enable Samsung SecureDP support.
+
+config SECDP_BIGDATA
+	bool "Samsung SecureDP Big Data"
+	depends on SECDP
+	default n
+	help
+	  Enable Samsung SecureDP big data collection.
+
+config SECDP_LOGGER
+	bool "Samsung SecureDP Logger"
+	depends on SECDP
+	default n
+	help
+	  Enable Samsung SecureDP logging.
+
+config SECDP_SWITCH
+	bool "Samsung SecureDP Switch"
+	depends on SECDP
+	default n
+	help
+	  Enable Samsung SecureDP switch support.
+
+config SECDP_DBG
+	bool "Samsung SecureDP Debug"
+	depends on SECDP
+	default n
+	help
+	  Enable Samsung SecureDP debug features.
+
+config SECDP_FACTORY_DPSWITCH_TEST
+	bool "Samsung SecureDP Factory DP Switch Test"
+	depends on SECDP
+	default n
+	help
+	  Enable Samsung SecureDP factory DP switch test.
+
+config DISPLAY_SAMSUNG
+	bool "Samsung Display Support"
+	default n
+	help
+	  Enable Samsung proprietary display driver support.
+
+config PANEL_E3_S6E3HAE_AMB681AZ01_WQHD
+	bool "Samsung E3 S6E3HAE AMB681AZ01 Panel (WQHD)"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable support for Samsung E3 S6E3HAE AMB681AZ01 WQHD panel.
+
+config PANEL_E3_S6E3HAF_AMB679FN01_WQHD
+	bool "Samsung E3 S6E3HAF AMB679FN01 Panel (WQHD)"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable support for Samsung E3 S6E3HAF AMB679FN01 WQHD panel.
+
+config SAMSUNG_DEBUG_DISPLAY
+	bool "Samsung Display Debug"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable Samsung display debugging features.
+
+config DUAL_PANEL
+	bool "Dual Panel Support"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable dual panel operation support.
+
+config PARTIAL_UPDATE
+	bool "Partial Update Support"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable partial display update support.
+
+config CABC_FUNCTION
+	bool "Content Adaptive Backlight Control (CABC)"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable CABC functionality.
+
+config SUPPORT_POC_FLASH
+	bool "POC Flash Support"
+	depends on DISPLAY_SAMSUNG
+	default n
+	help
+	  Enable POC (Panel Operation Code) flash support.
+
+config OPCODE_PARSER
+	bool "Opcode Parser"
+	default n
+	help
+	  Enable opcode parser support.
+
+config PANEL_KUNIT
+	bool "Panel KUnit Tests"
+	depends on DISPLAY_SAMSUNG && SEC_KUNIT
+	default n
+	help
+	  Enable KUnit tests for panel drivers.
+
+source "drivers/gpu/drm/msm/Kconfig"
