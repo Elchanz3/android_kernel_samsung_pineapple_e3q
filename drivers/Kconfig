@@ -241,9 +241,4 @@ source "drivers/hte/Kconfig"
 
 source "drivers/knox/Kconfig"
 
-
-# Integration of Proprietary drivers (WIP)
-
-source "drivers/display-drivers/Kconfig"
-
 endmenu

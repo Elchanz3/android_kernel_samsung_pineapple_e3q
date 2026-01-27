@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-only
-#
-# MSM DRM Module Configuration
-#
-# Copyright (c) 2021, The Linux Foundation. All rights reserved.
-
-# This file is sourced from the main Kconfig
-# All configuration options are defined in the parent Kconfig file

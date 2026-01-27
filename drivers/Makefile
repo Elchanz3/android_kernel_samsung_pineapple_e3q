@@ -191,8 +191,3 @@ obj-$(CONFIG_PECI)		+= peci/
 obj-$(CONFIG_HTE)		+= hte/
 obj-$(CONFIG_UH)		+= uh/
 obj-y				+= knox/
-
-
-# Integration of Proprietary drivers (WIP)
-
-obj-$(CONFIG_DRM_MSM) += display-drivers/
