@@ -1540,7 +1540,8 @@ static int cpufreq_online(unsigned int cpu)
 	if (cpufreq_driver->ready)
 		cpufreq_driver->ready(policy);
 
-	if (cpufreq_thermal_control_enabled(cpufreq_driver)) {
+	/* Register cpufreq cooling only for a new policy */
+	if (new_policy && cpufreq_thermal_control_enabled(cpufreq_driver)) {
 		policy->cdev = of_cpufreq_cooling_register(policy);
 		trace_android_vh_thermal_register(policy);
 	}
@@ -1626,12 +1627,6 @@ static void __cpufreq_offline(unsigned int cpu, struct cpufreq_policy *policy)
 	else
 		policy->last_policy = policy->policy;
 
-	if (cpufreq_thermal_control_enabled(cpufreq_driver)) {
-		cpufreq_cooling_unregister(policy->cdev);
-		trace_android_vh_thermal_unregister(policy);
-		policy->cdev = NULL;
-	}
-
 	if (has_target())
 		cpufreq_exit_governor(policy);
 
@@ -1641,10 +1636,13 @@ static void __cpufreq_offline(unsigned int cpu, struct cpufreq_policy *policy)
 	 */
 	if (cpufreq_driver->offline) {
 		cpufreq_driver->offline(policy);
-	} else if (cpufreq_driver->exit) {
-		cpufreq_driver->exit(policy);
-		policy->freq_table = NULL;
+		return;
 	}
+
+	if (cpufreq_driver->exit)
+		cpufreq_driver->exit(policy);
+
+	policy->freq_table = NULL;
 }
 
 static int cpufreq_offline(unsigned int cpu)
@@ -1692,8 +1690,18 @@ static void cpufreq_remove_dev(struct device *dev, struct subsys_interface *sif)
 		return;
 	}
 
+	/*
+	 * Unregister cpufreq cooling once all the CPUs of the policy are
+	 * removed.
+	 */
+	if (cpufreq_thermal_control_enabled(cpufreq_driver)) {
+		cpufreq_cooling_unregister(policy->cdev);
+		trace_android_vh_thermal_unregister(policy);
+		policy->cdev = NULL;
+	}
+
 	/* We did light-weight exit earlier, do full tear down now */
-	if (cpufreq_driver->offline)
+	if (cpufreq_driver->offline && cpufreq_driver->exit)
 		cpufreq_driver->exit(policy);
 
 	up_write(&policy->rwsem);
@@ -1983,6 +1991,7 @@ bool cpufreq_driver_test_flags(u16 flags)
 {
 	return !!(cpufreq_driver->flags & flags);
 }
+EXPORT_SYMBOL_GPL(cpufreq_driver_test_flags);
 
 /**
  * cpufreq_get_current_driver - Return the current driver's name.
@@ -2541,52 +2550,6 @@ int cpufreq_get_policy(struct cpufreq_policy *policy, unsigned int cpu)
 }
 EXPORT_SYMBOL(cpufreq_get_policy);
 
-#include <asm/timex.h>
-#define MAX_CLUSTERS	4
-static int max_freqs[MAX_CLUSTERS + 1];
-static int min_freqs[MAX_CLUSTERS + 1];
-module_param_array(max_freqs, int, NULL, 440);
-module_param_array(min_freqs, int, NULL, 440);
-
-static void cpufreq_sec_limit_max(struct cpufreq_policy_data *new_data)
-{
-	static int expired;
-	unsigned int domain = cpu_topology[new_data->cpu].cluster_id;
-	if (unlikely(!expired)) {
-		if (get_cycles() >= 19200000UL * max_freqs[MAX_CLUSTERS]) {
-			expired = 1;
-			pr_info("cpu%d max limit release\n", new_data->cpu);
-			return;
-		}
-
-		if (domain < ARRAY_SIZE(max_freqs) - 1 &&
-			max_freqs[domain] >= new_data->cpuinfo.min_freq) {
-			new_data->max = max_freqs[domain];
-			pr_info("cpu%d limit to %u kHz\n", new_data->cpu, new_data->max);
-		}
-	}
-}
-
-static void cpufreq_sec_limit_min(struct cpufreq_policy_data *new_data)
-{
-	static int expired;
-	unsigned int domain = cpu_topology[new_data->cpu].cluster_id;
-	
-	if (unlikely(!expired)) {
-		if (get_cycles() >= 19200000UL * min_freqs[MAX_CLUSTERS]) {
-			expired = 1;
-			pr_info("cpu%d min limit release\n", new_data->cpu);
-			return;
-		}
-
-		if (domain < ARRAY_SIZE(min_freqs) - 1 &&
-			min_freqs[domain] <= new_data->cpuinfo.max_freq) {
-			new_data->min = min_freqs[domain];
-			pr_info("cpu%d limit to %u kHz\n", new_data->cpu, new_data->min);
-		}
-	}
-}
-
 /**
  * cpufreq_set_policy - Modify cpufreq policy parameters.
  * @policy: Policy object to modify.
@@ -2622,9 +2585,6 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 
 	pr_debug("setting new policy for CPU %u: %u - %u kHz\n",
 		 new_data.cpu, new_data.min, new_data.max);
-
-	cpufreq_sec_limit_min(&new_data);
-	cpufreq_sec_limit_max(&new_data);
 
 	/*
 	 * Verify that the CPU speed can be set within these limits and make sure

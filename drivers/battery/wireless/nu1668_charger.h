@@ -30,7 +30,7 @@
 
 #define MFC_NU1668_DRIVER_VERSION			0x001E
 
-#define MFC_FW_BIN_VERSION					0x0327
+#define MFC_FW_BIN_VERSION					0x0328
 
 #define MFC_FLASH_FW_HEX_PATH               "mfc/mfc_fw_flash.bin"
 #define MFC_FW_SDCARD_BIN_PATH              "wpc_fw_sdcard.bin"

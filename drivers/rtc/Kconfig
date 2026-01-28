@@ -1843,7 +1843,8 @@ config RTC_DRV_MT2712
 
 config RTC_DRV_MT6397
 	tristate "MediaTek PMIC based RTC"
-	depends on MFD_MT6397 || (COMPILE_TEST && IRQ_DOMAIN)
+	depends on MFD_MT6397 || COMPILE_TEST
+	select IRQ_DOMAIN
 	help
 	  This selects the MediaTek(R) RTC driver. RTC is part of MediaTek
 	  MT6397 PMIC. You should enable MT6397 PMIC MFD before select
@@ -1994,5 +1995,10 @@ config RTC_DRV_POLARFIRE_SOC
 
 	  This driver can also be built as a module, if so, the module
 	  will be called "rtc-mpfs".
+
+config RTC_AUTO_PWRON
+	tristate "RTC Auto Power on PMICs"
+	help
+	  Support for the auto power on alarm on the PMIC.
 
 endif # RTC_CLASS

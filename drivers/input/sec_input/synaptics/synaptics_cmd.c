@@ -2755,6 +2755,23 @@ static int aod_rect_store(void *device_data)
 	return SEC_SUCCESS;
 }
 
+static int aod_noti_rect_store(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct synaptics_ts_data *ts = container_of(sec, struct synaptics_ts_data, sec);
+	int i;
+
+	input_info(true, ts->dev, "%s: w:%d, h:%d, x:%d, y:%d, lowpower_mode:0x%02X\n",
+			__func__, sec->cmd_param[0], sec->cmd_param[1],
+			sec->cmd_param[2], sec->cmd_param[3], ts->plat_data->lowpower_mode);
+
+	for (i = 0; i < 4; i++)
+		ts->plat_data->aod_noti_data.rect_data[i] = sec->cmd_param[i];
+
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+	return SEC_SUCCESS;
+}
+
 static void set_aod_rect(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
@@ -2787,16 +2804,41 @@ static int aod_store(void *device_data)
 		return SEC_ERROR;
 	}
 
-	if (sec->cmd_param[0])
+	if (sec->cmd_param[0]) {
 		ts->plat_data->lowpower_mode |= SEC_TS_MODE_SPONGE_AOD;
-	else
+		ts->plat_data->sponge_mode |= SEC_TS_MODE_SPONGE_AOD_NOTI_RECT_AOT;
+	} else {
 		ts->plat_data->lowpower_mode &= ~SEC_TS_MODE_SPONGE_AOD;
+		ts->plat_data->sponge_mode &= ~SEC_TS_MODE_SPONGE_AOD_NOTI_RECT_AOT;
+	}
 
 	input_info(true, ts->dev, "%s: %s, %02X\n",
 			__func__, sec->cmd_param[0] ? "on" : "off", ts->plat_data->lowpower_mode);
 	sec->cmd_state = SEC_CMD_STATUS_OK;
 
 	return SEC_SUCCESS;
+}
+
+static void set_aod_noti_rect(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct synaptics_ts_data *ts = container_of(sec, struct synaptics_ts_data, sec);
+	int ret;
+
+	ret = aod_noti_rect_store(device_data);
+	if (ret < 0) {
+		input_info(true, ts->dev, "%s: NG\n", __func__);
+		return;
+	}
+
+	ret = synaptics_ts_set_aod_noti_rect(ts);
+	if (ret < 0) {
+		input_info(true, ts->dev, "%s: NG\n", __func__);
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		return;
+	}
+
+	input_info(true, ts->dev, "%s: OK\n", __func__);
 }
 
 static void aod_enable(void *device_data)
@@ -3829,6 +3871,7 @@ static struct sec_cmd sec_cmds[] = {
 			CHECK_ON_LP, EXIT_RESULT),},
 	{SEC_CMD_V2_H("spay_enable", spay_enable, spay_store, CHECK_ON_LP, EXIT_RESULT),},
 	{SEC_CMD_V2("set_aod_rect", set_aod_rect, aod_rect_store, CHECK_ON_LP, EXIT_RESULT),},
+	{SEC_CMD_V2("set_aod_noti_rect", set_aod_noti_rect, aod_noti_rect_store, CHECK_ON_LP, EXIT_RESULT),},
 	{SEC_CMD_V2_H("aod_enable", aod_enable, aod_store, CHECK_ON_LP, EXIT_RESULT),},
 	{SEC_CMD_V2_H("aot_enable", aot_enable, aot_store, CHECK_ON_LP, EXIT_RESULT),},
 	{SEC_CMD_V2("fod_enable", fod_enable, fod_store, CHECK_ON_LP, EXIT_RESULT),},

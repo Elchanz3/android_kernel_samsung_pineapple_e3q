@@ -167,14 +167,14 @@ static ssize_t ufs_sec_shi_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	int ret;
-	char shi_buf[256] = {0, };
+	char shi_buf[UFS_SHI_SIZE] = {0, };
 
 	ret = sscanf(buf, "%255[^\n]%*c", shi_buf);
 
 	if (ret != 1)
 		return -EINVAL;
 
-	snprintf(get_vdi_member(shi), 256, "%s", shi_buf);
+	snprintf(get_vdi_member(shi), UFS_SHI_SIZE, "%s", shi_buf);
 
 	return count;
 }
@@ -433,14 +433,14 @@ static ssize_t SEC_UFS_s_info_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	int ret;
-	char s_buf[512] = {0, };
+	char s_buf[UFS_S_INFO_SIZE] = {0, };
 
 	ret = sscanf(buf, "%511s", s_buf);
 
 	if (ret != 1)
 		return -EINVAL;
 
-	snprintf(get_vdi_member(s_info), 512, "%s", s_buf);
+	snprintf(get_vdi_member(s_info), UFS_S_INFO_SIZE, "%s", s_buf);
 
 	return count;
 }

@@ -141,16 +141,23 @@ static ssize_t __extra_info_report_context(const _kern_ex_info_t *kinfo,
 
 static inline bool __extra_info_kinfo_is_valid(const _kern_ex_info_t *kinfo)
 {
-	if (!isascii(kinfo->bug_buf[0]))
-		return false;
+	size_t i;
 
-	if (kinfo->bug_buf[0] == '\0' || isprint(kinfo->bug_buf[0]))
-		return true;
+	for (i = 0; i < sizeof(kinfo->bug_buf); i++) {
+		if (kinfo->bug_buf[i] == '\0')
+			break;
+		else if (!isascii(kinfo->bug_buf[i]) || !isprint(kinfo->bug_buf[i]))
+			return false;
+	}
 
-	if (kinfo->panic_buf[0] == '\0' || isprint(kinfo->panic_buf[0]))
-		return true;
+	for (i = 0; i < sizeof(kinfo->panic_buf); i++) {
+		if (kinfo->panic_buf[i] == '\0')
+			break;
+		else if (!isascii(kinfo->panic_buf[i]) || !isprint(kinfo->panic_buf[i]))
+			return false;
+	}
 
-	return false;
+	return true;
 }
 
 static ssize_t extra_info_show(struct device *dev,

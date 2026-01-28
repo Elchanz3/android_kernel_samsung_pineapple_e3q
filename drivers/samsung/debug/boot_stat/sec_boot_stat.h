@@ -51,7 +51,6 @@ static __always_inline u32 __boot_stat_hash(const char *val)
 
 /* sec_boot_stata_main.c */
 extern unsigned long long sec_boot_stat_ktime_to_time(unsigned long long ktime);
-extern void sec_boot_stat_bootloader_stat(struct seq_file *m);
 
 /* sec_boot_stat_proc.c */
 extern void sec_boot_stat_add_boot_event(struct boot_stat_drvdata *drvdata, const char *log);

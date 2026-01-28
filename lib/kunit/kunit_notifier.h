@@ -2,6 +2,7 @@
  * kunit_notifier.h
  */
 #include <linux/notifier.h>
+#include <kunit/mock.h>
 
 extern int register_kunit_notifier(struct notifier_block *nb);
 extern int unregister_kunit_notifier(struct notifier_block *nb);
@@ -23,6 +24,12 @@ extern struct kunit_suite sec_battery_wc_test_module;
 extern struct kunit_suite sec_cisd_test_module;
 extern struct kunit_suite sec_pd_test_module;
 extern struct kunit_suite sec_step_charging_test_module;
+#ifdef CONFIG_REGULATOR_S2DOS07
+extern struct kunit_suite s2dos07_test_module;
+#endif
+#ifdef CONFIG_REGULATOR_S2MPB03
+extern struct kunit_suite s2mpb03_test_module;
+#endif
 // FIX ME
 //extern struct kunit_suite usb_typec_manager_notifier_test_module;
 //extern struct kunit_suite sec_cmd_test_module;

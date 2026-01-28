@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __HAB_H
 #define __HAB_H
@@ -104,13 +104,15 @@ enum hab_payload_type {
 #define HABCFG_BE_TRUE         1
 
 #define HABCFG_GET_VMID(_local_cfg_, _vmid_) \
-	((settings)->vmid_mmid_list[_vmid_].vmid)
+	((_local_cfg_)->vmid_mmid_list[_vmid_].vmid)
 #define HABCFG_GET_MMID(_local_cfg_, _vmid_, _mmid_) \
-	((settings)->vmid_mmid_list[_vmid_].mmid[_mmid_])
+	((_local_cfg_)->vmid_mmid_list[_vmid_].mmid[_mmid_])
 #define HABCFG_GET_BE(_local_cfg_, _vmid_, _mmid_) \
-	((settings)->vmid_mmid_list[_vmid_].is_listener[_mmid_])
+	((_local_cfg_)->vmid_mmid_list[_vmid_].is_listener[_mmid_])
 #define HABCFG_GET_KERNEL(_local_cfg_, _vmid_, _mmid_) \
-	((settings)->vmid_mmid_list[_vmid_].kernel_only[_mmid_])
+	((_local_cfg_)->vmid_mmid_list[_vmid_].kernel_only[_mmid_])
+#define HABCFG_GET_DMA_COHERENT(_local_cfg_, _vmid_, _mmid_grp_index_) \
+	((_local_cfg_)->vmid_mmid_list[_vmid_].dma_coherent[_mmid_grp_index_])
 
 struct hab_header {
 	uint32_t id_type;
@@ -318,7 +320,7 @@ struct uhab_context {
 	struct list_head exp_rxq;
 	spinlock_t expq_lock;
 
-	struct list_head imp_whse;
+	HAB_RB_ROOT imp_whse;
 	spinlock_t imp_lock;
 	uint32_t import_total;
 
@@ -335,6 +337,15 @@ struct uhab_context {
 	int closing;
 	int kernel;
 	int owner;
+	/*
+	 * For user-space hab client
+	 * if created through /dev/hab-* node, mmid_grp_index = MMID / 100
+	 * if created through /dev/hab node, mmid_grp_index = 0
+	 *
+	 * For kernel hab client
+	 * mmid_grp_index is always 0 as only one single kctx is shared with clients in kernel
+	 */
+	int mmid_grp_index;
 
 	int lb_be; /* loopback only */
 };
@@ -348,6 +359,7 @@ struct vmid_mmid_desc {
 	int mmid[HABCFG_MMID_AREA_MAX+1]; /* selected or not */
 	int is_listener[HABCFG_MMID_AREA_MAX+1]; /* yes or no */
 	int kernel_only[HABCFG_MMID_AREA_MAX+1]; /* yes or no */
+	bool dma_coherent[HABCFG_MMID_AREA_MAX+1];
 };
 
 struct local_vmid {
@@ -356,10 +368,12 @@ struct local_vmid {
 };
 
 struct hab_driver {
-	struct device *dev; /* mmid dev list */
-	struct cdev cdev;
+	/* hab driver has many char devices, so we need an array of struct device pointers. */
+	struct device **dev;
+	struct cdev *cdev;
 	dev_t major;
 	struct class *class;
+
 	int ndevices;
 	struct hab_device *devp;
 	struct uhab_context *kctx;
@@ -503,6 +517,8 @@ struct export_desc_super {
 	enum export_state exp_state;
 	uint32_t remote_imported;
 
+	HAB_RB_ENTRY node;
+
 	/*
 	 * exp must be the last member
 	 * because it is a variable length struct with pfns as payload
@@ -606,7 +622,8 @@ int hab_open_listen(struct uhab_context *ctx,
 		struct hab_device *dev,
 		struct hab_open_request *listen,
 		struct hab_open_request **recv_request,
-		int ms_timeout);
+		int ms_timeout,
+		uint32_t flags);
 
 struct virtual_channel *hab_vchan_alloc(struct uhab_context *ctx,
 		struct physical_channel *pchan, int openid);
@@ -757,4 +774,9 @@ int hab_stat_log(struct physical_channel **pchans, int pchan_cnt, char *dest,
 			int dest_size);
 int hab_stat_buffer_print(char *dest,
 		int dest_size, const char *fmt, ...);
+int hab_create_cdev_node(int mmid_grp_index);
+
+struct export_desc_super *hab_rb_exp_insert(struct rb_root *root, struct export_desc_super *exp_s);
+struct export_desc_super *hab_rb_exp_find(struct rb_root *root, struct export_desc_super *key);
+
 #endif /* __HAB_H */

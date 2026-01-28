@@ -147,6 +147,7 @@ struct adsp_data {
 	int32_t light_debug_info_cmd;
 	int32_t hyst[4];
 	int32_t brightness_resolution[2];
+	int32_t max_brightness[2];
 #endif
 #if IS_ENABLED(CONFIG_SUPPORT_PROX_CALIBRATION)
 	int32_t prox_cal;

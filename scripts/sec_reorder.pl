@@ -9,7 +9,11 @@ use strict;
 my @__highest = (
     'drivers/samsung/debug/boot_stat/',
     'drivers/samsung/debug/log_buf/',
+    'drivers/samsung/debug/qcom/upload_cause/',
+    'drivers/samsung/debug/qcom/reboot_reason/',
+    'drivers/samsung/debug/common/',
     'drivers/samsung/debug/arm64/ap_context/',
+    'drivers/samsung/debug/qcom/rst_exinfo/',
 );
 my @__lowest = (
     'drivers/samsung/bsp/qcom/param/',

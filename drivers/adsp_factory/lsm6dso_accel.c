@@ -317,7 +317,7 @@ RETRY_ACCEL_SELFTEST:
 
 		if (retry < ACCEL_ST_TRY_CNT) {
 			retry++;
-			msleep(200);
+			msleep(50);
 			cnt = 0;
 			pr_info("[FACTORY] %s: retry\n", __func__);
 			goto RETRY_ACCEL_SELFTEST;
@@ -418,8 +418,10 @@ static ssize_t accel_reactive_show(struct device *dev,
 
 	if (data->msg_buf[MSG_ACCEL][0] == 0)
 		success = true;
+#ifdef CONFIG_SEC_FACTORY
 	else
 		panic("sensor accel interrupt check fail!!");
+#endif
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", (int)success);
 }

@@ -967,7 +967,7 @@ static void print_sensor_dump(struct adsp_data *data, int sensor)
 			data->msg_buf[sensor][i * 16 + 7]);
 		break;
 	case MSG_LIGHT:
-		pr_info("[FACTORY] %s - %d: %d,%d,%d,%d,%d,%d,%d [P]:%d,%d,%d [L]:%d,%d,%d [E]:%d,%d,%d\n",
+		pr_info("[FACTORY] %s - %d: %d,%d,%d,%d,%d,%d,%d [P]:%d,%d,%d [L]:%d,%d,%d [E]:%d,%d,%d [BR]:%d,%d\n",
 			__func__, sensor,
 			data->msg_buf[sensor][0], data->msg_buf[sensor][1],
 			data->msg_buf[sensor][2], data->msg_buf[sensor][3],
@@ -976,7 +976,8 @@ static void print_sensor_dump(struct adsp_data *data, int sensor)
 			data->msg_buf[sensor][8], data->msg_buf[sensor][9],
 			data->msg_buf[sensor][10], data->msg_buf[sensor][11],
 			data->msg_buf[sensor][12], data->msg_buf[sensor][13],
-			data->msg_buf[sensor][14], data->msg_buf[sensor][15]);
+			data->msg_buf[sensor][14], data->msg_buf[sensor][15],
+			data->max_brightness[0], data->brightness_resolution[0]);
 #if IS_ENABLED(CONFIG_SUPPORT_LIGHT_CALIBRATION) && IS_ENABLED(CONFIG_SUPPORT_PROX_CALIBRATION)
 		pr_info("[FACTORY] %s - %d: [L] R:%d, %d, %d, W:%d, P:%d\n",
 			__func__, sensor, data->light_cal_result,
@@ -986,7 +987,7 @@ static void print_sensor_dump(struct adsp_data *data, int sensor)
 		break;
 #if IS_ENABLED(CONFIG_SUPPORT_DUAL_OPTIC)
 	case MSG_LIGHT_SUB:
-		pr_info("[FACTORY] %s - %d: %d,%d,%d,%d,%d,%d,%d [P]:%d,%d,%d [L]:%d,%d,%d [E]:%d,%d,%d\n",
+		pr_info("[FACTORY] %s - %d: %d,%d,%d,%d,%d,%d,%d [P]:%d,%d,%d [L]:%d,%d,%d [E]:%d,%d,%d [BR]:%d,%d\n",
 			__func__, sensor,
 			data->msg_buf[sensor][0], data->msg_buf[sensor][1],
 			data->msg_buf[sensor][2], data->msg_buf[sensor][3],
@@ -995,7 +996,8 @@ static void print_sensor_dump(struct adsp_data *data, int sensor)
 			data->msg_buf[sensor][8], data->msg_buf[sensor][9],
 			data->msg_buf[sensor][10], data->msg_buf[sensor][11],
 			data->msg_buf[sensor][12], data->msg_buf[sensor][13],
-			data->msg_buf[sensor][14], data->msg_buf[sensor][15]);
+			data->msg_buf[sensor][14], data->msg_buf[sensor][15],
+			data->max_brightness[1], data->brightness_resolution[1]);
 #if IS_ENABLED(CONFIG_SUPPORT_LIGHT_CALIBRATION) && IS_ENABLED(CONFIG_SUPPORT_PROX_CALIBRATION)
 		pr_info("[FACTORY] %s - %d: [L] R:%d, %d, %d, W:%d, P:%d\n",
 			__func__, sensor, data->sub_light_cal_result,
@@ -1588,13 +1590,24 @@ static ssize_t sns_crash_store(struct device *dev,
 		panic("sensor is abnormal, force panic\n");
 	} else if (mode == 2) {
 		schedule_delayed_work(&ssr_dump_work, msecs_to_jiffies(7000));
+	} else if (mode == 5 || mode == 6) { // fssr ignore in sensordebug
+		struct rproc *adsp = get_adsp_remoteproc();
+
+		if (adsp == NULL) {
+			pr_info("[FACTORY] %s, adsp remoteproc null\n", __func__);
+			goto crash_return;
+		}
+		if (mode == 5)
+			adsp->fssr_ignore = true;
+		else
+			adsp->fssr_ignore = false;
 	} else if (mode == 8 || mode == 9) { // only used in sensordebug
 		struct rproc *adsp = get_adsp_remoteproc();
 
 		if (adsp == NULL) {
 			pr_info("[FACTORY] %s, adsp remoteproc null\n", __func__);
 			goto crash_return;
-		}		
+		}
 		pr_info("fssr:%d, %d->%d\n", (int)adsp->fssr,
 			(int)adsp->prev_recovery_disabled,
 			(int)adsp->recovery_disabled);

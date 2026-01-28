@@ -78,7 +78,7 @@ __ss_static struct qc_dbg_part_info dbg_part_info[DEBUG_PART_MAX_TABLE] __ro_aft
 	QC_DBG_PART_INFO(debug_index_reset_klog,
 			DEBUG_PART_OFFSET_FROM_DT,
 			SEC_DEBUG_RESET_KLOG_SIZE,
-			O_RDWR),
+			O_RDONLY),
 	QC_DBG_PART_INFO(debug_index_reset_lpm_klog,
 			DEBUG_PART_OFFSET_FROM_DT,
 			SEC_DEBUG_RESET_LPM_KLOG_SIZE,
@@ -87,6 +87,10 @@ __ss_static struct qc_dbg_part_info dbg_part_info[DEBUG_PART_MAX_TABLE] __ro_aft
 			DEBUG_PART_OFFSET_FROM_DT,
 			DEBUG_PART_SIZE_FROM_DT,
 			O_RDONLY),
+	QC_DBG_PART_INFO(debug_index_reset_last_kmsg,
+			DEBUG_PART_OFFSET_FROM_DT,
+			SEC_DEBUG_RESET_LAST_KMSG_SIZE,
+			O_RDWR),
 };
 
 __ss_static bool ____dbg_part_is_valid_index(size_t index,

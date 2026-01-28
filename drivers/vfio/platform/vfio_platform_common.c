@@ -391,6 +391,11 @@ static ssize_t vfio_platform_read_mmio(struct vfio_platform_region *reg,
 {
 	unsigned int done = 0;
 
+	if (off >= reg->size)
+		return -EINVAL;
+
+	count = min_t(size_t, count, reg->size - off);
+
 	if (!reg->ioaddr) {
 		reg->ioaddr =
 			ioremap(reg->addr, reg->size);
@@ -469,6 +474,11 @@ static ssize_t vfio_platform_write_mmio(struct vfio_platform_region *reg,
 					loff_t off)
 {
 	unsigned int done = 0;
+
+	if (off >= reg->size)
+		return -EINVAL;
+
+	count = min_t(size_t, count, reg->size - off);
 
 	if (!reg->ioaddr) {
 		reg->ioaddr =
@@ -650,10 +660,13 @@ int vfio_platform_init_common(struct vfio_platform_device *vdev)
 	mutex_init(&vdev->igate);
 
 	ret = vfio_platform_get_reset(vdev);
-	if (ret && vdev->reset_required)
+	if (ret && vdev->reset_required) {
 		dev_err(dev, "No reset function found for device %s\n",
 			vdev->name);
-	return ret;
+		return ret;
+	}
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(vfio_platform_init_common);
 

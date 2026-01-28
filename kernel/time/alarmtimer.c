@@ -63,8 +63,6 @@ static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
 
-extern void log_suspend_abort_reason(const char *fmt, ...);
-
 /**
  * alarmtimer_get_rtcdev - Return selected rtcdevice
  *
@@ -196,7 +194,6 @@ static void alarmtimer_dequeue(struct alarm_base *base, struct alarm *alarm)
  * timers queued for the future, we set the hrtimer to fire when
  * the next future alarm timer expires.
  */
-#define MAX_FUNC_NAME	20
 static enum hrtimer_restart alarmtimer_fired(struct hrtimer *timer)
 {
 	struct alarm *alarm = container_of(timer, struct alarm, timer);
@@ -204,19 +201,13 @@ static enum hrtimer_restart alarmtimer_fired(struct hrtimer *timer)
 	unsigned long flags;
 	int ret = HRTIMER_NORESTART;
 	int restart = ALARMTIMER_NORESTART;
-	char func_name[MAX_FUNC_NAME];
 
 	spin_lock_irqsave(&base->lock, flags);
 	alarmtimer_dequeue(base, alarm);
 	spin_unlock_irqrestore(&base->lock, flags);
 
-	if (alarm->function) {
+	if (alarm->function)
 		restart = alarm->function(alarm, base->get_ktime());
-
-		snprintf(func_name, MAX_FUNC_NAME, "%ps\n", alarm->function);
-		if (strncmp(func_name, "timerfd_alarmproc", strlen("timerfd_alarmproc")))
-			pr_info("PM: %ps is fired!\n", alarm->function);
-	}
 
 	spin_lock_irqsave(&base->lock, flags);
 	if (restart != ALARMTIMER_NORESTART) {
@@ -255,7 +246,6 @@ static int alarmtimer_suspend(struct device *dev)
 	struct rtc_device *rtc;
 	unsigned long flags;
 	struct rtc_time tm;
-	struct alarm *min_alarm = NULL;
 
 	spin_lock_irqsave(&freezer_delta_lock, flags);
 	min = freezer_delta;
@@ -285,21 +275,12 @@ static int alarmtimer_suspend(struct device *dev)
 			expires = next->expires;
 			min = delta;
 			type = i;
-			min_alarm = container_of(next, struct alarm, node);
 		}
 	}
 	if (min == 0)
 		return 0;
 
-	if (min_alarm)
-		pr_info("soonest alarm : %ps\n", min_alarm->function);
-
 	if (ktime_to_ns(min) < 2 * NSEC_PER_SEC) {
-		if (min_alarm) {
-			pr_info("alarmtimer suspending blocked by %ps\n", min_alarm->function);
-			log_suspend_abort_reason("alarmtimer suspending blocked by %ps\n", min_alarm->function);
-		}
-
 		pm_wakeup_event(dev, 2 * MSEC_PER_SEC);
 		return -EBUSY;
 	}

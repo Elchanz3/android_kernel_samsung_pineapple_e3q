@@ -1093,6 +1093,7 @@ void light_get_brightness_resolution(struct adsp_data *data, int max_br,
 	else
 		data->brightness_resolution[display_idx] = 1;
 
+	data->max_brightness[display_idx] = max_br;
 	pr_info("[SSC_FAC] %s: brightness resolution %d(%d)", __func__,
 		data->brightness_resolution[display_idx], display_idx);
 }
@@ -1170,8 +1171,10 @@ void light_init_work(struct adsp_data *data)
 	data->pre_display_idx = -1;
 	data->light_debug_info_cmd = 0;
 	data->light_factory_is_ready = true;
-	data->brightness_resolution[0] = 1;
+	data->brightness_resolution[0] = 10;
 	data->brightness_resolution[1] = 1;
+	data->max_brightness[0] = -1;
+	data->max_brightness[1] = -1;
 
 	schedule_delayed_work(&data->light_init_work, msecs_to_jiffies(1000));
 }

@@ -24,6 +24,12 @@ kunit_notifier_chain_init(sec_pd_test_module);
 kunit_notifier_chain_init(sec_step_charging_test_module);
 kunit_notifier_chain_init(usb_typec_manager_notifier_test_module);
 kunit_notifier_chain_init(sec_cmd_test_module);
+#ifdef CONFIG_REGULATOR_S2DOS07
+kunit_notifier_chain_init(s2dos07_test_module);
+#endif
+#ifdef CONFIG_REGULATOR_S2MPB03
+kunit_notifier_chain_init(s2mpb03_test_module);
+#endif
 
 int test_executor_init(void)
 {
@@ -79,6 +85,13 @@ static __init int kunit_notifier_init(void)
 	kunit_notifier_chain_register(sec_step_charging_test_module);
 	kunit_notifier_chain_register(usb_typec_manager_notifier_test_module);
 	kunit_notifier_chain_register(sec_cmd_test_module);
+#ifdef CONFIG_REGULATOR_S2DOS07
+	kunit_notifier_chain_register(s2dos07_test_module);
+#endif
+#ifdef CONFIG_REGULATOR_S2MPB03
+	kunit_notifier_chain_register(s2mpb03_test_module);
+#endif
+
 	return 0;
 }
 
@@ -92,6 +105,12 @@ static void __exit kunit_notifier_exit(void)
 	kunit_notifier_chain_unregister(sec_battery_test_module);
 	kunit_notifier_chain_unregister(usb_typec_manager_notifier_test_module);
 	kunit_notifier_chain_unregister(sec_cmd_test_module);
+#ifdef CONFIG_REGULATOR_S2DOS07
+	kunit_notifier_chain_unregister(s2dos07_test_module);
+#endif
+#ifdef CONFIG_REGULATOR_S2MPB03
+	kunit_notifier_chain_unregister(s2mpb03_test_module);
+#endif
 }
 
 module_init(kunit_notifier_init);

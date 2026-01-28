@@ -276,7 +276,7 @@ bool is_certificate_relevant_to_task(
 	// Special case for system_server
 	if (!strncmp(parsed_cert->app_name, system_server_app_name,
 			parsed_cert->app_name_size)) {
-		if (strncmp(cmdline, system_proc_names[0], strlen(system_proc_names[0])) &&
+		if (strncmp(cmdline, system_proc_names[0], strlen(system_proc_names[0])) && 
 			strncmp(cmdline, system_proc_names[1], strlen(system_proc_names[1])))
 			return false;
 	} else if (parsed_cert->app_name[0] != '/') {

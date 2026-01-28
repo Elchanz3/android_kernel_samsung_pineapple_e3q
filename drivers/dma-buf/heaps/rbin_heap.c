@@ -564,7 +564,7 @@ static void show_rbin_meminfo(void *data, struct seq_file *m)
 {
 	struct dma_heap *heap = (struct dma_heap *)data;
 	struct rbin_heap *rbin_heap;
-	u64 rbin_allocated_kb, rbin_pool_kb;
+	u64 rbin_allocated_kb, rbin_pool_kb, rbin_free_kb, rbin_cached_kb;
 
 	if (!heap)
 		return;
@@ -575,12 +575,13 @@ static void show_rbin_meminfo(void *data, struct seq_file *m)
 
 	rbin_allocated_kb = (u64)(atomic_read(&rbin_allocated_pages) << (PAGE_SHIFT - 10));
 	rbin_pool_kb = (u64)(atomic_read(&rbin_pool_pages) << (PAGE_SHIFT - 10));
+	rbin_free_kb = (u64)(atomic_read(&rbin_free_pages) << (PAGE_SHIFT - 10));
+	rbin_cached_kb = (u64)(atomic_read(&rbin_cached_pages) << (PAGE_SHIFT - 10));
 
 	show_val_meminfo(m, "RbinTotal", rbin_heap->count << (PAGE_SHIFT - 10));
-	show_val_meminfo(m, "RbinAlloced", rbin_allocated_kb + rbin_pool_kb);
-	show_val_meminfo(m, "RbinPool", rbin_pool_kb);
-	show_val_meminfo(m, "RbinFree", (u64)(atomic_read(&rbin_free_pages) << (PAGE_SHIFT - 10)));
-	show_val_meminfo(m, "RbinCached", (u64)(atomic_read(&rbin_cached_pages) << (PAGE_SHIFT - 10)));
+	show_val_meminfo(m, "RbinAlloced", rbin_allocated_kb);
+	show_val_meminfo(m, "RbinFree", rbin_pool_kb + rbin_free_kb);
+	show_val_meminfo(m, "RbinCached", rbin_cached_kb);
 }
 
 static void rbin_cache_adjust(void *data, unsigned long *cached)
@@ -592,6 +593,7 @@ static void rbin_available_adjust(void *data, unsigned long *available)
 {
 	*available += (unsigned long)atomic_read(&rbin_cached_pages);
 	*available += (unsigned long)atomic_read(&rbin_free_pages);
+	*available += (unsigned long)atomic_read(&rbin_pool_pages);
 }
 
 static void rbin_meminfo_adjust(void *data, unsigned long *totalram,
@@ -609,6 +611,7 @@ static void rbin_meminfo_adjust(void *data, unsigned long *totalram,
 
 	*totalram += rbin_heap->count;
 	*freeram += (unsigned long)atomic_read(&rbin_free_pages);
+	*freeram += (unsigned long)atomic_read(&rbin_pool_pages);
 }
 
 int add_rbin_heap(struct platform_heap *heap_data)
@@ -676,7 +679,7 @@ int add_rbin_heap(struct platform_heap *heap_data)
 
 	exp_info.name = "qcom,camera-uncached";
 	exp_info.ops = &rbin_uncached_heap_ops;
-	exp_info.priv = NULL;
+	exp_info.priv = rbin_heap;
 
 	rbin_uncached_dma_heap = dma_heap_add(&exp_info);
 	if (IS_ERR(rbin_uncached_dma_heap)) {

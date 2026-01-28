@@ -34,8 +34,6 @@ static __always_inline bool __rbcmd_is_probed(void)
 __ss_static struct reboot_cmd_stage *__rbcmd_get_stage(struct reboot_cmd_drvdata *drvdata,
 		enum sec_rbcmd_stage s)
 {
-	BUG_ON((unsigned long)s >= (unsigned long)SEC_RBCMD_STAGE_MAX);
-
 	return &drvdata->stage[s];
 }
 

@@ -133,7 +133,7 @@ static inline void ____qc_reboot_store_last_kmsg(
 			action == SYS_RESTART ? "reboot" : "power off",
 			cmd);
 
-	valid = sec_qc_dbg_part_write(debug_index_reset_klog, s_log_buf);
+	valid = sec_qc_dbg_part_write(debug_index_reset_last_kmsg, s_log_buf);
 	if (!valid)
 		dev_warn(dev, "failed to write sec log buf to dbg partition\n");
 }

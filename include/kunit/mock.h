@@ -15,6 +15,12 @@
 #include <kunit/kunit-stream.h>
 #include <kunit/params.h>
 
+#if IS_ENABLED(CONFIG_SEC_KUNIT) && IS_ENABLED(CONFIG_KUNIT)
+#define EXPORT_SYMBOL_KUNIT(sym)	_EXPORT_SYMBOL(sym, "")
+#else
+#define EXPORT_SYMBOL_KUNIT(sym)	/* nothing */
+#endif
+
 /**
  * struct mock_param_matcher - represents a matcher used in a *call expectation*
  * @match: the function that performs the matching
@@ -109,7 +115,7 @@ enum mock_type {
 };
 
 struct mock {
-#ifdef CONFIG_SEC_KUNIT
+#if defined(CONFIG_SEC_KUNIT) && defined(CONFIG_UML)
 	struct kunit_post_condition parent;
 #endif
 	struct kunit *test;
@@ -418,7 +424,8 @@ int mock_in_sequence(struct kunit *test, struct mock_expectation *first, ...);
 
 #define mock_get_test(mock_object) (mock_get_ctrl(mock_object)->test)
 
-#define CLASS(struct_name) struct_name
+/* FIXME: it's modified from #define CLASS(struct_name) struct_name */
+#define CLASS_MOCK(struct_name) struct_name
 #define HANDLE_INDEX(index) index
 #define METHOD(method_name) method_name
 #define RETURNS(return_type) return_type
@@ -1019,8 +1026,7 @@ DECLARE_STRUCT_CLASS_MOCK_INIT(void);
 #define DEFINE_FUNCTION_MOCK_VOID_RETURN(name, param_types...) \
 		DEFINE_FUNCTION_MOCK_VOID_RETURN_INTERNAL(name, param_types)
 
-#if IS_ENABLED(CONFIG_KUNIT)
-
+#if IS_ENABLED(CONFIG_SEC_KUNIT) && IS_ENABLED(CONFIG_KUNIT)
 /**
  * __mockable - A function decorator that allows the function to be mocked.
  *
@@ -1045,7 +1051,7 @@ DECLARE_STRUCT_CLASS_MOCK_INIT(void);
 #define __mockable
 #define __mockable_alias(id) __alias(id)
 #define __visible_for_testing static
-#endif
+#endif /* CONFIG_SEC_KUNIT && CONFIG_KUNIT */
 
 #define CONVERT_TO_ACTUAL_TYPE(type, ptr) (*((type *) ptr))
 

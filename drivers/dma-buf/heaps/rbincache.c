@@ -444,6 +444,7 @@ static ssize_t refill_mode_store(struct kobject *kobj,
 	return count;
 }
 
+static unsigned long low_threshold;
 /*
  * function for cleancache_ops->put_page
  * Though it might fail, it does not matter since Cleancache does not
@@ -456,7 +457,7 @@ static void rc_store_page(int pool_id, struct cleancache_filekey key,
 	int ret;
 	bool zero;
 
-	if (!current_is_kswapd())
+	if (!current_is_kswapd() && !file_is_tiny(low_threshold))
 		return;
 
 	if (is_refill_blocked())
@@ -849,6 +850,7 @@ int init_rbincache(unsigned long pfn, unsigned long nr_pages)
 		kobject_put(rbin_kobject);
 		pr_warn("sysfs initialization failed\n");
 	}
+	low_threshold = get_low_threshold();
 
 	pr_info("cleancache enabled for rbin cleancache\n");
 	return 0;

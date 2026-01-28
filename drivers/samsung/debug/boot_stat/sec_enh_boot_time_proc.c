@@ -167,6 +167,25 @@ static unsigned long long __enh_boot_time_show_framework_each_locked(
 	return curr_ktime;
 }
 
+static void __enh_boot_stat_show_soc(struct seq_file *m,
+				    struct enh_boot_time_proc *enh_boot_time)
+{
+	struct boot_stat_drvdata *drvdata = container_of(
+		enh_boot_time, struct boot_stat_drvdata, enh_boot_time);
+	struct sec_boot_stat_soc_operations *soc_ops;
+
+	mutex_lock(&drvdata->soc_ops_lock);
+
+	soc_ops = drvdata->soc_ops;
+	if (!soc_ops || !soc_ops->show_on_enh_boot_stat) {
+		mutex_unlock(&drvdata->soc_ops_lock);
+		return;
+	}
+
+	soc_ops->show_on_enh_boot_stat(m);
+	mutex_unlock(&drvdata->soc_ops_lock);
+}
+
 static void __enh_boot_time_show_framework_locked(struct seq_file *m,
 		struct enh_boot_time_proc *enh_boot_time)
 {
@@ -178,7 +197,7 @@ static void __enh_boot_time_show_framework_locked(struct seq_file *m,
 	seq_printf(m, "%s\n", h_line);
 	seq_puts(m, "BOOTLOADER\n");
 	seq_printf(m, "%s\n", h_line);
-	sec_boot_stat_bootloader_stat(m);
+	__enh_boot_stat_show_soc(m, enh_boot_time);
 
 	seq_printf(m, "%s\n", h_line);
 	seq_puts(m, "FRAMEWORK\n");

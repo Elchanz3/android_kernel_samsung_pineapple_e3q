@@ -1696,17 +1696,22 @@ int synaptics_ts_set_custom_library(struct synaptics_ts_data *ts)
 		return retval;
 	}
 
+	/* aod noti rect enable */
+	offset = SEC_TS_CMD_SPONGE_DUMP_FLUSH;
+	data = ts->plat_data->sponge_mode;
 #if !IS_ENABLED(CONFIG_SAMSUNG_PRODUCT_SHIP)
 	/* inf dump enable */
-	offset = SEC_TS_CMD_SPONGE_DUMP_FLUSH;
 	data = ts->plat_data->sponge_mode |= SEC_TS_MODE_SPONGE_INF_DUMP;
+#endif
+	input_info(true, ts->dev, "%s: Sponge_01 (0x%02x)\n",
+			__func__, ts->plat_data->sponge_mode);
+
 	retval = ts->synaptics_ts_write_sponge(ts, &data, 1, offset, 1);
 	if (retval < 0) {
 		input_err(true, ts->dev, "Fail to write sponge reg, data:0x%x, offset:0x%x\n",
 			data, offset);
 		return retval;
 	}
-#endif
 
 	/* read dump info */
 	retval = ts->synaptics_ts_read_sponge(ts,
@@ -1771,7 +1776,7 @@ void synaptics_ts_get_custom_library(struct synaptics_ts_data *ts)
 	}
 	ts->plat_data->sponge_mode = data[0];
 
-	input_info(true, ts->dev, "%s: sponge_mode %x\n", __func__, ts->plat_data->sponge_mode);
+	input_info(true, ts->dev, "%s: sponge_mode 0x%02x\n", __func__, ts->plat_data->sponge_mode);
 }
 
 void synaptics_ts_set_fod_finger_merge(struct synaptics_ts_data *ts)
@@ -2524,6 +2529,27 @@ int synaptics_ts_set_aod_rect(struct synaptics_ts_data *ts)
 	}
 
 	offset = 2;
+
+	ret = ts->synaptics_ts_write_sponge(ts,
+			data, sizeof(data), offset, sizeof(data));
+	if (ret < 0)
+		input_err(true, ts->dev, "%s: Failed to write sponge\n", __func__);
+
+	return ret;
+}
+
+int synaptics_ts_set_aod_noti_rect(struct synaptics_ts_data *ts)
+{
+	unsigned char data[8] = {0};
+	int ret, i;
+	unsigned short offset;
+
+	for (i = 0; i < 4; i++) {
+		data[i * 2] = ts->plat_data->aod_noti_data.rect_data[i] & 0xFF;
+		data[i * 2 + 1] = (ts->plat_data->aod_noti_data.rect_data[i] >> 8) & 0xFF;
+	}
+
+	offset = 0x53;
 
 	ret = ts->synaptics_ts_write_sponge(ts,
 			data, sizeof(data), offset, sizeof(data));

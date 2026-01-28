@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012-2014, 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/gpio/driver.h>
@@ -16,6 +16,7 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/spmi.h>
+#include <linux/suspend.h>
 #include <linux/types.h>
 
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
@@ -39,6 +40,8 @@
 #define PMIC_GPIO_SUBTYPE_GPIO_MV		0x11
 #define PMIC_GPIO_SUBTYPE_GPIO_LV_VIN2		0x12
 #define PMIC_GPIO_SUBTYPE_GPIO_MV_VIN3		0x13
+#define PMIC_GPIO_SUBTYPE_GPIO_LV_VIN2_CLK	0x14
+#define PMIC_GPIO_SUBTYPE_GPIO_MV_VIN3_CLK	0x15
 
 #define PMIC_MPP_REG_RT_STS			0x10
 #define PMIC_MPP_REG_RT_STS_VAL_MASK		0x1
@@ -137,6 +140,7 @@ enum pmic_gpio_func_index {
  * struct pmic_gpio_pad - keep current GPIO settings
  * @base: Address base in SPMI device.
  * @is_enabled: Set to false when GPIO should be put in high Z state.
+ * @is_configured: Set to true if the GPIO is configured
  * @out_value: Cached pin output value
  * @have_buffer: Set to true if GPIO output could be configured in push-pull,
  *	open-drain or open-source mode.
@@ -156,6 +160,7 @@ enum pmic_gpio_func_index {
 struct pmic_gpio_pad {
 	u16		base;
 	bool		is_enabled;
+	bool		is_configured;
 	bool		out_value;
 	bool		have_buffer;
 	bool		output_enabled;
@@ -327,6 +332,7 @@ static int pmic_gpio_set_mux(struct pinctrl_dev *pctldev, unsigned function,
 	}
 
 	pad->function = function;
+	pad->is_configured = true;
 
 	if (pad->analog_pass)
 		val = PMIC_GPIO_MODE_ANALOG_PASS_THRU;
@@ -483,6 +489,7 @@ static int pmic_gpio_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 	pad = pctldev->desc->pins[pin].drv_data;
 
 	pad->is_enabled = true;
+	pad->is_configured = true;
 	for (i = 0; i < nconfs; i++) {
 		param = pinconf_to_config_param(configs[i]);
 		arg = pinconf_to_config_argument(configs[i]);
@@ -537,7 +544,7 @@ static int pmic_gpio_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 			pad->pullup = arg;
 			break;
 		case PMIC_GPIO_CONF_STRENGTH:
-			if (arg > PMIC_GPIO_STRENGTH_LOW)
+			if (arg > PMIC_GPIO_STRENGTH_HIGH)
 				return -EINVAL;
 			switch (arg) {
 			case PMIC_GPIO_STRENGTH_HIGH:
@@ -665,7 +672,7 @@ static void pmic_gpio_config_dbg_show(struct pinctrl_dev *pctldev,
 		"push-pull", "open-drain", "open-source"
 	};
 	static const char *const strengths[] = {
-		"no", "high", "medium", "low"
+		"no", "low", "medium", "high"
 	};
 
 	pad = pctldev->desc->pins[pin].drv_data;
@@ -710,6 +717,88 @@ static void pmic_gpio_config_dbg_show(struct pinctrl_dev *pctldev,
 		seq_printf(s, " dtest-%d", pad->dtest_buffer);
 	}
 }
+
+#if IS_ENABLED(CONFIG_SEC_GPIO_DUMP)
+#define MAX_PMIC	32
+static int pmic_count;
+static struct gpio_chip *pmic_gpio_chip[MAX_PMIC];
+
+static void pmic_gpio_sec_dbg_print(struct pinctrl_dev *pctldev)
+{
+	struct pmic_gpio_state *state = pinctrl_dev_get_drvdata(pctldev);
+	struct pmic_gpio_pad *pad;
+	int val, i, ret, function;
+
+	static const char *const biases[] = {
+		"pull-up 30uA", "pull-up 1.5uA", "pull-up 31.5uA",
+		"pull-up 1.5uA + 30uA boost", "pull-down 10uA", "no pull"
+	};
+	static const char *const buffer_types[] = {
+		"push-pull", "open-drain", "open-source"
+	};
+	static const char *const strengths[] = {
+		"no", "high", "medium", "low"
+	};
+
+	pr_info("%s: chip.label:%s\n", __func__, state->chip.label);
+
+	for (i = 0; i < state->chip.ngpio; i++) {
+		pad = pctldev->desc->pins[i].drv_data;
+		val = pmic_gpio_read(state, pad, PMIC_GPIO_REG_EN_CTL);
+
+		if (val < 0 || !(val >> PMIC_GPIO_REG_MASTER_EN_SHIFT))
+			pr_info(" gpio%-2d: ---\n", i);
+		else {
+			if (pad->input_enabled) {
+				ret = pmic_gpio_read(state, pad, PMIC_MPP_REG_RT_STS);
+				if (ret < 0)
+					continue;
+
+				ret &= PMIC_MPP_REG_RT_STS_VAL_MASK;
+				pad->out_value = ret;
+			}
+
+			if (!pad->lv_mv_type &&
+				pad->function >= PMIC_GPIO_FUNC_INDEX_FUNC3) {
+				function = pad->function + (PMIC_GPIO_FUNC_INDEX_DTEST1 -
+					PMIC_GPIO_FUNC_INDEX_FUNC3);
+			} else {
+				function = pad->function;
+			}
+
+			pr_info(" gpio%-2d: %-7s %-4s vin-%d %-27s %-10s %-2s %-7s atest-%d dtest-%d\n",
+					i,
+					pmic_gpio_functions[function],
+					pad->output_enabled ? "OUT" : "IN",
+					pad->power_source,
+					biases[pad->pullup],
+					buffer_types[pad->buffer_type],
+					pad->out_value ? "H" : "L",
+					strengths[pad->strength],
+					pad->atest,
+					pad->dtest_buffer);
+		}
+	}
+
+	pr_info("\n");
+}
+
+static void pmic_gpio_sec_dbg_show(struct gpio_chip *chip)
+{
+	struct pmic_gpio_state *state = gpiochip_get_data(chip);
+
+	pmic_gpio_sec_dbg_print(state->ctrl);
+}
+
+void sec_pmic_gpio_debug_print(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < pmic_count; i++)
+		pmic_gpio_sec_dbg_show(pmic_gpio_chip[i]);
+}
+EXPORT_SYMBOL_GPL(sec_pmic_gpio_debug_print);
+#endif /* CONFIG_SEC_GPIO_DUMP */
 
 static const struct pinconf_ops pmic_gpio_pinconf_ops = {
 	.is_generic			= true,
@@ -806,6 +895,45 @@ static const struct gpio_chip pmic_gpio_gpio_template = {
 	.dbg_show		= pmic_gpio_dbg_show,
 };
 
+#ifdef CONFIG_PM
+static int pmic_gpio_restore(struct device *dev)
+{
+	struct pmic_gpio_state *state = dev_get_drvdata(dev);
+	struct pinctrl_dev *ctrl = state->ctrl;
+	struct pmic_gpio_pad *pad;
+	unsigned int i, npins = ctrl->desc->npins;
+	int ret = 0;
+
+	for (i = 0; i < npins; i++) {
+		pad = ctrl->desc->pins[i].drv_data;
+		if (pad->is_configured) {
+			ret = pmic_gpio_config_set(ctrl, i, NULL, 0);
+			if (ret < 0) {
+				dev_err(state->dev, "Failed to restore pin %s[%d] ret=%d\n",
+					ctrl->desc->pins[i].name, i, ret);
+				return ret;
+			}
+		}
+	}
+
+	return ret;
+}
+
+static int pmic_gpio_resume(struct device *dev)
+{
+	if (pm_suspend_target_state == PM_SUSPEND_MEM)
+		return pmic_gpio_restore(dev);
+	return 0;
+}
+
+static const struct dev_pm_ops pmic_gpio_pm_ops = {
+	.restore = pmic_gpio_restore,
+	.resume = pmic_gpio_resume,
+};
+#else
+static const struct dev_pm_ops pmic_gpio_pm_ops = {};
+#endif
+
 static int pmic_gpio_populate(struct pmic_gpio_state *state,
 			      struct pmic_gpio_pad *pad)
 {
@@ -849,11 +977,13 @@ static int pmic_gpio_populate(struct pmic_gpio_state *state,
 		pad->lv_mv_type = true;
 		break;
 	case PMIC_GPIO_SUBTYPE_GPIO_LV_VIN2:
+	case PMIC_GPIO_SUBTYPE_GPIO_LV_VIN2_CLK:
 		pad->num_sources = 2;
 		pad->have_buffer = true;
 		pad->lv_mv_type = true;
 		break;
 	case PMIC_GPIO_SUBTYPE_GPIO_MV_VIN3:
+	case PMIC_GPIO_SUBTYPE_GPIO_MV_VIN3_CLK:
 		pad->num_sources = 3;
 		pad->have_buffer = true;
 		pad->lv_mv_type = true;
@@ -959,6 +1089,7 @@ static int pmic_gpio_populate(struct pmic_gpio_state *state,
 
 	/* Pin could be disabled with PIN_CONFIG_BIAS_HIGH_IMPEDANCE */
 	pad->is_enabled = true;
+	pad->is_configured = false;
 	return 0;
 }
 
@@ -1127,6 +1258,11 @@ static int pmic_gpio_probe(struct platform_device *pdev)
 	state->chip.of_gpio_n_cells = 2;
 	state->chip.can_sleep = false;
 
+#if IS_ENABLED(CONFIG_SEC_GPIO_DUMP)
+	pr_info("%s: [%d]chip.label:%s\n", __func__, pmic_count, state->chip.label);
+	pmic_gpio_chip[pmic_count++] = &(state->chip);
+#endif
+
 	state->ctrl = devm_pinctrl_register(dev, pctrldesc, state);
 	if (IS_ERR(state->ctrl))
 		return PTR_ERR(state->ctrl);
@@ -1204,7 +1340,6 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	{ .compatible = "qcom,pm7250b-gpio", .data = (void *) 12 },
 	{ .compatible = "qcom,pm7325-gpio", .data = (void *) 10 },
 	{ .compatible = "qcom,pm8005-gpio", .data = (void *) 4 },
-	{ .compatible = "qcom,pm8008-gpio", .data = (void *) 2 },
 	{ .compatible = "qcom,pm8019-gpio", .data = (void *) 6 },
 	/* pm8150 has 10 GPIOs with holes on 2, 5, 7 and 8 */
 	{ .compatible = "qcom,pm8150-gpio", .data = (void *) 10 },
@@ -1220,6 +1355,8 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	{ .compatible = "qcom,pm8350c-gpio", .data = (void *) 9 },
 	{ .compatible = "qcom,pm8450-gpio", .data = (void *) 4 },
 	{ .compatible = "qcom,pm8916-gpio", .data = (void *) 4 },
+	/* pm8937 has 8 GPIOs with holes on 3, 4 and 6 */
+	{ .compatible = "qcom,pm8937-gpio", .data = (void *) 8 },
 	{ .compatible = "qcom,pm8941-gpio", .data = (void *) 36 },
 	/* pm8950 has 8 GPIOs with holes on 3 */
 	{ .compatible = "qcom,pm8950-gpio", .data = (void *) 8 },
@@ -1240,6 +1377,18 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	/* pmx55 has 11 GPIOs with holes on 3, 7, 10, 11 */
 	{ .compatible = "qcom,pmx55-gpio", .data = (void *) 11 },
 	{ .compatible = "qcom,pmx65-gpio", .data = (void *) 16 },
+	{ .compatible = "qcom,pm7550ba-gpio", .data = (void *) 8 },
+	{ .compatible = "qcom,pm8550-gpio", .data = (void *) 12 },
+	{ .compatible = "qcom,pm8550b-gpio", .data = (void *) 12 },
+	{ .compatible = "qcom,pm8550ve-gpio", .data = (void *) 8 },
+	{ .compatible = "qcom,pm8550vs-gpio", .data = (void *) 6 },
+	{ .compatible = "qcom,pmiv0104-gpio", .data = (void *) 10 },
+	{ .compatible = "qcom,pmk8550-gpio", .data = (void *) 6 },
+	{ .compatible = "qcom,pmr735d-gpio", .data = (void *) 2 },
+	{ .compatible = "qcom,pm6450-gpio", .data = (void *) 9 },
+	{ .compatible = "qcom,pmar2230-gpio", .data = (void *) 14 },
+	{ .compatible = "qcom,pmxr2230-gpio", .data = (void *) 12 },
+	{ .compatible = "qcom,pm8775-gpio", .data = (void *) 12 },
 	{ },
 };
 
@@ -1249,6 +1398,7 @@ static struct platform_driver pmic_gpio_driver = {
 	.driver = {
 		   .name = "qcom-spmi-gpio",
 		   .of_match_table = pmic_gpio_of_match,
+		   .pm = &pmic_gpio_pm_ops,
 	},
 	.probe	= pmic_gpio_probe,
 	.remove = pmic_gpio_remove,

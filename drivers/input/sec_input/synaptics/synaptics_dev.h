@@ -1631,6 +1631,7 @@ void synaptics_set_grip_data_to_ic(struct device *dev, u8 flag);
 int synaptics_ts_set_temperature(struct device *dev, u8 temperature_data);
 int synaptics_ts_set_lowpowermode(void *data, u8 mode);
 int synaptics_ts_set_aod_rect(struct synaptics_ts_data *ts);
+int synaptics_ts_set_aod_noti_rect(struct synaptics_ts_data *ts);
 int synaptics_ts_setup(struct synaptics_ts_data *ts);
 void synaptics_ts_hw_reset(struct synaptics_ts_data *ts);
 void synaptics_ts_reset_work(struct work_struct *work);

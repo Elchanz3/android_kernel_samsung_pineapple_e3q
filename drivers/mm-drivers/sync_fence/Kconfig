@@ -1,4 +1,0 @@
-config QCOM_SPEC_SYNC
-	bool "Enable spec fence"
-	help
-	  Enable sync_fence driver

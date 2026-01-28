@@ -107,10 +107,8 @@ struct f_ss_monitor {
 	u8	aoa_start_cmd;
 	int	usb_function_info;
 	char usb_mode[50];
-	int	vbus_current;
 	bool is_bind;
 	struct ss_monitor_instance *func_inst;
-	struct work_struct		set_vbus_current_work;
 };
 
 static inline struct f_ss_monitor *func_to_ss_monitor(struct usb_function *f)
@@ -135,6 +133,8 @@ struct ss_monitor_instance {
 	struct f_ss_monitor *ss_monitor;
 	struct aoa_connect_status aoa_reset;
 	bool vbus_session_called;
+	int	vbus_current;
+	struct work_struct		set_vbus_current_work;
 };
 
 static inline struct ss_monitor_instance *to_fi_ss_monitor(struct usb_function_instance *fi)
@@ -230,7 +230,7 @@ static void ss_monitor_disable(struct usb_function *f)
 	ss_monitor = func_to_ss_monitor(f);
 	if (!ss_monitor)
 		goto ret;
-	ss_monitor->vbus_current = USB_CURRENT_UNCONFIGURED;
+	g_ss_monitor->vbus_current = USB_CURRENT_UNCONFIGURED;
 	if (ss_monitor->accessory_string && !ss_monitor->aoa_start_cmd) {
 		snprintf(aoa_check, sizeof(aoa_check), "AOA_ERR_%x", ss_monitor->accessory_string);
 #ifdef CONFIG_USB_NOTIFY_PROC_LOG
@@ -270,14 +270,11 @@ static int set_vbus_current(int state)
 /* notify current change */
 static void set_vbus_current_work(struct work_struct *w)
 {
-	struct f_ss_monitor *ss_monitor;
 #if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
 	struct otg_notify *o_notify = get_otg_notify();
 #endif
 
-	ss_monitor = container_of(w, struct f_ss_monitor, set_vbus_current_work);
-
-	switch (ss_monitor->vbus_current) {
+	switch (g_ss_monitor->vbus_current) {
 	case USB_CURRENT_SUSPENDED:
 #if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
 	/* set vbus current for suspend state is called in usb_notify. */
@@ -298,7 +295,7 @@ static void set_vbus_current_work(struct work_struct *w)
 	default:
 		break;
 	}
-	set_vbus_current(ss_monitor->vbus_current);
+	set_vbus_current(g_ss_monitor->vbus_current);
 skip:
 	return;
 }
@@ -469,8 +466,8 @@ void usb_reset_notify(struct usb_gadget *gadget)
 	if (g_ss_monitor->ss_monitor == NULL)
 		return;
 
-	g_ss_monitor->ss_monitor->vbus_current = USB_CURRENT_UNCONFIGURED;
-	schedule_work(&g_ss_monitor->ss_monitor->set_vbus_current_work);
+	g_ss_monitor->vbus_current = USB_CURRENT_UNCONFIGURED;
+	schedule_work(&g_ss_monitor->set_vbus_current_work);
 
 	if (g_ss_monitor->aoa_reset.acc_dev_status && (g_ss_monitor->aoa_reset.rst_err_noti == false)) {
 		current_time = ktime_to_ms(ktime_get_boottime());
@@ -612,10 +609,10 @@ static int ss_monitor_setup(struct usb_function *f,
 #if defined(CONFIG_USB_NOTIFY_PROC_LOG)
 			pr_info("[USB] %s: SET_CONFIG (%d)\n", __func__, w_value);
 			if (cdev->gadget->speed >= USB_SPEED_SUPER)
-				ss_monitor->vbus_current = USB_CURRENT_SUPER_SPEED;
+				g_ss_monitor->vbus_current = USB_CURRENT_SUPER_SPEED;
 			else
-				ss_monitor->vbus_current = USB_CURRENT_HIGH_SPEED;
-			schedule_work(&ss_monitor->set_vbus_current_work);
+				g_ss_monitor->vbus_current = USB_CURRENT_HIGH_SPEED;
+			schedule_work(&g_ss_monitor->set_vbus_current_work);
 			store_usblog_notify(NOTIFY_USBSTATE,
 				(void *)"USB_STATE=ENUM:SET:CON", NULL);
 #endif
@@ -645,8 +642,8 @@ void make_suspend_current_event(void)
 		f = g_ss_monitor->ss_monitor->function;
 		if (f.config->cdev && f.config->cdev->suspended) {
 			pr_info("[USB] %s, cdev->suspended!\n", __func__);
-			g_ss_monitor->ss_monitor->vbus_current = USB_CURRENT_SUSPENDED;
-			schedule_work(&g_ss_monitor->ss_monitor->set_vbus_current_work);
+			g_ss_monitor->vbus_current = USB_CURRENT_SUSPENDED;
+			schedule_work(&g_ss_monitor->set_vbus_current_work);
 		}
 	}
 }
@@ -658,8 +655,8 @@ static void ss_monitor_suspend(struct usb_function *f)
 
 	pr_info("[USB] %s: usb suspend enter\n", __func__);
 	ss_monitor = func_to_ss_monitor(f);
-	ss_monitor->vbus_current = USB_CURRENT_SUSPENDED;
-	schedule_work(&ss_monitor->set_vbus_current_work);
+	g_ss_monitor->vbus_current = USB_CURRENT_SUSPENDED;
+	schedule_work(&g_ss_monitor->set_vbus_current_work);
 }
 
 static void ss_monitor_resume(struct usb_function *f)
@@ -670,10 +667,10 @@ static void ss_monitor_resume(struct usb_function *f)
 	pr_info("[USB] %s: usb suspend exit\n", __func__);
 	ss_monitor = func_to_ss_monitor(f);
 	if (cdev->gadget->speed >= USB_SPEED_SUPER)
-		ss_monitor->vbus_current = USB_CURRENT_SUPER_SPEED;
+		g_ss_monitor->vbus_current = USB_CURRENT_SUPER_SPEED;
 	else
-		ss_monitor->vbus_current = USB_CURRENT_HIGH_SPEED;
-	schedule_work(&ss_monitor->set_vbus_current_work);
+		g_ss_monitor->vbus_current = USB_CURRENT_HIGH_SPEED;
+	schedule_work(&g_ss_monitor->set_vbus_current_work);
 }
 
 #if defined(CONFIG_USB_NOTIFY_PROC_LOG)
@@ -841,7 +838,7 @@ ss_monitor_bind(struct usb_configuration *c, struct usb_function *f)
 	store_usblog_notify(NOTIFY_USBSTATE,
 		(void *)"USB_STATE=PULLUP:EN:SUCCESS", NULL);
 #endif
-	INIT_WORK(&ss_monitor->set_vbus_current_work, set_vbus_current_work);
+	INIT_WORK(&g_ss_monitor->set_vbus_current_work, set_vbus_current_work);
 
 #if IS_ENABLED(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 	set_usb_enable_state();
@@ -879,7 +876,7 @@ ss_monitor_unbind(struct usb_configuration *c, struct usb_function *f)
 	ss_monitor->is_bind = 0;
 
 	cancel_delayed_work_sync(&opts->aoa_reset.usb_reset_event_work);
-	flush_work(&ss_monitor->set_vbus_current_work);
+	flush_work(&g_ss_monitor->set_vbus_current_work);
 
 	pr_info("[USB] %s: ss_mon.%s unbind\n", __func__, opts->name);
 }

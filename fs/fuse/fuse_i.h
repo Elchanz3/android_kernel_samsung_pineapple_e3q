@@ -35,13 +35,6 @@
 #include <linux/refcount.h>
 #include <linux/user_namespace.h>
 #include <linux/statfs.h>
-#include <linux/sched.h>
-
-#ifdef CONFIG_FUSE_SUPPORT_STLOG
-#include <linux/fslog.h>
-#else
-#define ST_LOG(fmt, ...)
-#endif
 
 #define FUSE_SUPER_MAGIC 0x65735546
 
@@ -113,6 +106,19 @@ static inline void get_fuse_backing_path(const struct dentry *d,
 	path_get(path);
 }
 #endif
+
+/* Submount lookup tracking */
+struct fuse_submount_lookup {
+	/** Refcount */
+	refcount_t count;
+
+	/** Unique ID, which identifies the inode between userspace
+	 * and kernel */
+	u64 nodeid;
+
+	/** The request used for sending the FORGET message */
+	struct fuse_forget_link *forget;
+};
 
 /** FUSE inode */
 struct fuse_inode {
@@ -220,6 +226,8 @@ struct fuse_inode {
 	 */
 	struct fuse_inode_dax *dax;
 #endif
+	/** Submount specific lookup tracking */
+	struct fuse_submount_lookup *submount_lookup;
 };
 
 /** FUSE inode state bits */
@@ -337,8 +345,9 @@ struct fuse_args {
 	uint64_t nodeid;
 	uint32_t opcode;
 	uint32_t error_in;
-	unsigned short in_numargs;
-	unsigned short out_numargs;
+	uint8_t in_numargs;
+	uint8_t out_numargs;
+	uint8_t ext_idx;
 	bool force:1;
 	bool noreply:1;
 	bool nocreds:1;
@@ -349,6 +358,7 @@ struct fuse_args {
 	bool page_zeroing:1;
 	bool page_replace:1;
 	bool may_block:1;
+	bool is_ext:1;
 	struct fuse_in_arg in_args[FUSE_MAX_IN_ARGS];
 	struct fuse_arg out_args[FUSE_MAX_OUT_ARGS];
 	void (*end)(struct fuse_mount *fm, struct fuse_args *args, int error);
@@ -804,6 +814,9 @@ struct fuse_conn {
 	/** Is bmap not implemented by fs? */
 	unsigned no_bmap:1;
 
+	/** Is dentry_canonical_path not implemented by fs? */
+	unsigned no_dentry_canonical_path:1;
+
 	/** Is poll not implemented by fs? */
 	unsigned no_poll:1;
 
@@ -940,10 +953,6 @@ struct fuse_conn {
 
 	/** Protects passthrough_req */
 	spinlock_t passthrough_req_lock;
-
-#ifdef CONFIG_FUSE_WATCHDOG
-	struct task_struct *watchdog_thread;
-#endif
 };
 
 /*
@@ -965,6 +974,7 @@ struct fuse_mount {
 
 	/* Entry on fc->mounts */
 	struct list_head fc_entry;
+	struct rcu_head rcu;
 };
 
 static inline struct fuse_mount *get_fuse_mount_super(struct super_block *sb)
@@ -1016,7 +1026,6 @@ static inline bool fuse_stale_inode(const struct inode *inode, int generation,
 
 static inline void fuse_make_bad(struct inode *inode)
 {
-	remove_inode_hash(inode);
 	set_bit(FUSE_I_BAD, &get_fuse_inode(inode)->state);
 }
 
@@ -1332,7 +1341,7 @@ int fuse_reverse_inval_inode(struct fuse_conn *fc, u64 nodeid,
  * then the dentry is unhashed (d_delete()).
  */
 int fuse_reverse_inval_entry(struct fuse_conn *fc, u64 parent_nodeid,
-			     u64 child_nodeid, struct qstr *name);
+			     u64 child_nodeid, struct qstr *name, u32 flags);
 
 int fuse_do_open(struct fuse_mount *fm, u64 nodeid, struct file *file,
 		 bool isdir);
@@ -1440,23 +1449,6 @@ void fuse_passthrough_release(struct fuse_passthrough *passthrough);
 ssize_t fuse_passthrough_read_iter(struct kiocb *iocb, struct iov_iter *to);
 ssize_t fuse_passthrough_write_iter(struct kiocb *iocb, struct iov_iter *from);
 ssize_t fuse_passthrough_mmap(struct file *file, struct vm_area_struct *vma);
-
-#define fuse_wait_event(wq, condition)					\
-	wait_event_state(wq, condition, (TASK_UNINTERRUPTIBLE|TASK_FREEZABLE))
-
-#define fuse_wait_event_killable(wq, condition)				\
-	wait_event_state(wq, condition, (TASK_KILLABLE|TASK_FREEZABLE))
-
-#define fuse_wait_event_killable_exclusive(wq, condition)		\
-({									\
-	int ___ret = 0;							\
-	might_sleep();							\
-	if (!(condition))						\
-		___ret = ___wait_event(wq, condition,			\
-				(TASK_KILLABLE|TASK_FREEZABLE),		\
-				1, 0, schedule());			\
-	___ret;								\
-})
 
 /* backing.c */
 
@@ -2100,10 +2092,5 @@ static inline int fuse_bpf_run(struct bpf_prog *prog, struct fuse_bpf_args *fba)
 })
 
 #endif /* CONFIG_FUSE_BPF */
-
-#ifdef CONFIG_FUSE_WATCHDOG
-/* watchdog.c */
-void fuse_daemon_watchdog_start(struct fuse_conn *fc);
-#endif
 
 #endif /* _FS_FUSE_I_H */

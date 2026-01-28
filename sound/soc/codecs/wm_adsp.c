@@ -398,6 +398,8 @@ static int wm_coeff_info(struct snd_kcontrol *kctl,
 static int wm_coeff_put(struct snd_kcontrol *kctl,
 			struct snd_ctl_elem_value *ucontrol)
 {
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kctl);
+	struct wm_adsp *dsp = snd_soc_component_get_drvdata(component);
 	struct soc_bytes_ext *bytes_ext =
 		(struct soc_bytes_ext *)kctl->private_value;
 	struct wm_coeff_ctl *ctl = bytes_ext_to_ctl(bytes_ext);
@@ -405,9 +407,11 @@ static int wm_coeff_put(struct snd_kcontrol *kctl,
 	char *p = ucontrol->value.bytes.data;
 	int ret = 0;
 
-	mutex_lock(&cs_ctl->dsp->pwr_lock);
-	ret = cs_dsp_coeff_write_ctrl(cs_ctl, 0, p, cs_ctl->len);
-	mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	if (!dsp->hibernate) {
+		mutex_lock(&cs_ctl->dsp->pwr_lock);
+		ret = cs_dsp_coeff_write_ctrl(cs_ctl, 0, p, cs_ctl->len);
+		mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	}
 
 	return ret;
 }
@@ -415,20 +419,24 @@ static int wm_coeff_put(struct snd_kcontrol *kctl,
 static int wm_coeff_tlv_put(struct snd_kcontrol *kctl,
 			    const unsigned int __user *bytes, unsigned int size)
 {
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kctl);
+	struct wm_adsp *dsp = snd_soc_component_get_drvdata(component);
 	struct soc_bytes_ext *bytes_ext =
 		(struct soc_bytes_ext *)kctl->private_value;
 	struct wm_coeff_ctl *ctl = bytes_ext_to_ctl(bytes_ext);
 	struct cs_dsp_coeff_ctl *cs_ctl = ctl->cs_ctl;
 	int ret = 0;
 
-	mutex_lock(&cs_ctl->dsp->pwr_lock);
+	if (!dsp->hibernate) {
+		mutex_lock(&cs_ctl->dsp->pwr_lock);
 
-	if (copy_from_user(cs_ctl->cache, bytes, size))
-		ret = -EFAULT;
-	else
-		ret = cs_dsp_coeff_write_ctrl(cs_ctl, 0, cs_ctl->cache, size);
+		if (copy_from_user(cs_ctl->cache, bytes, size))
+			ret = -EFAULT;
+		else
+			ret = cs_dsp_coeff_write_ctrl(cs_ctl, 0, cs_ctl->cache, size);
 
-	mutex_unlock(&cs_ctl->dsp->pwr_lock);
+		mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	}
 
 	return ret;
 }
@@ -436,6 +444,8 @@ static int wm_coeff_tlv_put(struct snd_kcontrol *kctl,
 static int wm_coeff_put_acked(struct snd_kcontrol *kctl,
 			      struct snd_ctl_elem_value *ucontrol)
 {
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kctl);
+	struct wm_adsp *dsp = snd_soc_component_get_drvdata(component);
 	struct soc_bytes_ext *bytes_ext =
 		(struct soc_bytes_ext *)kctl->private_value;
 	struct wm_coeff_ctl *ctl = bytes_ext_to_ctl(bytes_ext);
@@ -443,7 +453,7 @@ static int wm_coeff_put_acked(struct snd_kcontrol *kctl,
 	unsigned int val = ucontrol->value.integer.value[0];
 	int ret;
 
-	if (val == 0)
+	if (val == 0 || dsp->hibernate)
 		return 0;	/* 0 means no event */
 
 	mutex_lock(&cs_ctl->dsp->pwr_lock);
@@ -461,16 +471,20 @@ static int wm_coeff_put_acked(struct snd_kcontrol *kctl,
 static int wm_coeff_get(struct snd_kcontrol *kctl,
 			struct snd_ctl_elem_value *ucontrol)
 {
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kctl);
+	struct wm_adsp *dsp = snd_soc_component_get_drvdata(component);
 	struct soc_bytes_ext *bytes_ext =
 		(struct soc_bytes_ext *)kctl->private_value;
 	struct wm_coeff_ctl *ctl = bytes_ext_to_ctl(bytes_ext);
 	struct cs_dsp_coeff_ctl *cs_ctl = ctl->cs_ctl;
 	char *p = ucontrol->value.bytes.data;
-	int ret;
+	int ret = 0;
 
-	mutex_lock(&cs_ctl->dsp->pwr_lock);
-	ret = cs_dsp_coeff_read_ctrl(cs_ctl, 0, p, cs_ctl->len);
-	mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	if (!dsp->hibernate) {
+		mutex_lock(&cs_ctl->dsp->pwr_lock);
+		ret = cs_dsp_coeff_read_ctrl(cs_ctl, 0, p, cs_ctl->len);
+		mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	}
 
 	return ret;
 }
@@ -478,20 +492,24 @@ static int wm_coeff_get(struct snd_kcontrol *kctl,
 static int wm_coeff_tlv_get(struct snd_kcontrol *kctl,
 			    unsigned int __user *bytes, unsigned int size)
 {
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kctl);
+	struct wm_adsp *dsp = snd_soc_component_get_drvdata(component);
 	struct soc_bytes_ext *bytes_ext =
 		(struct soc_bytes_ext *)kctl->private_value;
 	struct wm_coeff_ctl *ctl = bytes_ext_to_ctl(bytes_ext);
 	struct cs_dsp_coeff_ctl *cs_ctl = ctl->cs_ctl;
 	int ret = 0;
 
-	mutex_lock(&cs_ctl->dsp->pwr_lock);
+	if (!dsp->hibernate) {
+		mutex_lock(&cs_ctl->dsp->pwr_lock);
 
-	ret = cs_dsp_coeff_read_ctrl(cs_ctl, 0, cs_ctl->cache, size);
+		ret = cs_dsp_coeff_read_ctrl(cs_ctl, 0, cs_ctl->cache, size);
 
-	if (!ret && copy_to_user(bytes, cs_ctl->cache, size))
-		ret = -EFAULT;
+		if (!ret && copy_to_user(bytes, cs_ctl->cache, size))
+			ret = -EFAULT;
 
-	mutex_unlock(&cs_ctl->dsp->pwr_lock);
+		mutex_unlock(&cs_ctl->dsp->pwr_lock);
+	}
 
 	return ret;
 }
@@ -675,13 +693,20 @@ static void wm_adsp_control_remove(struct cs_dsp_coeff_ctl *cs_ctl)
 int wm_adsp_write_ctl(struct wm_adsp *dsp, const char *name, int type,
 		      unsigned int alg, void *buf, size_t len)
 {
-	struct cs_dsp_coeff_ctl *cs_ctl = cs_dsp_get_ctl(&dsp->cs_dsp, name, type, alg);
+	struct cs_dsp_coeff_ctl *cs_ctl;
 	struct wm_coeff_ctl *ctl;
 	struct snd_kcontrol *kcontrol;
 	char ctl_name[SNDRV_CTL_ELEM_ID_NAME_MAXLEN];
 	int ret;
 
+	if (dsp->hibernate)
+		return 0;
+
+	mutex_lock(&dsp->cs_dsp.pwr_lock);
+	cs_ctl = cs_dsp_get_ctl(&dsp->cs_dsp, name, type, alg);
 	ret = cs_dsp_coeff_write_ctrl(cs_ctl, 0, buf, len);
+	mutex_unlock(&dsp->cs_dsp.pwr_lock);
+
 	if (ret)
 		return ret;
 
@@ -699,7 +724,7 @@ int wm_adsp_write_ctl(struct wm_adsp *dsp, const char *name, int type,
 
 	kcontrol = snd_soc_card_get_kcontrol(dsp->component->card, ctl_name);
 	if (!kcontrol) {
-		adsp_err(dsp, "Can't find kcontrol %s\n", ctl_name);
+		adsp_dbg(dsp, "Can't find kcontrol %s\n", ctl_name);
 		return -EINVAL;
 	}
 
@@ -713,8 +738,17 @@ EXPORT_SYMBOL_GPL(wm_adsp_write_ctl);
 int wm_adsp_read_ctl(struct wm_adsp *dsp, const char *name, int type,
 		     unsigned int alg, void *buf, size_t len)
 {
-	return cs_dsp_coeff_read_ctrl(cs_dsp_get_ctl(&dsp->cs_dsp, name, type, alg),
+	int ret = 0;
+
+
+	if (!dsp->hibernate) {
+		mutex_lock(&dsp->cs_dsp.pwr_lock);
+		ret = cs_dsp_coeff_read_ctrl(cs_dsp_get_ctl(&dsp->cs_dsp, name, type, alg),
 				      0, buf, len);
+		mutex_unlock(&dsp->cs_dsp.pwr_lock);
+	}
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(wm_adsp_read_ctl);
 
@@ -740,19 +774,25 @@ static int wm_adsp_request_firmware_file(struct wm_adsp *dsp,
 					 const char *filetype)
 {
 	struct cs_dsp *cs_dsp = &dsp->cs_dsp;
+	const char *fwf;
 	char *s, c;
 	int ret = 0;
 
+	if (dsp->fwf_name)
+		fwf = dsp->fwf_name;
+	else
+		fwf = dsp->cs_dsp.name;
+
 	if (system_name && asoc_component_prefix)
 		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s-%s-%s.%s", dir, dsp->part,
-				      dsp->fwf_name, wm_adsp_fw[dsp->fw].file, system_name,
+				      fwf, wm_adsp_fw[dsp->fw].file, system_name,
 				      asoc_component_prefix, filetype);
 	else if (system_name)
 		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s-%s.%s", dir, dsp->part,
-				      dsp->fwf_name, wm_adsp_fw[dsp->fw].file, system_name,
+				      fwf, wm_adsp_fw[dsp->fw].file, system_name,
 				      filetype);
 	else
-		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s.%s", dir, dsp->part, dsp->fwf_name,
+		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s.%s", dir, dsp->part, fwf,
 				      wm_adsp_fw[dsp->fw].file, filetype);
 
 	if (*filename == NULL)
@@ -842,28 +882,17 @@ static int wm_adsp_request_firmware_files(struct wm_adsp *dsp,
 	}
 
 	adsp_err(dsp, "Failed to request firmware <%s>%s-%s-%s<-%s<%s>>.wmfw\n",
-		 cirrus_dir, dsp->part, dsp->fwf_name, wm_adsp_fw[dsp->fw].file,
-		 system_name, asoc_component_prefix);
+		 cirrus_dir, dsp->part,
+		 dsp->fwf_name ? dsp->fwf_name : dsp->cs_dsp.name,
+		 wm_adsp_fw[dsp->fw].file, system_name, asoc_component_prefix);
 
 	return -ENOENT;
 }
 
 static int wm_adsp_common_init(struct wm_adsp *dsp)
 {
-	char *p;
-
 	INIT_LIST_HEAD(&dsp->compr_list);
 	INIT_LIST_HEAD(&dsp->buffer_list);
-
-	if (!dsp->fwf_name) {
-		p = devm_kstrdup(dsp->cs_dsp.dev, dsp->cs_dsp.name, GFP_KERNEL);
-		if (!p)
-			return -ENOMEM;
-
-		dsp->fwf_name = p;
-		for (; *p != 0; ++p)
-			*p = tolower(*p);
-	}
 
 	return 0;
 }
@@ -1401,12 +1430,12 @@ static int wm_adsp_buffer_populate(struct wm_adsp_compr_buf *buf)
 		ret = wm_adsp_buffer_read(buf, caps->region_defs[i].base_offset,
 					  &region->base_addr);
 		if (ret < 0)
-			return ret;
+			goto err;
 
 		ret = wm_adsp_buffer_read(buf, caps->region_defs[i].size_offset,
 					  &offset);
 		if (ret < 0)
-			return ret;
+			goto err;
 
 		region->cumulative_size = offset;
 
@@ -1417,6 +1446,10 @@ static int wm_adsp_buffer_populate(struct wm_adsp_compr_buf *buf)
 	}
 
 	return 0;
+
+err:
+	kfree(buf->regions);
+	return ret;
 }
 
 static void wm_adsp_buffer_clear(struct wm_adsp_compr_buf *buf)

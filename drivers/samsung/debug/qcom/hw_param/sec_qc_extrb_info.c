@@ -146,6 +146,10 @@ static ssize_t __extrb_info_report_cpu_kern_ex_info(const rst_exinfo_t *rst_exin
 	__qc_hw_param_scnprintf(buf, sz_buf, info_size, "\"");
 	__qc_hw_param_scnprintf(buf, sz_buf, info_size, ",\"PKO\":\"%x\"", kern_ex_info->pko);
 
+	/* NOTE: While integrating ETR* into ETRA, there was a duplication PC,LR.
+	 * Since ETRA contains more valueable information, it was decided to delete ETRB 
+	 */
+#if 0
 	__qc_hw_param_scnprintf(buf, sz_buf, info_size, ",\"LR\":\"");
 	max_cnt = sizeof(kern_ex_info->lr_val);
 	max_cnt = max_cnt / sizeof(kern_ex_info->lr_val[0]);
@@ -165,9 +169,27 @@ static ssize_t __extrb_info_report_cpu_kern_ex_info(const rst_exinfo_t *rst_exin
 			__qc_hw_param_scnprintf(buf, sz_buf, info_size, ",");
 	}
 	__qc_hw_param_scnprintf(buf, sz_buf, info_size, "\"");
+#endif
+	return info_size;
+}
+
+static char *ddr_info __ro_after_init;
+module_param_named(dram_info, ddr_info, charp, 0440);
+
+static ssize_t __extrb_info_report_ddrid_ex_info(const rst_exinfo_t *rst_exinfo,
+		char *buf, const ssize_t sz_buf, ssize_t info_size)
+{
+
+	if (!ddr_info) {
+		__qc_hw_param_scnprintf(buf, sz_buf, info_size, ",\"DDRID\":\"unknown\"");
+		return info_size;
+	}
+
+	__qc_hw_param_scnprintf(buf, sz_buf, info_size, ",\"DDRID\":\"%.*s,%.*s,%.*s,%s\"",2, ddr_info, 2, ddr_info+2, 2, ddr_info+4, ddr_info+6);
 
 	return info_size;
 }
+
 
 static ssize_t extrb_info_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -196,6 +218,7 @@ static ssize_t extrb_info_show(struct device *dev,
 	info_size = __extrb_info_report_pimem_ex_info(rst_exinfo, buf, sz_buf, info_size);
 	info_size = __extrb_info_report_cpu_stuck_ex_info(rst_exinfo, buf, sz_buf, info_size);
 	info_size = __extrb_info_report_cpu_hyp_ex_info(rst_exinfo, buf, sz_buf, info_size);
+	info_size = __extrb_info_report_ddrid_ex_info(rst_exinfo, buf, sz_buf, info_size);
 	info_size = __extrb_info_report_cpu_kern_ex_info(rst_exinfo, buf, sz_buf, info_size);
 
 err_failed_to_read:

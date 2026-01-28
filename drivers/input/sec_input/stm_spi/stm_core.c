@@ -504,6 +504,12 @@ static void stm_ts_gesture_event(struct stm_ts_data *ts, u8 *event_buff)
 	} else if (p_gesture_status->stype  == STM_TS_SPONGE_EVENT_LONGPRESS) {
 		sec_input_gesture_report(ts->dev, SPONGE_EVENT_TYPE_LONG_PRESS, x, y);
 		input_info(true, ts->dev, "%s: LONG PRESS\n", __func__);
+	} else if (p_gesture_status->stype  == STM_TS_GESTURE_CODE_AOD_NOTI_RECT) {
+		input_info(true, ts->dev, "%s: STM_TS_GESTURE_CODE_AOD_NOTI_RECT gesture id %d\n",
+					__func__, p_gesture_status->gesture_id);
+
+		if (p_gesture_status->gesture_id == 0x00)
+			sec_input_gesture_report(ts->dev, SPONGE_EVENT_TYPE_AOD_DOUBLETAB, x, y);
 	}
 }
 

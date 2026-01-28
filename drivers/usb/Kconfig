@@ -35,14 +35,6 @@ config USB_HOST_SAMSUNG_FEATURE
 	 If samsung engineer changes kernel code,
 	 use this feature,
 
-config USB_DEBUG_DETAILED_LOG
-	bool "USB detailed log for debugging"
-	depends on USB
-	help
-	 Add detailed log for debugging.
-	 It is made by samsung.
-	 It is feature for usb host class drivers.
-
 menuconfig USB_SUPPORT
 	bool "USB support"
 	depends on HAS_IOMEM
@@ -142,8 +134,6 @@ source "drivers/usb/chipidea/Kconfig"
 
 source "drivers/usb/isp1760/Kconfig"
 
-source "drivers/usb/vendor_notify/Kconfig"
-
 comment "USB port drivers"
 
 if USB
@@ -187,10 +177,16 @@ endif # USB
 
 source "drivers/usb/phy/Kconfig"
 
+source "drivers/usb/pd/Kconfig"
+
 source "drivers/usb/gadget/Kconfig"
 
 source "drivers/usb/typec/Kconfig"
 
 source "drivers/usb/roles/Kconfig"
+
+source "drivers/usb/repeater/Kconfig"
+
+source "drivers/usb/redriver/Kconfig"
 
 endif # USB_SUPPORT

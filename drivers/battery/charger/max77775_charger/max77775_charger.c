@@ -12,6 +12,7 @@
 #define DEBUG
 
 #include <linux/mfd/max77775-private.h>
+#include <linux/usb/typec/maxim/max77775_usbc.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/power_supply.h>
@@ -35,6 +36,9 @@
 #define WC_CURRENT_WORK_STEP_OTG	200
 #define AICL_WORK_DELAY		100
 
+#if IS_ENABLED(CONFIG_WRL_MODE4_FG_SETTING)
+static bool is_wireless_mode_4_set;
+#endif
 static unsigned int __read_mostly lpcharge;
 module_param(lpcharge, uint, 0444);
 static int factory_mode;
@@ -2029,6 +2033,25 @@ static void set_icl_wcin_otg_work(struct work_struct *work)
 	__pm_relax(charger->set_icl_wcin_otg_ws);
 }
 
+#if IS_ENABLED(CONFIG_WRL_MODE4_FG_SETTING)
+static void max77775_chg_check_wireless_mode4(struct max77775_charger_data *charger)
+{
+	union power_supply_propval value = {0, };
+
+	if (charger->cnfg00_mode == MAX77775_MODE_4_BUCK_ON && is_wireless_all_type(charger->cable_type)) {
+		if (!is_wireless_mode_4_set) {
+			is_wireless_mode_4_set = true;
+			value.intval = 1;
+			psy_do_property("max77775-fuelgauge", set, POWER_SUPPLY_EXT_PROP_WIRELESS_MODE_4, value);
+		}
+	} else if (is_wireless_mode_4_set) {
+		is_wireless_mode_4_set = false;
+		value.intval = 0;
+		psy_do_property("max77775-fuelgauge", set, POWER_SUPPLY_EXT_PROP_WIRELESS_MODE_4, value);
+	}
+}
+#endif
+
 static void max77775_chg_set_mode_state(struct max77775_charger_data *charger,
 					unsigned int state)
 {
@@ -2278,9 +2301,14 @@ static void max77775_chg_set_mode_state(struct max77775_charger_data *charger,
 	if (max77775_get_facmode())
 		charger->cnfg00_mode |= MAX77775_MODE_4_BUCK_ON;
 
-	pr_info("%s: current_mode(0x%x)\n", __func__, charger->cnfg00_mode);
+	pr_info("%s: prev(0x%x) -> current_mode(0x%x)\n", __func__, prev_mode, charger->cnfg00_mode);
 	max77775_update_reg(charger->i2c, MAX77775_CHG_REG_CNFG_00,
 			charger->cnfg00_mode, CHG_CNFG_00_MODE_MASK);
+
+#if IS_ENABLED(CONFIG_WRL_MODE4_FG_SETTING)
+	if (charger->cnfg00_mode != prev_mode)
+		max77775_chg_check_wireless_mode4(charger);
+#endif
 
 	if (((charger->cnfg00_mode == MAX77775_MODE_F_BUCK_CHG_BOOST_OTG_ON) &&
 		((prev_mode == MAX77775_MODE_A_BOOST_OTG_ON) || (prev_mode == MAX77775_MODE_5_BUCK_CHG_ON))) ||
@@ -2424,6 +2452,9 @@ static int max77775_chg_set_property(struct power_supply *psy,
 				}
 			}
 		}
+#if IS_ENABLED(CONFIG_WRL_MODE4_FG_SETTING)
+		max77775_chg_check_wireless_mode4(charger);
+#endif
 		break;
 		/* val->intval : input charging current */
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
@@ -2770,6 +2801,33 @@ static const struct file_operations max77775_debugfs_fops = {
 	.llseek = seq_lseek,
 	.release = single_release,
 };
+
+static irqreturn_t max77775_chgin_irq(int irq, void *data)
+{
+	struct max77775_charger_data *charger = data;
+	u8 reg_data;
+
+	pr_info("%s : irq(%d)\n", __func__, irq);
+
+	max77775_read_reg(charger->i2c, MAX77775_CHG_REG_DETAILS_00, &reg_data);
+	reg_data = (reg_data & MAX77775_CHGIN_DTLS) >> MAX77775_CHGIN_DTLS_SHIFT;
+	pr_info("%s : before 0x%02x, after 0x%02x\n", __func__, charger->chgin_dtls, reg_data);
+
+	charger->chgin_dtls = reg_data;
+
+	if (!delayed_work_pending(&charger->chgin_work))
+		schedule_delayed_work(&charger->chgin_work, msecs_to_jiffies(200));
+
+	return IRQ_HANDLED;
+}
+
+static void max77775_chgin_isr_work(struct work_struct *work)
+{
+	struct max77775_charger_data *charger =
+	    container_of(work, struct max77775_charger_data, chgin_work.work);
+
+	max77775_chg_check_stuck(charger->chgin_dtls);
+}
 
 static void max77775_chg_isr_work(struct work_struct *work)
 {
@@ -3437,6 +3495,9 @@ static int max77775_charger_probe(struct platform_device *pdev)
 	if (ret < 0)
 		pr_err("%s not found charger dt! ret[%d]\n", __func__, ret);
 #endif
+#if IS_ENABLED(CONFIG_WRL_MODE4_FG_SETTING)
+	is_wireless_mode_4_set = false;
+#endif
 	platform_set_drvdata(pdev, charger);
 
 	max77775_charger_initialize(charger);
@@ -3485,6 +3546,7 @@ static int max77775_charger_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&charger->wc_current_work, max77775_wc_current_work);
 	INIT_DELAYED_WORK(&charger->wc_chg_current_work, max77775_wc_chg_current_work);
 	INIT_DELAYED_WORK(&charger->set_icl_wcin_otg_work, set_icl_wcin_otg_work);
+	INIT_DELAYED_WORK(&charger->chgin_work, max77775_chgin_isr_work);
 
 	charger_cfg.drv_data = charger;
 	charger->psy_chg = power_supply_register(&pdev->dev,
@@ -3522,6 +3584,14 @@ static int max77775_charger_probe(struct platform_device *pdev)
 	}
 
 	max77775_read_reg(charger->i2c, MAX77775_CHG_REG_INT_OK, &reg_data);
+
+	charger->irq_chgin = pdata->irq_base + MAX77775_CHG_IRQ_CHGIN_I;
+	ret = request_threaded_irq(charger->irq_chgin, NULL,
+					max77775_chgin_irq, 0,
+					"chgin-irq", charger);
+	if (ret < 0)
+		pr_err("%s: fail to request chgin IRQ: %d: %d\n",
+		       __func__, charger->irq_chgin, ret);
 
 	charger->irq_bypass = pdata->irq_base + MAX77775_CHG_IRQ_BYP_I;
 	ret = request_threaded_irq(charger->irq_bypass, NULL,
@@ -3788,6 +3858,7 @@ free_chg:
 	cancel_delayed_work(&charger->aicl_work);
 	cancel_delayed_work(&charger->wc_current_work);
 	cancel_delayed_work(&charger->wc_chg_current_work);
+	cancel_delayed_work_sync(&charger->chgin_work);
 #if defined(CONFIG_USE_POGO)
 	cancel_delayed_work(&charger->wcin_det_work);
 #endif

@@ -123,24 +123,6 @@ __without_adjust:
 	return time;
 }
 
-void sec_boot_stat_bootloader_stat(struct seq_file *m)
-{
-	struct sec_boot_stat_soc_operations *soc_ops;
-
-	mutex_lock(&sec_boot_stat->soc_ops_lock);
-
-	soc_ops = sec_boot_stat->soc_ops;
-	if (!soc_ops || !soc_ops->show_on_enh_boot_stat) {
-		pr_warn("Wrong soc show_on_enh_boot_stat operation\n");
-		goto __without_adjust;
-	}
-
-	soc_ops->show_on_enh_boot_stat(m);
-
-__without_adjust:
-	mutex_unlock(&sec_boot_stat->soc_ops_lock);
-}
-
 static noinline int __boot_stat_probe_prolog(struct builder *bd)
 {
 	struct boot_stat_drvdata *drvdata =

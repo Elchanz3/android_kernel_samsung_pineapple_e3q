@@ -201,9 +201,12 @@ static ssize_t selftest_show(struct device *dev,
 		return snprintf(buf, PAGE_SIZE, "0\n");
 	}
 
-	pr_info("[FACTORY] %s : P:%d, T:%d, RES:%d\n",
-		__func__, data->msg_buf[MSG_PRESSURE][0],
-		data->msg_buf[MSG_PRESSURE][1], data->msg_buf[MSG_PRESSURE][2]);
+	pr_info("[FACTORY] %s : P:%d, T:%d, RES:%d, retried:5-%d\n",
+		__func__,
+		data->msg_buf[MSG_PRESSURE][0],
+		data->msg_buf[MSG_PRESSURE][1],
+		data->msg_buf[MSG_PRESSURE][2],
+		data->msg_buf[MSG_PRESSURE][3]);
 
 	if (SNS_SUCCESS == data->msg_buf[MSG_PRESSURE][2])
 		return snprintf(buf, PAGE_SIZE, "%d\n", ST_PASS);

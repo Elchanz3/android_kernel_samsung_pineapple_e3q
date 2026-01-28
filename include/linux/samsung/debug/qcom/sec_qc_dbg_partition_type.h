@@ -21,6 +21,7 @@ enum debug_partition_index {
 	debug_index_reset_klog,
 	debug_index_reset_lpm_klog,
 	debug_index_reset_summary,
+	debug_index_reset_last_kmsg,
 	debug_index_max,
 };
 
@@ -181,7 +182,8 @@ typedef struct debug_onoff_history {
 #define SEC_DEBUG_RESET_HISTORY_MAX_CNT		(10)
 #define SEC_DEBUG_RESET_HISTORY_SIZE            (SEC_DEBUG_AUTO_COMMENT_SIZE*SEC_DEBUG_RESET_HISTORY_MAX_CNT)
 #define SEC_DEBUG_RESET_ETRM_SIZE		(0x3c0)
-#define SEC_DEBUG_RESET_KLOG_SIZE           (0x200000)		/* 2MB */
+#define SEC_DEBUG_RESET_KLOG_SIZE		(0x200000)		/* 2MB */
 #define SEC_DEBUG_RESET_LPM_KLOG_SIZE		(0x200000)		/* 2MB */
+#define SEC_DEBUG_RESET_LAST_KMSG_SIZE		(0x200000)		/* 2MB */
 
 #endif /* __SEC_QC_DBG_PARTITION_TYPE_H__ */

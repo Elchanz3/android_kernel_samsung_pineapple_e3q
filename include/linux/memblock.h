@@ -118,6 +118,8 @@ int memblock_reserve(phys_addr_t base, phys_addr_t size);
 int memblock_physmem_add(phys_addr_t base, phys_addr_t size);
 #endif
 void memblock_trim_memory(phys_addr_t align);
+unsigned long memblock_addrs_overlap(phys_addr_t base1, phys_addr_t size1,
+				     phys_addr_t base2, phys_addr_t size2);
 bool memblock_overlaps_region(struct memblock_type *type,
 			      phys_addr_t base, phys_addr_t size);
 int memblock_mark_hotplug(phys_addr_t base, phys_addr_t size);
@@ -604,26 +606,5 @@ static inline void early_memtest(phys_addr_t start, phys_addr_t end)
 }
 #endif
 
-#ifdef CONFIG_MEMBLOCK_MEMSIZE
-extern void memblock_memsize_record(const char *name, phys_addr_t base,
-				    phys_addr_t size, bool nomap,
-				    bool reusable);
-extern void memblock_memsize_detect_hole(void);
-extern void memblock_memsize_set_name(const char *name);
-extern void memblock_memsize_unset_name(void);
-extern void memblock_memsize_enable_tracking(void);
-extern void memblock_memsize_disable_tracking(void);
-extern void memblock_memsize_mod_kernel_size(long size);
-#else
-static inline void memblock_memsize_record(const char *name, phys_addr_t base,
-				    phys_addr_t size, bool nomap,
-				    bool reusable) { }
-static inline void memblock_memsize_detect_hole(void) { }
-static inline void memblock_memsize_set_name(const char *name) { }
-static inline void memblock_memsize_unset_name(void) { }
-static inline void memblock_memsize_enable_tracking(void){ }
-static inline void memblock_memsize_disable_tracking(void){ }
-static inline void memblock_memsize_mod_kernel_size(long size) { }
-#endif
 
 #endif /* _LINUX_MEMBLOCK_H */

@@ -152,8 +152,8 @@ struct walt_rq {
 	/* MVP */
 	struct list_head	mvp_tasks;
 	int                     num_mvp_tasks;
-	u64			mvp_throttle_time;
-	u64			mvp_arrival_time;
+	u64			mvp_arrival_time; /* ts when 1st mvp task selected on this cpu */
+	u64			mvp_throttle_time; /* ts when mvp were throttled */
 	bool			skip_mvp;
 
 	u64			latest_clock;
@@ -178,6 +178,7 @@ struct walt_sched_cluster {
 	u64			aggr_grp_load;
 	unsigned long		util_to_cost[1024];
 	u64			found_ts;
+	int8_t			sibling_cluster;
 };
 
 struct freq_relation_map {
@@ -639,8 +640,10 @@ static inline unsigned long capacity_of(int cpu)
 
 static inline bool __cpu_overutilized(int cpu, int delta)
 {
-	return (capacity_orig_of(cpu) * 1024) <
-		((cpu_util(cpu) + delta) * sched_capacity_margin_up[cpu]);
+	unsigned long cap = capacity_orig_of(cpu);
+
+	return cap ? ((cap * 1024) <
+			((cpu_util(cpu) + delta) * sched_capacity_margin_up[cpu])) : true;
 }
 
 static inline bool cpu_overutilized(int cpu)

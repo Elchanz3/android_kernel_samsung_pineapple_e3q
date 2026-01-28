@@ -95,10 +95,6 @@ static struct GAForensicINFO {
 	.task_struct_struct_mm = offsetof(struct task_struct, mm),
 	.mm_struct_struct_pgd = offsetof(struct mm_struct, pgd),
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))	
-/*The reason of that branching is a changing avl to maple tree
-  in mm_struct(since Linux v6). There is a temporary workaround,
-  but the following values will be revised appropriate to maple
-  tree traversal soon */
 	.mm_struct_struct_mmap = offsetof(struct mm_struct, mm_mt),
 	.mm_struct_struct_mm_rb = offsetof(struct mm_struct, mm_mt),
 	.vm_area_struct_struct_vm_next =

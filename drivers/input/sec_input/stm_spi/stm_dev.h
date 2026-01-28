@@ -611,6 +611,7 @@ int stm_ts_systemreset(struct stm_ts_data *ts, unsigned int msec);
 int stm_ts_set_scanmode(struct stm_ts_data *ts, u8 scan_mode);
 int stm_ts_set_lowpowermode(void *data, u8 mode);
 int stm_ts_set_aod_rect(struct stm_ts_data *ts);
+int stm_ts_set_aod_noti_rect(struct stm_ts_data *ts);
 void stm_ts_reset(struct stm_ts_data *ts, unsigned int ms);
 void stm_ts_reset_work(struct work_struct *work);
 void stm_ts_read_info_work(struct work_struct *work);

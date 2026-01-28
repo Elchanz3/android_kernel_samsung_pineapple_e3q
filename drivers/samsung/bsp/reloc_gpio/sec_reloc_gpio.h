@@ -15,10 +15,9 @@ struct reloc_gpio_drvdata {
 	struct device *reloc_gpio_dev;
 	struct reloc_gpio_chip *chip;
 	size_t nr_chip;
-	/* relocated gpio number which is request from sysfs interface */
-	int gpio_num;
-	/* found index after calling gpiochip_find */
-	int chip_idx_found;
+	/* relocated gpio number which is request from
+	 * check_requested_gpio. */
+	int check_gpio_num;
 };
 
 #endif /* */

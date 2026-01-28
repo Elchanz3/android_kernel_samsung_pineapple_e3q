@@ -27,6 +27,7 @@ drivers/mfd/maxim/mfd_max77705.ko
 drivers/mfd/maxim/mfd_max77775.ko
 drivers/misc/dev_ril_bridge.ko
 drivers/muic/common/common_muic.ko
+drivers/net/delayed_sack/delayed_sack.ko
 drivers/net/dropdump/dropdump.ko
 drivers/nfc/nxp_combined/nfc_nxp_sec.ko
 drivers/nfc/snvm/snvm.ko

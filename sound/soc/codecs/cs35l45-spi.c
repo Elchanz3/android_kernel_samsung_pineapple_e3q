@@ -1,17 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-//
-// cs35l45-spi.c -- CS35L45 SPI driver
-//
-// Copyright 2019-2022 Cirrus Logic, Inc.
-//
-// Author: James Schulman <james.schulman@cirrus.com>
+// SPDX-License-Identifier: (GPL-2.0 OR BSD-3-Clause)
+/*
+ * cs35l45-spi.c -- CS35L45 SPI driver
+ *
+ * Copyright 2019 Cirrus Logic, Inc.
+ *
+ * Author: James Schulman <james.schulman@cirrus.com>
+ *
+ */
 
-#include <linux/device.h>
 #include <linux/module.h>
-#include <linux/regmap.h>
 #include <linux/spi/spi.h>
+#include <linux/regulator/consumer.h>
 
+#include "wm_adsp.h"
 #include "cs35l45.h"
+#include <sound/cs35l45.h>
 
 static int cs35l45_spi_probe(struct spi_device *spi)
 {
@@ -32,8 +35,26 @@ static int cs35l45_spi_probe(struct spi_device *spi)
 	}
 
 	cs35l45->dev = dev;
+	cs35l45->irq = spi->irq;
+	cs35l45->bus_type = CONTROL_BUS_SPI;
 
-	return cs35l45_probe(cs35l45);
+	ret = cs35l45_probe(cs35l45);
+	if (ret < 0) {
+		dev_err(dev, "Failed device probe: %d\n", ret);
+		return ret;
+	}
+
+	usleep_range(2000, 2100);
+
+	ret = cs35l45_initialize(cs35l45);
+	if (ret < 0) {
+		dev_err(dev, "Failed device initialization: %d\n", ret);
+		goto fail;
+	}
+
+fail:
+	cs35l45_remove(cs35l45);
+	return ret;
 }
 
 static void cs35l45_spi_remove(struct spi_device *spi)
@@ -44,13 +65,13 @@ static void cs35l45_spi_remove(struct spi_device *spi)
 }
 
 static const struct of_device_id cs35l45_of_match[] = {
-	{ .compatible = "cirrus,cs35l45" },
+	{.compatible = "cirrus,cs35l45"},
 	{},
 };
 MODULE_DEVICE_TABLE(of, cs35l45_of_match);
 
 static const struct spi_device_id cs35l45_id_spi[] = {
-	{ "cs35l45", 0 },
+	{"cs35l45", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(spi, cs35l45_id_spi);
@@ -69,6 +90,4 @@ module_spi_driver(cs35l45_spi_driver);
 
 MODULE_DESCRIPTION("SPI CS35L45 driver");
 MODULE_AUTHOR("James Schulman, Cirrus Logic Inc, <james.schulman@cirrus.com>");
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_IMPORT_NS(SND_SOC_CS35L45);
-MODULE_IMPORT_NS(SND_SOC_CS35L45_TABLES);
+MODULE_LICENSE("GPL");

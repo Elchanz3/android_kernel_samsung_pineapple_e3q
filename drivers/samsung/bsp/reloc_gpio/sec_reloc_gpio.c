@@ -96,7 +96,7 @@ static noinline int __reloc_gpio_probe_prolog(struct builder *bd)
 	struct reloc_gpio_drvdata *drvdata =
 			container_of(bd, struct reloc_gpio_drvdata, bd);
 
-	drvdata->gpio_num = -EINVAL;
+	drvdata->check_gpio_num = -EINVAL;
 
 	return 0;
 }
@@ -162,20 +162,26 @@ __ss_static bool __reloc_gpio_is_matched(struct gpio_chip *gc,
 	return __reloc_gpio_is_valid_gpio_num(chip, gc->ngpio, gpio_num);
 }
 
+struct reloc_gpio_match {
+	struct reloc_gpio_drvdata *drvdata;
+	int gpio_num;
+	int chip_idx_found;
+};
+
 __ss_static int sec_reloc_gpio_is_matched_gpio_chip(struct gpio_chip *gc,
-		void *__drvdata)
+		void *__match)
 {
-	struct reloc_gpio_drvdata *drvdata = __drvdata;
+	struct reloc_gpio_match *match = __match;
+	struct reloc_gpio_drvdata *drvdata = match->drvdata;
 	struct reloc_gpio_chip *chip = drvdata->chip;
 	size_t nr_chip = drvdata->nr_chip;
-	int gpio_num = drvdata->gpio_num;
 	size_t i;
 
 	for (i = 0; i < nr_chip; i++) {
 		struct reloc_gpio_chip *this_chip = &chip[i];
 
-		if (__reloc_gpio_is_matched(gc, this_chip, gpio_num)) {
-			drvdata->chip_idx_found = i;
+		if (__reloc_gpio_is_matched(gc, this_chip, match->gpio_num)) {
+			match->chip_idx_found = i;
 			return 1;
 		}
 	}
@@ -184,45 +190,54 @@ __ss_static int sec_reloc_gpio_is_matched_gpio_chip(struct gpio_chip *gc,
 }
 
 static inline bool __reloc_gpio_test_range(struct reloc_gpio_drvdata *drvdata,
-		struct reloc_gpio_chip *chip, struct gpio_chip *gc)
+		struct reloc_gpio_chip *chip, struct gpio_chip *gc,
+		int gpio_num)
 {
-	if (drvdata->gpio_num < chip->base)
+	if (gpio_num < chip->base)
 		return false;
 
-	if (drvdata->gpio_num >= (chip->base + gc->ngpio))
+	if (gpio_num >= (chip->base + gc->ngpio))
 		return false;
 
 	return true;
 }
 
 __ss_static int __reloc_gpio_from_legacy_number(
-		struct reloc_gpio_drvdata *drvdata, struct gpio_chip *gc)
+		struct reloc_gpio_match *match, struct gpio_chip *gc,
+		int gpio_num)
 {
+	struct reloc_gpio_drvdata *drvdata = match->drvdata;
 	struct reloc_gpio_chip *chip;
 
-	if (drvdata->nr_chip < drvdata->chip_idx_found)
+	if (drvdata->nr_chip < match->chip_idx_found)
 		return -EINVAL;
 
 	/* drvdata->chip_idx_found is determined when 'gpiochip_find' is run. */
-	chip = &drvdata->chip[drvdata->chip_idx_found];
-	if (!__reloc_gpio_test_range(drvdata, chip, gc))
+	chip = &drvdata->chip[match->chip_idx_found];
+	if (!__reloc_gpio_test_range(drvdata, chip, gc, gpio_num))
 		return -ERANGE;
 
-	return (drvdata->gpio_num - chip->base) + gc->base;
+	return (gpio_num - chip->base) + gc->base;
 }
 
-static int __reloc_gpio_relocated_to_actual(struct reloc_gpio_drvdata *drvdata)
+static int __reloc_gpio_relocated_to_actual(struct reloc_gpio_drvdata *drvdata,
+		int gpio_num)
 {
+	struct reloc_gpio_match __match;
+	struct reloc_gpio_match *match = &__match;
 	struct gpio_chip *gc;
 
 	if (!drvdata->nr_chip)
-		return drvdata->gpio_num;
+		return gpio_num;
 
-	gc = gpiochip_find(drvdata, sec_reloc_gpio_is_matched_gpio_chip);
+	match->drvdata = drvdata;
+	match->gpio_num = gpio_num;
+
+	gc = gpiochip_find(match, sec_reloc_gpio_is_matched_gpio_chip);
 	if (IS_ERR_OR_NULL(gc))
 		return -ENOENT;
 
-	return __reloc_gpio_from_legacy_number(drvdata, gc);
+	return __reloc_gpio_from_legacy_number(match, gc, gpio_num);
 }
 
 static ssize_t check_requested_gpio_show(struct device *sec_class_dev,
@@ -232,12 +247,13 @@ static ssize_t check_requested_gpio_show(struct device *sec_class_dev,
 	int gpio_actual = -EINVAL;
 	int val;
 
-	if (drvdata->gpio_num < 0) {
+	if (drvdata->check_gpio_num < 0) {
 		val = -ENODEV;
 		goto __finally;
 	}
 
-	gpio_actual = __reloc_gpio_relocated_to_actual(drvdata);
+	gpio_actual = __reloc_gpio_relocated_to_actual(drvdata,
+			drvdata->check_gpio_num);
 	if (gpio_actual < 0) {
 		val = -ENOENT;
 		goto __finally;
@@ -246,7 +262,7 @@ static ssize_t check_requested_gpio_show(struct device *sec_class_dev,
 	val = gpio_get_value(gpio_actual);
 
 __finally:
-	drvdata->gpio_num = -EINVAL;
+	drvdata->check_gpio_num = -EINVAL;
 	return scnprintf(buf, PAGE_SIZE, "GPIO[%d] : [%d]", gpio_actual, val);
 }
 
@@ -266,15 +282,52 @@ static ssize_t check_requested_gpio_store(struct device *sec_class_dev,
 		return err;
 	}
 
-	drvdata->gpio_num = gpio_num;
+	drvdata->check_gpio_num = gpio_num;
 
 	return count;
 }
 
 static DEVICE_ATTR_RW(check_requested_gpio);
 
+static ssize_t ctrl_requested_gpio_store(struct device *sec_class_dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct reloc_gpio_drvdata *drvdata = dev_get_drvdata(sec_class_dev);
+	struct device *dev = drvdata->bd.dev;
+	unsigned int gpio_num, gpio_dir;
+	int gpio_val;
+	int gpio_actual;
+	int err;
+
+	err = sscanf(buf, "%u %u %d", &gpio_num, &gpio_dir, &gpio_val);
+	if (err != 3) {
+		dev_warn(dev, "requested gpio number is malformed or wrong\n");
+		print_hex_dump(KERN_WARNING, "", DUMP_PREFIX_OFFSET, 16, 1,
+				buf, count, 1);
+		return -EINVAL;
+	}
+
+	gpio_actual = __reloc_gpio_relocated_to_actual(drvdata, gpio_num);
+	if (gpio_actual < 0) {
+		dev_warn(dev, "%d is not a valid gpio number (%d)\n",
+				gpio_num, gpio_actual);
+		return gpio_actual; /* error */
+	}
+
+	gpio_dir = (!gpio_dir) << 0;
+	if (gpio_dir == GPIOF_DIR_IN)
+		gpio_direction_input(gpio_actual);
+	else
+		gpio_direction_output(gpio_actual, gpio_val);
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(ctrl_requested_gpio);
+
 static struct attribute *sec_reloc_gpio_attrs[] = {
 	&dev_attr_check_requested_gpio.attr,
+	&dev_attr_ctrl_requested_gpio.attr,
 	NULL,
 };
 

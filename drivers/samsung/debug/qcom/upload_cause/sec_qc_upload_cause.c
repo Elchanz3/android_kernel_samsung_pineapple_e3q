@@ -45,12 +45,38 @@ static unsigned int __qc_upldc_read_cause(void)
 	return readl(qcom_upload_cause);
 }
 
+static bool __qc_upldc_is_already_written(void)
+{
+	bool is_written ;
+	unsigned int type;
+
+	type = __qc_upldc_read_cause();
+
+	switch (type) {
+	case UPLOAD_CAUSE_KERNEL_PANIC ... UPLOAD_CAUSE_SS_END:
+	case UPLOAD_CAUSE_MP_START ... UPLOAD_CAUSE_MP_END:
+		pr_warn("upload cause is already written (0x%X).\n", type);
+		is_written = true;
+		break;
+	default:
+		is_written = false;
+		break;
+	}
+
+	return is_written;
+}
+
 void sec_qc_upldc_write_cause(unsigned int type)
 {
 	int cpu;
 
 	if (!__qc_upldc_is_probed()) {
 		pr_warn("upload cause address unmapped.\n");
+		return;
+	}
+
+	if (__qc_upldc_is_already_written()) {
+		pr_warn("0x%X is ignored\n", type);
 		return;
 	}
 
@@ -145,12 +171,6 @@ static struct sec_upload_cause __qc_upldc_strncmp[] = {
 			    UPLOAD_CAUSE_USER_FORCED_UPLOAD),
 	SEC_QC_UPLC_STRNCMP("Long Key Press",
 			    UPLOAD_CAUSE_POWER_LONG_PRESS),
-	SEC_QC_UPLC_STRNCMP("Platform Watchdog couldnot be initialized",
-			    UPLOAD_CAUSE_PF_WD_INIT_FAIL),
-	SEC_QC_UPLC_STRNCMP("Platform Watchdog couldnot be restarted",
-			    UPLOAD_CAUSE_PF_WD_RESTART_FAIL),
-	SEC_QC_UPLC_STRNCMP("Platform Watchdog can't update sync_cnt",
-			    UPLOAD_CAUSE_PF_WD_KICK_FAIL),
 	SEC_QC_UPLC_STRNCMP("CP Crash",
 			    UPLOAD_CAUSE_CP_ERROR_FATAL),
 	SEC_QC_UPLC_STRNCMP("MDM Crash",
@@ -278,20 +298,13 @@ static void __qc_upldc_del_suite(struct sec_upload_cause_suite *suite,
 		__qc_upldc_del_for_each(suite[i].uc, suite[i].nr_cause);
 }
 
-
 static int __qc_upldc_crashkey_long_on_matched(void)
 {
-	if (sec_qc_upldc_read_cause() == UPLOAD_CAUSE_INIT)
-		sec_qc_upldc_write_cause(UPLOAD_CAUSE_POWER_LONG_PRESS);
-
 	return NOTIFY_OK;
 }
 
 static int __qc_upldc_crashkey_long_on_unmatched(void)
 {
-	if (sec_qc_upldc_read_cause() == UPLOAD_CAUSE_POWER_LONG_PRESS)
-		sec_qc_upldc_write_cause(UPLOAD_CAUSE_INIT);
-
 	return NOTIFY_OK;
 }
 
@@ -387,7 +400,7 @@ static int __qc_upldc_ioremap_qcom_upload_cause(struct builder *bd)
 			qcom_upload_cause,
 			(unsigned long long)virt_to_phys(qcom_upload_cause));
 
-	sec_qc_upldc_write_cause(UPLOAD_CAUSE_INIT);
+	__qc_upldc_write_cause(UPLOAD_CAUSE_INIT);
 
 	return 0;
 }

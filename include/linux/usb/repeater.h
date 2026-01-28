@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __LINUX_USB_REPEATER_H
 #define __LINUX_USB_REPEATER_H
@@ -8,9 +8,9 @@
 #include <linux/errno.h>
 #include <linux/device.h>
 #include <linux/types.h>
-#if IS_ENABLED(CONFIG_I2C_EUSB2_REPEATER)
+
 #define UR_AUTO_RESUME_SUPPORTED	BIT(0)
-#endif
+
 struct usb_repeater  {
 	struct device		*dev;
 	const char		*label;

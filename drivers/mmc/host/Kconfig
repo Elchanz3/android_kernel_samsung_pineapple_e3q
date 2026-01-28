@@ -563,6 +563,21 @@ config MMC_SDHCI_MSM
 
 	  If unsure, say N.
 
+config MMC_SDHCI_MSM_SCALING
+	tristate "Qualcomm Technologies, Inc. clock scaling feature"
+	depends on MMC_CQHCI
+	select PM_DEVFREQ
+	select DEVFREQ_GOV_SIMPLE_ONDEMAND
+	help
+	  This change adds the use of devfreq based clock scaling to eMMC.
+	  Provide an ondemand clock scaling support similar
+	  to the cpufreq ondemand governor having two thresholds,
+	  up_threshold and down_threshold to decide whether to increase
+	  the frequency or scale it down respectively as per load to save
+	  power.
+
+	  If unsure, say N.
+
 config MMC_MXC
 	tristate "Freescale i.MX21/27/31 or MPC512x Multimedia Card support"
 	depends on ARCH_MXC || PPC_MPC512x
@@ -1061,14 +1076,15 @@ config MMC_SDHCI_XENON
 
 config MMC_SDHCI_OMAP
 	tristate "TI SDHCI Controller Support"
+	depends on ARCH_OMAP2PLUS || ARCH_KEYSTONE || COMPILE_TEST
 	depends on MMC_SDHCI_PLTFM && OF
 	select THERMAL
 	imply TI_SOC_THERMAL
 	select MMC_SDHCI_EXTERNAL_DMA if DMA_ENGINE
 	help
 	  This selects the Secure Digital Host Controller Interface (SDHCI)
-	  support present in TI's DRA7 SOCs. The controller supports
-	  SD/MMC/SDIO devices.
+	  support present in TI's Keystone/OMAP2+/DRA7 SOCs. The controller
+	  supports SD/MMC/SDIO devices.
 
 	  If you have a controller with this interface, say Y or M here.
 
@@ -1076,14 +1092,15 @@ config MMC_SDHCI_OMAP
 
 config MMC_SDHCI_AM654
 	tristate "Support for the SDHCI Controller in TI's AM654 SOCs"
+	depends on ARCH_K3 || COMPILE_TEST
 	depends on MMC_SDHCI_PLTFM && OF
 	select MMC_SDHCI_IO_ACCESSORS
 	select MMC_CQHCI
 	select REGMAP_MMIO
 	help
 	  This selects the Secure Digital Host Controller Interface (SDHCI)
-	  support present in TI's AM654 SOCs. The controller supports
-	  SD/MMC/SDIO devices.
+	  support present in TI's AM65x/AM64x/AM62x/J721E SOCs. The controller
+	  supports SD/MMC/SDIO devices.
 
 	  If you have a controller with this interface, say Y or M here.
 
@@ -1100,6 +1117,18 @@ config MMC_OWL
 config MMC_SDHCI_EXTERNAL_DMA
 	bool
 
+config MMC_CRYPTO_QTI
+	tristate "Vendor specific CQHCI Crypto Engine Support"
+	depends on MMC_CRYPTO
+	help
+	  Enable Vendor Crypto Engine Support in CQHCI
+	  Enabling this allows kernel to use CQHCI crypto operations defined
+	  and implemented by QTI.
+
+	  If you have a controller with this interface, say Y or M here.
+
+	  If unsure, say N
+
 config MMC_LITEX
 	tristate "LiteX MMC Host Controller support"
 	depends on ((PPC_MICROWATT || LITEX) && OF && HAVE_CLK) || COMPILE_TEST
@@ -1112,3 +1141,23 @@ config MMC_LITEX
 	  module will be called litex_mmc.
 
 	  If unsure, say N.
+
+config SDHCI_MSM_DBG
+	bool "Qualcomm Technologies, Inc. SDHCI_MSM_DBG Driver"
+	depends on MMC_SDHCI_MSM
+	help
+	  This enables the IPC tracing events for sdhci_msm driver.
+
+	  Tracing sdhci_msm events helps to trace significant events
+	  used for debugging purpose.
+
+	  If unsure, say N here.
+
+config SEC_MMC_FEATURE
+	tristate "SEC specific MMC/SD feature"
+	depends on MMC_SDHCI_MSM
+	help
+	  Enable Samsung feature support
+	  Enabling this allows kernel to use SEC specific feature
+	  defined and implemented by SEC.
+

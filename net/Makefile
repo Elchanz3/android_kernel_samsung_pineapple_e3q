@@ -75,6 +75,7 @@ obj-$(CONFIG_HSR)		+= hsr/
 obj-$(CONFIG_NET_SWITCHDEV)	+= switchdev/
 obj-$(CONFIG_NET_L3_MASTER_DEV)	+= l3mdev/
 obj-$(CONFIG_QRTR)		+= qrtr/
+obj-$(CONFIG_QMSGQ)		+= qmsgq/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
 # SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA {
 obj-$(CONFIG_KNOX_NCM)		+= ncm/
@@ -82,4 +83,3 @@ obj-$(CONFIG_KNOX_NCM)		+= ncm/
 obj-$(CONFIG_XDP_SOCKETS)	+= xdp/
 obj-$(CONFIG_MPTCP)		+= mptcp/
 obj-$(CONFIG_MCTP)		+= mctp/
-obj-$(CONFIG_SKB_TRACER)	+= skb_tracer/

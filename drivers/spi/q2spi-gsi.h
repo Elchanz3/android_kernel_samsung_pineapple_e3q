@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __SPI_Q2SPI_GPI_H_
@@ -50,6 +50,7 @@
  * num_tx_eot: Represents number of TX End of Transfers
  * num_rx_eot: Represents number of RX End of Transfers
  * qup_gsi_err: flag to represent gsi error if any
+ * qup_gsi_global_err: flag to represent gsi global error
  */
 struct q2spi_gsi {
 	struct dma_chan *tx_c;
@@ -62,8 +63,10 @@ struct q2spi_gsi {
 	struct msm_gpi_ctrl rx_ev;
 	struct dma_async_tx_descriptor *tx_desc;
 	struct dma_async_tx_descriptor *rx_desc;
+	struct dma_async_tx_descriptor *db_rx_desc;
 	struct msm_gpi_dma_async_tx_cb_param tx_cb_param;
 	struct msm_gpi_dma_async_tx_cb_param rx_cb_param;
+	struct msm_gpi_dma_async_tx_cb_param db_rx_cb_param;
 	bool chan_setup;
 	struct scatterlist tx_sg[3];
 	struct scatterlist rx_sg[3];
@@ -72,6 +75,7 @@ struct q2spi_gsi {
 	int num_tx_eot;
 	int num_rx_eot;
 	bool qup_gsi_err;
+	bool qup_gsi_global_err;
 };
 
 #endif /* __SPI_Q2SPI_GPI_H_ */

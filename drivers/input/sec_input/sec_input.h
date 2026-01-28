@@ -414,6 +414,7 @@ enum proximity_event_type {
 /* SPONGE MODE 0x01 */
 #define SEC_TS_MODE_SPONGE_INF_DUMP_CLEAR	(1 << 0)
 #define SEC_TS_MODE_SPONGE_INF_DUMP		(1 << 1)
+#define SEC_TS_MODE_SPONGE_AOD_NOTI_RECT_AOT	(1 << 2)
 
 /*SPONGE library parameters*/
 #define SEC_TS_MAX_SPONGE_DUMP_BUFFER	512
@@ -423,6 +424,7 @@ enum proximity_event_type {
 
 /* SEC_TS SPONGE OPCODE COMMAND */
 #define SEC_TS_CMD_SPONGE_DUMP_FLUSH			0x01
+#define SEC_TS_CMD_SPONGE_AOD_NOTI_RECT			0x01
 #define SEC_TS_CMD_SPONGE_AOD_ACTIVE_INFO		0x0A
 #define SEC_TS_CMD_SPONGE_OFFSET_UTC			0x10
 #define SEC_TS_CMD_SPONGE_PRESS_PROPERTY		0x14
@@ -742,6 +744,7 @@ struct sec_ts_plat_data {
 
 	struct sec_ts_fod_data fod_data;
 	struct sec_ts_aod_data aod_data;
+	struct sec_ts_aod_data aod_noti_data;
 
 	const char *firmware_name;
 	struct regulator *dvdd;
