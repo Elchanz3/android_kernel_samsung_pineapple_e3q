@@ -11,12 +11,18 @@ set -Eeuo pipefail
 # vendor_boot.img, dtbo.img, vendor_dlkm.img and system_dlkm.img.
 #
 # Partition contents that are not built from this tree (vendor ramdisk base,
-# etc/build.prop of the dlkm partitions, ...) are taken from stock images:
-# point STOCK_DIR at a directory with vendor_boot.img, vendor_dlkm.img and
-# system_dlkm.img dumped from the device (or extracted from the firmware).
+# etc/build.prop of the dlkm partitions, ...) come from build/, extracted from
+# the stock S928BXXU4AXK4 images:
+#   build/vendor_boot_base/<device>/  vendor ramdisk without lib/modules
+#   build/vendor_dlkm/etc/            vendor_dlkm etc/ (build.prop, fs_config)
+#   build/system_dlkm/etc/            system_dlkm etc/
+# To use another firmware instead, point STOCK_DIR at a directory with
+# vendor_boot.img, vendor_dlkm.img and system_dlkm.img dumped from the device
+# (or extracted from the firmware); stock images win over build/.
 #
 # Quick start:
-#   STOCK_DIR=/path/to/e3q_stock ./build_pineapple.sh
+#   ./build_pineapple.sh
+#   BUILD_FLASHABLE_ZIP=1 ./build_pineapple.sh    # + TWRP flashable zip
 #
 # Everything is configurable through environment variables (see below).
 
@@ -105,6 +111,17 @@ STOCK_SYSTEM_DLKM_IMG="${STOCK_SYSTEM_DLKM_IMG:-${STOCK_DIR:+$STOCK_DIR/system_d
 VENDOR_RAMDISK_BASE_DIR="${VENDOR_RAMDISK_BASE_DIR:-}"
 VENDOR_DLKM_BASE_DIR="${VENDOR_DLKM_BASE_DIR:-}"
 SYSTEM_DLKM_BASE_DIR="${SYSTEM_DLKM_BASE_DIR:-}"
+# Without a stock image, fall back to the bases shipped in build/.
+IN_TREE_BASE_DIR="${IN_TREE_BASE_DIR:-$ROOT_DIR/build}"
+if [[ -z "$VENDOR_RAMDISK_BASE_DIR" && -z "$STOCK_VENDOR_BOOT_IMG" && -d "$IN_TREE_BASE_DIR/vendor_boot_base/$DEVICE_CODENAME" ]]; then
+  VENDOR_RAMDISK_BASE_DIR="$IN_TREE_BASE_DIR/vendor_boot_base/$DEVICE_CODENAME"
+fi
+if [[ -z "$VENDOR_DLKM_BASE_DIR" && -z "$STOCK_VENDOR_DLKM_IMG" && -d "$IN_TREE_BASE_DIR/vendor_dlkm/etc" ]]; then
+  VENDOR_DLKM_BASE_DIR="$IN_TREE_BASE_DIR/vendor_dlkm"
+fi
+if [[ -z "$SYSTEM_DLKM_BASE_DIR" && -z "$STOCK_SYSTEM_DLKM_IMG" && -d "$IN_TREE_BASE_DIR/system_dlkm/etc" ]]; then
+  SYSTEM_DLKM_BASE_DIR="$IN_TREE_BASE_DIR/system_dlkm"
+fi
 
 # Image builds: 1, 0 or auto (build when the needed inputs are available).
 BUILD_BOOT_IMG="${BUILD_BOOT_IMG:-1}"
@@ -168,10 +185,11 @@ DLKM_FS="${DLKM_FS:-ext4}"
 DLKM_TIMESTAMP="${DLKM_TIMESTAMP:-1230768000}"
 VENDOR_DLKM_IMAGE_OUT="${VENDOR_DLKM_IMAGE_OUT:-$DIST_DIR/vendor_dlkm.img}"
 SYSTEM_DLKM_IMAGE_OUT="${SYSTEM_DLKM_IMAGE_OUT:-$DIST_DIR/system_dlkm.img}"
-# Image size in bytes for ext4. Default: size of the stock image (so it fits
-# the existing logical partition), else payload + DLKM_EXTRA_SIZE_BYTES.
-VENDOR_DLKM_IMAGE_SIZE="${VENDOR_DLKM_IMAGE_SIZE:-}"
-SYSTEM_DLKM_IMAGE_SIZE="${SYSTEM_DLKM_IMAGE_SIZE:-}"
+# Image size in bytes for ext4: the size of the logical partitions in super
+# on the S24 Ultra, so the image never overruns them when flashed. Empty:
+# size of the stock image if one is given, else payload + DLKM_EXTRA_SIZE_BYTES.
+VENDOR_DLKM_IMAGE_SIZE="${VENDOR_DLKM_IMAGE_SIZE-186064896}"
+SYSTEM_DLKM_IMAGE_SIZE="${SYSTEM_DLKM_IMAGE_SIZE-123703296}"
 DLKM_EXTRA_SIZE_BYTES="${DLKM_EXTRA_SIZE_BYTES:-16777216}"
 
 # Flashable zip (TWRP). Expects update-binary + updater-script in the base dir.
@@ -442,7 +460,9 @@ preflight_summary() {
   printf '  lto:        %s\n' "$LTO"
   printf '  jobs:       %s\n' "$JOBS"
   printf '  out:        %s\n' "$OUT_DIR"
-  printf '  stock base: %s\n' "${STOCK_DIR:-<none>}"
+  printf '  bases:      vendor_boot=%s\n' "${VENDOR_RAMDISK_BASE_DIR:-${STOCK_VENDOR_BOOT_IMG:-<none>}}"
+  printf '              vendor_dlkm=%s\n' "${VENDOR_DLKM_BASE_DIR:-${STOCK_VENDOR_DLKM_IMG:-<none>}}"
+  printf '              system_dlkm=%s\n' "${SYSTEM_DLKM_BASE_DIR:-${STOCK_SYSTEM_DLKM_IMG:-<none>}}"
   clang_bin="$(find_clang_bin 2>/dev/null || true)"
   if [[ -n "$clang_bin" ]]; then
     printf '  toolchain:  %s\n' "$("$clang_bin/clang" --version 2>/dev/null | head -1)"
@@ -912,6 +932,12 @@ vendor_ramdisk_base() {
   else
     return 1
   fi
+  # git only keeps 644/755 modes: restore the stock ones of the ramdisk.
+  [[ -d "$dst/system/bin" ]] && chmod 751 "$dst/system/bin"
+  local f
+  for f in "$dst"/fstab.*; do
+    [[ -f "$f" ]] && chmod 750 "$f"
+  done
   # Modules always come from this build.
   rm -rf "$dst/lib/modules"
   mkdir -p "$dst/lib/modules"
@@ -1099,12 +1125,12 @@ build_flashable_zip() {
 
   if [[ "$FLASHABLE_APPEND_DLKM_STANZAS" == "1" ]]; then
     if [[ -f "$zip_root/files/vendor_dlkm.img" ]] && ! grep -q 'vendor_dlkm.img' "$updater_script"; then
-      printf '\nui_print("Flashing vendor_dlkm image...");\npackage_extract_file("files/vendor_dlkm.img", "%s");\n' \
-        "$FLASHABLE_VENDOR_DLKM_BLOCK_DEVICE" >> "$updater_script"
+      printf '\nui_print("Flashing vendor_dlkm image...");\nrun_program("/system/bin/blockdev", "--setrw", "%s");\npackage_extract_file("files/vendor_dlkm.img", "%s");\n' \
+        "$FLASHABLE_VENDOR_DLKM_BLOCK_DEVICE" "$FLASHABLE_VENDOR_DLKM_BLOCK_DEVICE" >> "$updater_script"
     fi
     if [[ -f "$zip_root/files/system_dlkm.img" ]] && ! grep -q 'system_dlkm.img' "$updater_script"; then
-      printf '\nui_print("Flashing system_dlkm image...");\npackage_extract_file("files/system_dlkm.img", "%s");\n' \
-        "$FLASHABLE_SYSTEM_DLKM_BLOCK_DEVICE" >> "$updater_script"
+      printf '\nui_print("Flashing system_dlkm image...");\nrun_program("/system/bin/blockdev", "--setrw", "%s");\npackage_extract_file("files/system_dlkm.img", "%s");\n' \
+        "$FLASHABLE_SYSTEM_DLKM_BLOCK_DEVICE" "$FLASHABLE_SYSTEM_DLKM_BLOCK_DEVICE" >> "$updater_script"
     fi
   fi
 
@@ -1118,6 +1144,8 @@ build_flashable_zip() {
   if (( ${#missing[@]} )); then
     die "updater-script flashes files not present in the zip: ${missing[*]}"
   fi
+
+  printf '\nui_print(" ");\nui_print("Installation done!");\nui_print(" ");\n' >> "$updater_script"
 
   ( cd "$zip_root" && rm -f "$FLASHABLE_ZIP_OUT" && zip -r -qq "$FLASHABLE_ZIP_OUT" . )
   log "Created flashable zip: $FLASHABLE_ZIP_OUT"
@@ -1248,6 +1276,12 @@ summarize() {
   out_line "$VENDOR_DLKM_IMAGE_OUT"
   out_line "$SYSTEM_DLKM_IMAGE_OUT"
   out_line "$FLASHABLE_ZIP_OUT"
+  if [[ "$BUILD_KSU_MODULES" == "1" && -d "$KSU_MODULES_SRC_DIR" ]]; then
+    local mod_dir
+    for mod_dir in "$KSU_MODULES_SRC_DIR"/*/; do
+      [[ -f "${mod_dir}module.prop" ]] && out_line "$KSU_MODULES_OUT_DIR/$(basename "$mod_dir").zip"
+    done
+  fi
   out_line "$DIST_DIR/build_manifest.txt"
   [[ -n "$SHARKMANAGER_APK_RESULT" ]] && out_line "$SHARKMANAGER_APK_RESULT"
   local f

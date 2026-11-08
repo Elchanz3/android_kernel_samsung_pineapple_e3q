@@ -177,7 +177,9 @@ sphinx_*/
 /prebuilts/
 /toolchains/
 /sharkmanager/
-/ksu_modules/
+
+# Stock partition bases used by build_pineapple.sh (binaries on purpose)
+!/build/**
 
 # The display techpack regenerates these from msm/samsung/panel_data_file
 # when building inside the source dir (not with O=).
