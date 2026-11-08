@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# In-tree build (techpack/). The cnss platform options used to come from the
+# per-module <target>_<variant>_defconfig files (Bazel) or from
+# WLAN_PLATFORM_KBUILD_OPTIONS (Android.mk), which were passed to both the
+# platform drivers and qcacld-3.0. icnss2 is not used on e3q (WCN7850/kiwi is
+# a PCIe part handled by cnss2), as on the stock firmware.
+ifeq ($(KBUILD_EXTMOD),)
+export WLAN_PLATFORM_ROOT := $(abs_srctree)/$(src)/platform
+_wlan_plat_cfgs := $(addprefix $(WLAN_PLATFORM_ROOT)/,cnss2/pineapple_gki_defconfig \
+	cnss_genl/pineapple_gki_defconfig cnss_prealloc/pineapple_gki_defconfig \
+	cnss_utils/pineapple_gki_defconfig)
+include $(_wlan_plat_cfgs)
+export $(shell sed -n 's/^\(CONFIG_[A-Za-z0-9_]*\)=.*/\1/p' $(_wlan_plat_cfgs))
+endif
+
+obj-$(CONFIG_TECHPACK_WLAN_PLATFORM) += platform/
+obj-$(CONFIG_TECHPACK_WLAN) += qcacld-3.0/

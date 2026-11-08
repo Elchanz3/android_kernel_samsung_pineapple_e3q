@@ -2439,27 +2439,11 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 	/* calculate new rates and get the topmost changed clock */
 	top = clk_calc_new_rates(core, req_rate);
 	if (!top)
-#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
-	{
-		if (!strcmp(core->name, "disp_cc_mdss_pclk0_clk"))
-			pr_err("%s: clk_calc_new_rates error disp_cc_mdss_pclk0_clk \n");
 		return -EINVAL;
-	}
-#else
-		return -EINVAL;
-#endif
 
 	ret = clk_pm_runtime_get(core);
 	if (ret)
-#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
-	{
-		if (!strcmp(core->name, "disp_cc_mdss_pclk0_clk"))
-			pr_err("%s: clk_pm_runtime_get error disp_cc_mdss_pclk0_clk %d\n", ret);
-		return -EINVAL;
-	}
-#else
 		return ret;
-#endif
 
 	/* notify that we are about to change rates */
 	fail_clk = clk_propagate_rate_change(top, PRE_RATE_CHANGE);
@@ -3435,6 +3419,7 @@ static void possible_parent_show(struct seq_file *s, struct clk_core *core,
 				 unsigned int i, char terminator)
 {
 	struct clk_core *parent;
+	const char *name = NULL;
 
 	/*
 	 * Go through the following options to fetch a parent's name.
@@ -3449,18 +3434,20 @@ static void possible_parent_show(struct seq_file *s, struct clk_core *core,
 	 * registered (yet).
 	 */
 	parent = clk_core_get_parent_by_index(core, i);
-	if (parent)
+	if (parent) {
 		seq_puts(s, parent->name);
-	else if (core->parents[i].name)
+	} else if (core->parents[i].name) {
 		seq_puts(s, core->parents[i].name);
-	else if (core->parents[i].fw_name)
+	} else if (core->parents[i].fw_name) {
 		seq_printf(s, "<%s>(fw)", core->parents[i].fw_name);
-	else if (core->parents[i].index >= 0)
-		seq_puts(s,
-			 of_clk_get_parent_name(core->of_node,
-						core->parents[i].index));
-	else
-		seq_puts(s, "(missing)");
+	} else {
+		if (core->parents[i].index >= 0)
+			name = of_clk_get_parent_name(core->of_node, core->parents[i].index);
+		if (!name)
+			name = "(missing)";
+
+		seq_puts(s, name);
+	}
 
 	seq_putc(s, terminator);
 }

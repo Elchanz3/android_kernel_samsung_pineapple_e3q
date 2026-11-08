@@ -102,8 +102,10 @@ static void kunit_free_suite_set(struct suite_set suite_set)
 {
 	struct kunit_suite * const *suites;
 
-	for (suites = suite_set.start; suites < suite_set.end; suites++)
+	for (suites = suite_set.start; suites < suite_set.end; suites++) {
+		kfree((*suites)->test_cases);
 		kfree(*suites);
+	}
 	kfree(suite_set.start);
 }
 
@@ -218,6 +220,7 @@ out:
 	kunit_handle_shutdown();
 	return err;
 }
+EXPORT_SYMBOL_KUNIT(kunit_run_all_tests);
 
 #if IS_BUILTIN(CONFIG_KUNIT_TEST)
 #include "executor_test.c"

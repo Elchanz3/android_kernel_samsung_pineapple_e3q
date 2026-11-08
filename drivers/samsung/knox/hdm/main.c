@@ -42,6 +42,7 @@
 
 int hdm_log_level = HDM_LOG_LEVEL;
 
+static int is_hdm_initialized;
 static u64 supported_subsystem = 0;
 
 static char *status = "NONE";
@@ -128,7 +129,7 @@ static int __init hdm_flag_setup(void)
 	return 0;
 }
 
-static ssize_t store_hdm_policy(struct device *dev,
+static ssize_t hdm_policy_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
@@ -194,46 +195,78 @@ error:
 	return count;
 }
 
-static ssize_t show_hdm_subsystem(struct device *dev,
+static void get_supported_subsystem(void)
+{
+	if (is_hdm_initialized != true) {
+		uh_call(UH_APP_HDM, HDM_GET_SUPPORTED_SUBSYSTEM, (u64)&supported_subsystem, 0, 0, 0);
+		hdm_info("supported_subsystem = %012llx\n", supported_subsystem);
+		is_hdm_initialized = true;
+	}
+}
+
+static ssize_t hdm_subsystem_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	u32 hdm_version = 0;
 
 	hdm_info("%s\n", __func__);
-	
-	if ( supported_subsystem == 0) {
-		uh_call(UH_APP_HDM, HDM_GET_SUPPORTED_SUBSYSTEM, (u64)&supported_subsystem, 0, 0, 0);
-		hdm_info("supported_subsystem = %06x\n", supported_subsystem);
-	}
+
+	get_supported_subsystem();
 
 	hdm_version = (supported_subsystem >> 12) & 0xFFF;
 	hdm_info("hdm_version = %03x\n", hdm_version);
-	
 
-	return snprintf(buf, 6, "0x%03x\n", hdm_version);
+	return snprintf(buf, 7, "0x%03x\n", hdm_version);
 }
 
-static ssize_t show_pad_subsystem(struct device *dev,
+static ssize_t pad_subsystem_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	u32 pad_version = 0;
 
 	hdm_info("%s\n", __func__);
-	
-	if ( supported_subsystem == 0) {
-		uh_call(UH_APP_HDM, HDM_GET_SUPPORTED_SUBSYSTEM, (u64)&supported_subsystem, 0, 0, 0);
-		hdm_info("supported_subsystem = %06x\n", supported_subsystem);
-	}
+
+	get_supported_subsystem();
 
 	pad_version = supported_subsystem & 0xFFF;
 	hdm_info("pad_version = %03x\n", pad_version);
 
-	return snprintf(buf, 6, "0x%03x\n", pad_version);
+	return snprintf(buf, 7, "0x%03x\n", pad_version);
 }
-static DEVICE_ATTR(hdm_policy, 0220, NULL, store_hdm_policy);
-static DEVICE_ATTR(hdm_subsystem, 0444, show_hdm_subsystem, NULL);
-static DEVICE_ATTR(pad_subsystem, 0444, show_pad_subsystem, NULL);
 
+static ssize_t bt_block_sub_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	u32 bt_block_sub = 0;
+
+	hdm_info("%s\n", __func__);
+
+	get_supported_subsystem();
+
+	bt_block_sub = (supported_subsystem >> 24) & 0xFFF;
+	hdm_info("bt_block_sub = %03x\n", bt_block_sub);
+
+	return snprintf(buf, 7, "0x%03x\n", bt_block_sub);
+}
+static ssize_t bt_unblock_sub_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	u32 bt_unblock_sub = 0;
+
+	hdm_info("%s\n", __func__);
+
+	get_supported_subsystem();
+
+	bt_unblock_sub = (supported_subsystem >> 36) & 0xFFF;
+	hdm_info("bt_unblock_sub = %03x\n", bt_unblock_sub);
+
+	return snprintf(buf, 7, "0x%03x\n", bt_unblock_sub);
+}
+static DEVICE_ATTR_WO(hdm_policy);
+static DEVICE_ATTR_RO(hdm_subsystem);
+static DEVICE_ATTR_RO(pad_subsystem);
+static DEVICE_ATTR_RO(bt_block_sub);
+static DEVICE_ATTR_RO(bt_unblock_sub);
 
 #if defined(CONFIG_ARCH_QCOM)
 int hyp_assign_phys(phys_addr_t addr, u64 size, u32 *source_vm_list,
@@ -342,6 +375,16 @@ static int __init hdm_test_init(void)
 	}
 
 	if (device_create_file(dev, &dev_attr_pad_subsystem) < 0) {
+		hdm_err("%s Failed to create device file\n", __func__);
+		return 0;
+	}
+
+	if (device_create_file(dev, &dev_attr_bt_block_sub) < 0) {
+		hdm_err("%s Failed to create device file\n", __func__);
+		return 0;
+	}
+
+	if (device_create_file(dev, &dev_attr_bt_unblock_sub) < 0) {
 		hdm_err("%s Failed to create device file\n", __func__);
 		return 0;
 	}

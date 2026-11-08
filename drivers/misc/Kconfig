@@ -469,13 +469,6 @@ config UID_SYS_STATS
 	  Per UID based io statistics exported to /proc/uid_io
 	  Per UID based procstat control in /proc/uid_procstat
 
-config UID_SYS_STATS_DEBUG
-	bool "Per-TASK statistics"
-	depends on UID_SYS_STATS
-	default n
-	help
-	  Per TASK based io statistics exported to /proc/uid_io
-
 config HISI_HIKEY_USB
 	tristate "USB GPIO Hub on HiSilicon Hikey 960/970 Platform"
 	depends on (OF && GPIOLIB) || COMPILE_TEST
@@ -512,6 +505,14 @@ config VCPU_STALL_DETECTOR
 
 	  If you do not intend to run this kernel as a guest, say N.
 
+config QSEECOM_PROXY
+	tristate "To enable qseecom proxy driver for kernel client"
+	help
+	 qseecom proxy driver serves the kernel clients by providing
+	 required ops via call back functions with a minimal framework.
+	 These callback functions can be used to start, shutdown and
+	 send commands to the trusted apps.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -531,3 +532,11 @@ source "drivers/misc/uacce/Kconfig"
 source "drivers/misc/pvpanic/Kconfig"
 source "drivers/misc/mchp_pci1xxxx/Kconfig"
 endmenu
+
+#
+# Dev-Ril-Bridge driver
+#
+
+config DEV_RIL_BRIDGE
+	tristate "Support a bridge between device and RIL"
+	default n

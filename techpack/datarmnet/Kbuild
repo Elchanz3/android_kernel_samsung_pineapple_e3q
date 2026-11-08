@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# In-tree build (techpack/)
+export RMNET_CORE_ROOT := $(abs_srctree)/$(src)/core
+subdir-ccflags-y += -DRMNET_TRACE_INCLUDE_PATH=../../techpack/datarmnet/core
+
+subdir-ccflags-y += $(TP_INC_IPA) $(TP_INC_RMNET_MEM)
+
+obj-y += core/

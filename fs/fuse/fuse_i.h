@@ -35,13 +35,6 @@
 #include <linux/refcount.h>
 #include <linux/user_namespace.h>
 #include <linux/statfs.h>
-#include <linux/sched.h>
-
-#ifdef CONFIG_FUSE_SUPPORT_STLOG
-#include <linux/fslog.h>
-#else
-#define ST_LOG(fmt, ...)
-#endif
 
 #define FUSE_SUPER_MAGIC 0x65735546
 
@@ -804,6 +797,9 @@ struct fuse_conn {
 	/** Is bmap not implemented by fs? */
 	unsigned no_bmap:1;
 
+	/** Is dentry_canonical_path not implemented by fs? */
+	unsigned no_dentry_canonical_path:1;
+
 	/** Is poll not implemented by fs? */
 	unsigned no_poll:1;
 
@@ -940,10 +936,6 @@ struct fuse_conn {
 
 	/** Protects passthrough_req */
 	spinlock_t passthrough_req_lock;
-
-#ifdef CONFIG_FUSE_WATCHDOG
-	struct task_struct *watchdog_thread;
-#endif
 };
 
 /*
@@ -1440,23 +1432,6 @@ void fuse_passthrough_release(struct fuse_passthrough *passthrough);
 ssize_t fuse_passthrough_read_iter(struct kiocb *iocb, struct iov_iter *to);
 ssize_t fuse_passthrough_write_iter(struct kiocb *iocb, struct iov_iter *from);
 ssize_t fuse_passthrough_mmap(struct file *file, struct vm_area_struct *vma);
-
-#define fuse_wait_event(wq, condition)					\
-	wait_event_state(wq, condition, (TASK_UNINTERRUPTIBLE|TASK_FREEZABLE))
-
-#define fuse_wait_event_killable(wq, condition)				\
-	wait_event_state(wq, condition, (TASK_KILLABLE|TASK_FREEZABLE))
-
-#define fuse_wait_event_killable_exclusive(wq, condition)		\
-({									\
-	int ___ret = 0;							\
-	might_sleep();							\
-	if (!(condition))						\
-		___ret = ___wait_event(wq, condition,			\
-				(TASK_KILLABLE|TASK_FREEZABLE),		\
-				1, 0, schedule());			\
-	___ret;								\
-})
 
 /* backing.c */
 
@@ -2100,10 +2075,5 @@ static inline int fuse_bpf_run(struct bpf_prog *prog, struct fuse_bpf_args *fba)
 })
 
 #endif /* CONFIG_FUSE_BPF */
-
-#ifdef CONFIG_FUSE_WATCHDOG
-/* watchdog.c */
-void fuse_daemon_watchdog_start(struct fuse_conn *fc);
-#endif
 
 #endif /* _FS_FUSE_I_H */

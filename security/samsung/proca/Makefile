@@ -1,13 +1,6 @@
 SHELL := /bin/bash
 
 KERNEL := $(VERSION)_$(PATCHLEVEL)
-ifeq ($(CONFIG_MACH_MT6853),y)
-    KERNEL := 4_14
-else ifeq ($(CONFIG_MACH_MT6833),y)
-    KERNEL := 4_14
-else ifeq ($(CONFIG_MACH_MT6768),y)
-    KERNEL := 4_14
-endif
 
 # For kernel version 4.14 or lower
 ifeq ($(KERNEL),4_14)
@@ -89,21 +82,17 @@ endif
 subdir-ccflags-y += -Wformat
 
 # kunit tests options:
-ENABLED_TARGETS_LIST = ''
+# //KERNEL/LEGO specific list. do no sync to other branches
+ENABLED_TARGETS_LIST = b0s g0s b0q g0q b5q q5q dm3q
 ifeq ($(CONFIG_SEC_KUNIT), y)
   GCOV_PROFILE := y
   ifeq ($(CONFIG_UML), y)
     ccflags-$(CONFIG_PROCA) += -DPROCA_KUNIT_ENABLED
-    subdir-$(CONFIG_PROCA) += kunit_test
-    obj-$(CONFIG_PROCA) += kunit_test/
   else
     ifneq ($(filter $(TARGET_DEVICE),$(ENABLED_TARGETS_LIST)),)
-      $(warning TARGET_DEVICE is $(TARGET_DEVICE). building on-device kunit tests)
-      obj-m += kunit_test/proca_certificate_test.o
-      obj-m += kunit_test/proca_identity_test.o
-      obj-m += kunit_test/proca_table_test.o
+      $(warning security/proca: TARGET_DEVICE: $(TARGET_DEVICE). build on-device kunit test)
     else
-      $(warning security/samsung/proca: TARGET_DEVICE: $(TARGET_DEVICE). skip on-device kunit test)
+      $(warning security/proca: TARGET_DEVICE: $(TARGET_DEVICE). skip on-device kunit test)
     endif
   endif
 endif

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# In-tree build (techpack/). The external build ran each subdirectory as its
+# own M= build with *_ROOT pointing at mm-drivers/.
+export MSM_EXT_DISPLAY_ROOT := $(abs_srctree)/$(src)/
+export SYNC_FENCE_ROOT := $(abs_srctree)/$(src)/
+export MSM_HW_FENCE_ROOT := $(abs_srctree)/$(src)/
+
+obj-y += msm_ext_display/ sync_fence/ hw_fence/

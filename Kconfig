@@ -19,6 +19,8 @@ source "net/Kconfig"
 
 source "drivers/Kconfig"
 
+source "techpack/Kconfig"
+
 source "fs/Kconfig"
 
 source "security/Kconfig"
@@ -33,3 +35,5 @@ source "Documentation/Kconfig"
 
 # ANDROID: Set KCONFIG_EXT_PREFIX to decend into an external project.
 source "$(KCONFIG_EXT_PREFIX)Kconfig.ext"
+
+source "kernel/sched/walt/Kconfig"

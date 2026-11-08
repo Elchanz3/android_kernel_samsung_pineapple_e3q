@@ -76,10 +76,6 @@
 
 #include "binder_internal.h"
 #include "binder_trace.h"
-#ifdef CONFIG_SAMSUNG_FREECESS
-#include <linux/freecess.h>
-#endif
-
 #include <trace/hooks/binder.h>
 
 static HLIST_HEAD(binder_deferred_list);
@@ -564,6 +560,7 @@ static bool binder_has_work(struct binder_thread *thread, bool do_proc_work)
 
 	binder_inner_proc_lock(thread->proc);
 	has_work = binder_has_work_ilocked(thread, do_proc_work);
+	trace_android_vh_binder_has_special_work_ilocked(thread, do_proc_work, &has_work);
 	binder_inner_proc_unlock(thread->proc);
 
 	return has_work;
@@ -1895,9 +1892,9 @@ static size_t binder_get_object(struct binder_proc *proc,
 
 	read_size = min_t(size_t, sizeof(*object), buffer->data_size - offset);
 	if (offset > buffer->data_size || read_size < sizeof(*hdr) ||
-		!IS_ALIGNED(offset, sizeof(u32)))
+	    !IS_ALIGNED(offset, sizeof(u32)))
 		return 0;
-		
+
 	if (u) {
 		if (copy_from_user(object, u + offset, read_size))
 			return 0;
@@ -2133,24 +2130,23 @@ static void binder_deferred_fd_close(int fd)
 static void binder_transaction_buffer_release(struct binder_proc *proc,
 					      struct binder_thread *thread,
 					      struct binder_buffer *buffer,
-					      binder_size_t failed_at,
+					      binder_size_t off_end_offset,
 					      bool is_failure)
 {
 	int debug_id = buffer->debug_id;
-	binder_size_t off_start_offset, buffer_offset, off_end_offset;
+	binder_size_t off_start_offset, buffer_offset;
 
 	binder_debug(BINDER_DEBUG_TRANSACTION,
 		     "%d buffer release %d, size %zd-%zd, failed at %llx\n",
 		     proc->pid, buffer->debug_id,
 		     buffer->data_size, buffer->offsets_size,
-		     (unsigned long long)failed_at);
+		     (unsigned long long)off_end_offset);
 
 	if (buffer->target_node)
 		binder_dec_node(buffer->target_node, 1, 0);
 
 	off_start_offset = ALIGN(buffer->data_size, sizeof(void *));
-	off_end_offset = is_failure && failed_at ? failed_at :
-				off_start_offset + buffer->offsets_size;
+
 	for (buffer_offset = off_start_offset; buffer_offset < off_end_offset;
 	     buffer_offset += sizeof(binder_size_t)) {
 		struct binder_object_header *hdr;
@@ -2308,6 +2304,21 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 			break;
 		}
 	}
+}
+
+/* Clean up all the objects in the buffer */
+static inline void binder_release_entire_buffer(struct binder_proc *proc,
+						struct binder_thread *thread,
+						struct binder_buffer *buffer,
+						bool is_failure)
+{
+	binder_size_t off_end_offset;
+
+	off_end_offset = ALIGN(buffer->data_size, sizeof(void *));
+	off_end_offset += buffer->offsets_size;
+
+	binder_transaction_buffer_release(proc, thread, buffer,
+					  off_end_offset, is_failure);
 }
 
 static int binder_translate_binder(struct flat_binder_object *fp,
@@ -3019,7 +3030,7 @@ static int binder_proc_transaction(struct binder_transaction *t,
 		t_outdated->buffer = NULL;
 		buffer->transaction = NULL;
 		trace_binder_transaction_update_buffer_release(buffer);
-		binder_transaction_buffer_release(proc, NULL, buffer, 0, 0);
+		binder_release_entire_buffer(proc, NULL, buffer, false);
 		binder_alloc_free_buf(&proc->alloc, buffer);
 		kfree(t_outdated);
 		binder_stats_deleted(BINDER_STAT_TRANSACTION);
@@ -3087,74 +3098,6 @@ static void binder_set_txn_from_error(struct binder_transaction *t, int id,
 	binder_inner_proc_unlock(from->proc);
 	binder_thread_dec_tmpref(from);
 }
-
-#ifdef CONFIG_SAMSUNG_FREECESS
-// 1) Skip first 8(P)/12(Q) bytes (useless data)
-// 2) Make sure that the invalid address issue is not occuring (j=9, j+=2)
-// 3) Java layer uses 2 bytes char. And only the first byte has the data. (p+=2)
-// 4) Parcel::writeInterfaceToken() in frameworks/native/libs/binder/Parcel.cpp
-static void freecess_async_binder_report(struct binder_proc *proc,
-						struct binder_proc *target_proc,
-						struct binder_transaction_data *tr,
-						struct binder_transaction *t)
-{
-	char buf_user[INTERFACETOKEN_BUFF_SIZE] = {0};
-	char buf[INTERFACETOKEN_BUFF_SIZE] = {0};
-	char *p = NULL;
-	int i = 0;
-	int j = 0;
-	int skip_bytes = 8;
-
-	if (!proc || !target_proc || !tr || !t)
-		return;
-
-	// for android P/Q/R verson, skip 8/12/16 bytes;
-	if (freecess_fw_version == 0)
-		skip_bytes = 8;
-	else if (freecess_fw_version == 1)
-		skip_bytes = 12;
-	else if (freecess_fw_version == 2)
-		skip_bytes = 16;
-
-	if ((tr->flags & TF_ONE_WAY) && target_proc
-		&& target_proc->tsk && task_euid(target_proc->tsk).val > 10000
-		&& (proc->pid != target_proc->pid)) {
-		if (thread_group_is_frozen(target_proc->tsk)) {
-			if (t->buffer->data_size > skip_bytes) {
-				if (0 == copy_from_user(buf_user, (const void __user *)(uintptr_t)tr->data.ptr.buffer,
-					min_t(binder_size_t, tr->data_size, INTERFACETOKEN_BUFF_SIZE - 2))) {
-					p = &buf_user[skip_bytes];
-					i = 0;
-					j = skip_bytes + 1;
-					while (i < INTERFACETOKEN_BUFF_SIZE && j < t->buffer->data_size && *p != '\0') {
-						buf[i++] = *p;
-						j += 2;
-						p += 2;
-					}
-					if (i == INTERFACETOKEN_BUFF_SIZE) buf[i-1] = '\0';
-				}
-				binder_report(target_proc->tsk, tr->code, buf, tr->flags & TF_ONE_WAY);
-			}
-		}
-	}
-}
-
-static void freecess_sync_binder_report(struct binder_proc *proc,
-						struct binder_proc *target_proc,
-						struct binder_transaction_data *tr)
-{
-	if (!proc || !target_proc || !tr)
-		return;
-
-	if ((!(tr->flags & TF_ONE_WAY)) && target_proc
-		&& target_proc->tsk && task_euid(target_proc->tsk).val > 10000
-		&& (proc->pid != target_proc->pid) 
-		&& thread_group_is_frozen(target_proc->tsk)) {
-		//if sync binder, we don't need detecting info, so set code and interfacename as default value.
-		binder_report(target_proc->tsk, 0, "sync_binder", tr->flags & TF_ONE_WAY);
-	}
-}
-#endif
 
 static void binder_transaction(struct binder_proc *proc,
 			       struct binder_thread *thread,
@@ -3328,10 +3271,6 @@ static void binder_transaction(struct binder_proc *proc,
 			goto err_invalid_target_handle;
 		}
 		trace_android_vh_binder_trans(target_proc, proc, thread, tr);
-#ifdef CONFIG_SAMSUNG_FREECESS
-		freecess_sync_binder_report(proc, target_proc, tr);
-#endif
-
 		if (security_binder_transaction(proc->cred,
 						target_proc->cred) < 0) {
 			binder_txn_error("%d:%d transaction credentials failed\n",
@@ -3579,11 +3518,6 @@ static void binder_transaction(struct binder_proc *proc,
 		return_error_line = __LINE__;
 		goto err_bad_offset;
 	}
-
-#ifdef CONFIG_SAMSUNG_FREECESS
-	freecess_async_binder_report(proc, target_proc, tr, t); 
-#endif
-
 	off_start_offset = ALIGN(tr->data_size, sizeof(void *));
 	buffer_offset = off_start_offset;
 	off_end_offset = off_start_offset + tr->offsets_size;
@@ -3618,6 +3552,7 @@ static void binder_transaction(struct binder_proc *proc,
 		 */
 		copy_size = object_offset - user_offset;
 		if (copy_size && (user_offset > object_offset ||
+				object_offset > tr->data_size ||
 				binder_alloc_copy_user_to_buffer(
 					&target_proc->alloc,
 					t->buffer, user_offset,
@@ -4057,12 +3992,14 @@ binder_free_buf(struct binder_proc *proc,
 		struct binder_buffer *buffer, bool is_failure)
 {
 	bool enqueue_task = true;
+	bool has_transaction = false;
 
 	trace_android_vh_binder_free_buf(proc, thread, buffer);
 	binder_inner_proc_lock(proc);
 	if (buffer->transaction) {
 		buffer->transaction->buffer = NULL;
 		buffer->transaction = NULL;
+		has_transaction = true;
 	}
 	binder_inner_proc_unlock(proc);
 	if (buffer->async_transaction && buffer->target_node) {
@@ -4086,8 +4023,10 @@ binder_free_buf(struct binder_proc *proc,
 		}
 		binder_node_inner_unlock(buf_node);
 	}
+	trace_android_vh_binder_buffer_release(proc, thread, buffer,
+			has_transaction);
 	trace_binder_transaction_buffer_release(buffer);
-	binder_transaction_buffer_release(proc, thread, buffer, 0, is_failure);
+	binder_release_entire_buffer(proc, thread, buffer, is_failure);
 	binder_alloc_free_buf(&proc->alloc, buffer);
 }
 
@@ -4349,6 +4288,7 @@ static int binder_thread_write(struct binder_proc *proc,
 			thread->looper |= BINDER_LOOPER_STATE_ENTERED;
 			break;
 		case BC_EXIT_LOOPER:
+			trace_android_vh_binder_looper_exited(thread, proc);
 			binder_debug(BINDER_DEBUG_THREADS,
 				     "%d:%d BC_EXIT_LOOPER\n",
 				     proc->pid, thread->pid);
@@ -4676,6 +4616,8 @@ static int binder_thread_read(struct binder_proc *proc,
 	void __user *end = buffer + size;
 
 	int ret = 0;
+	bool nothing_to_do = false;
+	bool force_spawn = false;
 	int wait_for_proc_work;
 
 	if (*consumed == 0) {
@@ -4731,14 +4673,20 @@ retry:
 		binder_inner_proc_lock(proc);
 		trace_android_vh_binder_select_worklist_ilocked(&list, thread,
 						proc, wait_for_proc_work);
+		trace_android_vh_binder_select_special_worklist(&list, thread,
+						proc, wait_for_proc_work, &nothing_to_do);
 		if (list)
 			goto skip;
+		else if (nothing_to_do)
+			goto no_work;
+
 		if (!binder_worklist_empty_ilocked(&thread->todo))
 			list = &thread->todo;
 		else if (!binder_worklist_empty_ilocked(&proc->todo) &&
 			   wait_for_proc_work)
 			list = &proc->todo;
 		else {
+no_work:
 			binder_inner_proc_unlock(proc);
 
 			/* no data added */
@@ -5056,11 +5004,14 @@ done:
 
 	*consumed = ptr - buffer;
 	binder_inner_proc_lock(proc);
-	if (proc->requested_threads == 0 &&
+	trace_android_vh_binder_spawn_new_thread(thread, proc, &force_spawn);
+
+	if ((proc->requested_threads == 0 &&
 	    list_empty(&thread->proc->waiting_threads) &&
 	    proc->requested_threads_started < proc->max_threads &&
 	    (thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
-	     BINDER_LOOPER_STATE_ENTERED)) /* the user-space code fails to */
+	     BINDER_LOOPER_STATE_ENTERED))) ||
+	     force_spawn /* the user-space code fails to */
 	     /*spawn a new thread if we leave this out */) {
 		proc->requested_threads++;
 		binder_inner_proc_unlock(proc);
@@ -5106,6 +5057,7 @@ static void binder_release_work(struct binder_proc *proc,
 				"undelivered TRANSACTION_ERROR: %u\n",
 				e->cmd);
 		} break;
+		case BINDER_WORK_TRANSACTION_ONEWAY_SPAM_SUSPECT:
 		case BINDER_WORK_TRANSACTION_COMPLETE: {
 			binder_debug(BINDER_DEBUG_DEAD_TRANSACTION,
 				"undelivered TRANSACTION_COMPLETE\n");
@@ -5849,6 +5801,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		goto err;
 	}
 	ret = 0;
+	trace_android_vh_binder_ioctl_end(current, cmd, arg, thread, proc, &ret);
 err:
 	if (thread)
 		thread->looper_need_return = false;
@@ -6498,131 +6451,6 @@ static void print_binder_proc(struct seq_file *m,
 	if (!print_all && m->count == header_pos)
 		m->count = start_pos;
 }
-
-#ifdef CONFIG_SAMSUNG_FREECESS
-static void binder_in_transaction(struct binder_proc *proc, int uid)
-{
-	struct rb_node *n = NULL;
-	struct binder_thread *thread = NULL;
-	struct binder_transaction *t = NULL;
-	struct binder_work *w = NULL;
-	bool empty = true;
-	bool found = false;
-
-	//check binder threads todo and transcation_stack list
-	binder_inner_proc_lock(proc);
-	for (n = rb_first(&proc->threads); n != NULL; n = rb_next(n)) {
-		thread = rb_entry(n, struct binder_thread, rb_node);
-		empty = binder_worklist_empty_ilocked(&thread->todo);
-		if (!empty) {
-			list_for_each_entry(w, &thread->todo, entry) {
-				if (w->type == BINDER_WORK_TRANSACTION) {
-					t = container_of(w, struct binder_transaction, work);
-					if (!(t->flags & TF_ONE_WAY)) {
-						found = true;
-						break;
-					}
-				}
-				else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-					found = true;
-					break;
-				}
-			}
-
-			if (found == true) {
-				binder_inner_proc_unlock(proc);
-				cfb_report(uid, "thread");
-				return;
-			}
-		}
-
-		//processing one binder call
-		t = thread->transaction_stack;
-		if (t) {
-			if (t->to_thread == thread) {
-				binder_inner_proc_unlock(proc);
-				cfb_report(uid, "transaction_stack");
-				return;
-			}
-		}
-	}
-
-	//check binder proc todo list
-#ifdef CONFIG_FAST_TRACK
-        empty = binder_proc_worklist_empty_ilocked(proc);
-	if (!empty) {
-		list_for_each_entry(w, &proc->todo, entry) {
-			if (w->type == BINDER_WORK_TRANSACTION) {
-				t = container_of(w, struct binder_transaction, work);
-				if (!(t->flags & TF_ONE_WAY)) {
-					found = true;
-					break;
-				}
-			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-				found = true;
-				break;
-			}
-		}
-		list_for_each_entry(w, &proc->fg_todo, entry) {
-			if (w->type == BINDER_WORK_TRANSACTION) {
-				t = container_of(w, struct binder_transaction, work);
-				if (!(t->flags & TF_ONE_WAY)) {
-					found = true;
-					break;
-				}
-			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-				found = true;
-				break;
-			}
-		}
-		if (found == true) {
-			binder_inner_proc_unlock(proc);
-			cfb_report(uid, "proc");
-			return;
-		}
-	}
-#else
-	empty = binder_worklist_empty_ilocked(&proc->todo);
-	if (!empty) {
-		list_for_each_entry(w, &proc->todo, entry) {
-			if (w->type == BINDER_WORK_TRANSACTION) {
-				t = container_of(w, struct binder_transaction, work);
-				if (!(t->flags & TF_ONE_WAY)) {
-					found = true;
-					break;
-				}
-			}
-			else if (w->type != BINDER_WORK_TRANSACTION_COMPLETE && w->type != BINDER_WORK_NODE) {
-				found = true;
-				break;
-			}
-		}
-
-		if (found == true) {
-			binder_inner_proc_unlock(proc);
-			cfb_report(uid, "proc");
-			return;
-		}
-	}
-#endif
-	binder_inner_proc_unlock(proc);
-}
-
-void binders_in_transcation(int uid)
-{
-	struct binder_proc *itr;
-
-	mutex_lock(&binder_procs_lock);
-	hlist_for_each_entry(itr, &binder_procs, proc_node) {
-		if (itr != NULL && task_euid(itr->tsk).val == uid) {
-			binder_in_transaction(itr, uid);
-		}
-	}
-	mutex_unlock(&binder_procs_lock);
-}
-#endif
 
 static const char * const binder_return_strings[] = {
 	"BR_ERROR",

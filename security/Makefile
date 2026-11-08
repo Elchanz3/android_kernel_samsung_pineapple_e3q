@@ -27,24 +27,6 @@ obj-$(CONFIG_SECURITY_LANDLOCK)		+= landlock/
 
 # Object integrity file lists
 obj-$(CONFIG_INTEGRITY)			+= integrity/
-# FIVE
-subdir-y			+= samsung/five
-obj-y			+= samsung/five/
-# PROCA
-subdir-y			+= samsung/proca
-obj-y			+= samsung/proca/
-subdir-y			+= samsung/proca/gaf
-obj-y			+= samsung/proca/gaf/
-
-# DEFEX
-obj-$(CONFIG_SECURITY_DEFEX)		+= samsung/defex_lsm/
-
-# DSMS
-obj-$(CONFIG_SECURITY_DSMS)		+= samsung/dsms/
-
-# KNOX ZT
-obj-$(CONFIG_KZT) += kzt/
-
-# KNOX DAR
-obj-$(CONFIG_DDAR) += ddar/
-obj-$(CONFIG_DDAR) += ddar/built-in.a
+obj-y += samsung/proca/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+obj-y += samsung/proca/gaf/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+obj-y += samsung/five/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT

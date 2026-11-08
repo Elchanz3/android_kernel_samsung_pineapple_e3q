@@ -27,18 +27,20 @@
 #include <linux/rtc.h>
 #include <linux/of_device.h>
 
-#define PON_ALARM_KPARAM_MAGIC		0x41504153
-#define PON_ALARM_START_POLL_TIME   (10LL * NSEC_PER_SEC) /* 10 sec */
-#define PON_ALARM_BOOTING_TIME      (5*60)
-#define PON_ALARM_POLL_TIME         (15*60)
+#define PON_ALARM_KPARAM_MAGIC	0x41504153
+#define PON_ALARM_START_POLL_TIME	(10LL * NSEC_PER_SEC) /* 10 sec */
+#define PON_ALARM_BOOTING_TIME	(5 * 60)
+#define PON_ALARM_POLL_TIME	(15 * 60)
 
-#define BOOTALM_BIT_EN       0
-#define BOOTALM_BIT_YEAR     1
-#define BOOTALM_BIT_MONTH    5
-#define BOOTALM_BIT_DAY      7
-#define BOOTALM_BIT_HOUR     9
-#define BOOTALM_BIT_MIN     11
-#define BOOTALM_BIT_TOTAL   13
+#define BOOTALM_BIT_EN	0
+#define BOOTALM_BIT_YEAR	1
+#define BOOTALM_BIT_MONTH	5
+#define BOOTALM_BIT_DAY	7
+#define BOOTALM_BIT_HOUR	9
+#define BOOTALM_BIT_MIN	11
+#define BOOTALM_BIT_TOTAL	13
+
+#define PRIME_EPOCH_YEAR	1900
 
 enum {
 	PON_ALARM_DISTANT = 0,
@@ -110,23 +112,13 @@ static void pon_alarm_set(struct rtc_wkalrm *alarm)
 				__func__, ret, sapa[1], sapa[2]);
 }
 
-static void pon_alarm_parse_data(char *alarm_data, struct rtc_wkalrm *alm)
+static void pon_get_alarm_time(struct rtc_wkalrm *alm, u8 *buf_ptr)
 {
-	char buf_ptr[BOOTALM_BIT_TOTAL+1] = {0,};
-	struct rtc_time     rtc_tm;
-	time64_t            rtc_sec;
-	time64_t            rtc_alm_sec;
-	struct timespec64   delta;
-	struct timespec64   ktm_ts;
-	struct rtc_time     ktm_tm;
-	int ret;
-
-	alarm_data[BOOTALM_BIT_TOTAL] = '\0';
-	strlcpy(buf_ptr, alarm_data, BOOTALM_BIT_TOTAL+1);
-
-	/* 0|1234|56|78|90|12 */
-	/* 1|2010|01|01|00|00 */
-	/*en yyyy mm dd hh mm */
+	/*
+		0|1234|56|78|90|12
+		1|2010|01|01|00|00
+		en|yyyy|mm|dd|hh|mm
+	*/
 	alm->time.tm_sec = 0;
 	alm->time.tm_min = (buf_ptr[BOOTALM_BIT_MIN]-'0') * 10
 					+ (buf_ptr[BOOTALM_BIT_MIN+1]-'0');
@@ -149,46 +141,92 @@ static void pon_alarm_parse_data(char *alarm_data, struct rtc_wkalrm *alm)
 			__func__, buf_ptr, alm->enabled,
 			alm->time.tm_year, alm->time.tm_mon, alm->time.tm_mday,
 			alm->time.tm_hour, alm->time.tm_min, alm->time.tm_sec);
+}
 
-	if (alm->enabled) {
-		/* read kernel time */
-		ktime_get_real_ts64(&ktm_ts);
-		ktm_tm = rtc_ktime_to_tm(timespec64_to_ktime(ktm_ts));
-		pr_info("%s: <KTM > %4d-%02d-%02d %02d:%02d:%02d\n",
-			__func__, ktm_tm.tm_year+1900, ktm_tm.tm_mon+1, ktm_tm.tm_mday,
-			ktm_tm.tm_hour, ktm_tm.tm_min, ktm_tm.tm_sec);
+static void pon_read_kernel_time(struct timespec64 *ktm_ts, struct rtc_wkalrm *alm)
+{
+	struct rtc_time ktm_tm;
 
-		alm->time.tm_mon -= 1;
-		alm->time.tm_year -= 1900;
-		pr_info("%s: <ALRM> %4d-%02d-%02d %02d:%02d:%02d\n",
-			__func__, alm->time.tm_year+1900, alm->time.tm_mon+1, alm->time.tm_mday,
-			alm->time.tm_hour, alm->time.tm_min, alm->time.tm_sec);
+	/* read kernel time */
+	ktime_get_real_ts64(ktm_ts);
+	ktm_tm = rtc_ktime_to_tm(timespec64_to_ktime(*ktm_ts));
+	pr_info("%s: <KTM > %4d-%02d-%02d %02d:%02d:%02d\n",
+		__func__, ktm_tm.tm_year+PRIME_EPOCH_YEAR, ktm_tm.tm_mon+1, ktm_tm.tm_mday,
+		ktm_tm.tm_hour, ktm_tm.tm_min, ktm_tm.tm_sec);
 
-		/* read current time */
-		ret = rtc_read_time(pon_alarm.rtcdev, &rtc_tm);
-		if (ret) {
-			pr_err("%s: rtc read failed, ret=%d\n", __func__, ret);
-			return;
-		}
-		rtc_sec = rtc_tm_to_time64(&rtc_tm);
-		pr_info("%s: <rtc > %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
-			__func__, rtc_tm.tm_year, rtc_tm.tm_mon, rtc_tm.tm_mday,
-			rtc_tm.tm_hour, rtc_tm.tm_min, rtc_tm.tm_sec, rtc_sec);
+	alm->time.tm_mon -= 1;
+	alm->time.tm_year -= PRIME_EPOCH_YEAR;
+	pr_info("%s: <ALRM> %4d-%02d-%02d %02d:%02d:%02d\n",
+		__func__, alm->time.tm_year+PRIME_EPOCH_YEAR, alm->time.tm_mon+1, alm->time.tm_mday,
+		alm->time.tm_hour, alm->time.tm_min, alm->time.tm_sec);
+}
 
-		/* calculate offset */
-		set_normalized_timespec64(&delta,
-					  (time64_t)ktm_ts.tv_sec - rtc_sec,
-					  (s64)ktm_ts.tv_nsec);
+static int pon_read_current_time(time64_t *rtc_sec, struct rtc_time *rtc_tm)
+{
+	int ret = 0;
 
-		/* UTC -> RTC */
-		rtc_alm_sec = rtc_tm_to_time64(&alm->time) - delta.tv_sec;
-		rtc_alm_sec = (rtc_alm_sec & ~0x00000003) | ((alm->enabled-1)<<1);
-		alm->enabled = 1;
-		rtc_time64_to_tm(rtc_alm_sec, &alm->time);
-		pr_info("%s: <alrm> %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
-			__func__, alm->time.tm_year, alm->time.tm_mon, alm->time.tm_mday,
-			alm->time.tm_hour, alm->time.tm_min, alm->time.tm_sec, rtc_alm_sec);
+	ret = rtc_read_time(pon_alarm.rtcdev, rtc_tm);
+	if (ret) {
+		pr_err("%s: rtc read failed, ret=%d\n", __func__, ret);
+		return ret;
 	}
+
+	*rtc_sec = rtc_tm_to_time64(rtc_tm);
+	pr_info("%s: <rtc > %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
+		__func__, rtc_tm->tm_year, rtc_tm->tm_mon, rtc_tm->tm_mday,
+		rtc_tm->tm_hour, rtc_tm->tm_min, rtc_tm->tm_sec, *rtc_sec);
+
+	return ret;
+}
+
+static void pon_calculate_offset(struct timespec64 *delta, struct timespec64 ktm_ts, time64_t rtc_sec)
+{
+	set_normalized_timespec64(delta,
+			(time64_t)ktm_ts.tv_sec - rtc_sec,
+			(s64)ktm_ts.tv_nsec);
+}
+
+static void pon_convert_utc_to_rtc(struct timespec64 delta, struct rtc_wkalrm *alm)
+{
+	time64_t rtc_alm_sec;
+
+	rtc_alm_sec = rtc_tm_to_time64(&alm->time) - delta.tv_sec;
+	rtc_alm_sec = (rtc_alm_sec & ~0x00000003) | ((alm->enabled-1)<<1);
+	alm->enabled = 1;
+	rtc_time64_to_tm(rtc_alm_sec, &alm->time);
+
+	pr_info("%s: <alrm> %4d-%02d-%02d %02d:%02d:%02d -> %lu\n",
+		__func__, alm->time.tm_year, alm->time.tm_mon, alm->time.tm_mday,
+		alm->time.tm_hour, alm->time.tm_min, alm->time.tm_sec, rtc_alm_sec);
+}
+
+static void pon_alarm_parse_data(char *alarm_data, struct rtc_wkalrm *alm)
+{
+	char buf_ptr[BOOTALM_BIT_TOTAL + 1] = {0,};
+	struct rtc_time rtc_tm;
+	struct timespec64 delta, ktm_ts;
+	time64_t rtc_sec;
+	int ret;
+
+	alarm_data[BOOTALM_BIT_TOTAL] = '\0';
+	strlcpy(buf_ptr, alarm_data, BOOTALM_BIT_TOTAL+1);
+
+	pon_get_alarm_time(alm, buf_ptr);
+	if (!alm->enabled) {
+		pr_info("%s: pon alarm is not enabled!\n", __func__);
+		return;
+	}
+
+	pon_read_kernel_time(&ktm_ts, alm);
+	ret = pon_read_current_time(&rtc_sec, &rtc_tm);
+	if (ret < 0) {
+		pr_info("%s: pon read current time fail!\n", __func__);
+		return;
+	}
+
+	pon_calculate_offset(&delta, ktm_ts, rtc_sec);
+
+	pon_convert_utc_to_rtc(delta, alm);
 }
 
 static int pon_alarm_check_state(time64_t *data)

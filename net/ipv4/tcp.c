@@ -275,9 +275,6 @@
 #include <net/xfrm.h>
 #include <net/ip.h>
 #include <net/sock.h>
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-#include <net/skb_tracer.h>
-#endif
 
 #include <linux/uaccess.h>
 #include <asm/ioctls.h>
@@ -880,9 +877,6 @@ struct sk_buff *tcp_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
 			skb_reserve(skb, MAX_TCP_HEADER);
 			skb->ip_summed = CHECKSUM_PARTIAL;
 			INIT_LIST_HEAD(&skb->tcp_tsorted_anchor);
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-			skb_tracer_mask_on_skb(sk, skb);
-#endif
 			return skb;
 		}
 		__kfree_skb(skb);
@@ -3061,9 +3055,6 @@ void tcp_write_queue_purge(struct sock *sk)
 
 	tcp_chrono_stop(sk, TCP_CHRONO_BUSY);
 	while ((skb = __skb_dequeue(&sk->sk_write_queue)) != NULL) {
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-		skb_tracer_unmask_with(skb, &sk->sk_write_queue);
-#endif
 		tcp_skb_tsorted_anchor_cleanup(skb);
 		tcp_wmem_free_skb(sk, skb);
 	}
@@ -3482,9 +3473,25 @@ int tcp_set_window_clamp(struct sock *sk, int val)
 			return -EINVAL;
 		tp->window_clamp = 0;
 	} else {
-		tp->window_clamp = val < SOCK_MIN_RCVBUF / 2 ?
-			SOCK_MIN_RCVBUF / 2 : val;
-		tp->rcv_ssthresh = min(tp->rcv_wnd, tp->window_clamp);
+		u32 new_rcv_ssthresh, old_window_clamp = tp->window_clamp;
+		u32 new_window_clamp = val < SOCK_MIN_RCVBUF / 2 ?
+						SOCK_MIN_RCVBUF / 2 : val;
+
+		if (new_window_clamp == old_window_clamp)
+			return 0;
+
+		tp->window_clamp = new_window_clamp;
+		if (new_window_clamp < old_window_clamp) {
+			/* need to apply the reserved mem provisioning only
+			 * when shrinking the window clamp
+			 */
+			__tcp_adjust_rcv_ssthresh(sk, tp->window_clamp);
+
+		} else {
+			new_rcv_ssthresh = min(tp->rcv_wnd, tp->window_clamp);
+			tp->rcv_ssthresh = max(new_rcv_ssthresh,
+					       tp->rcv_ssthresh);
+		}
 	}
 	return 0;
 }

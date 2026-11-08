@@ -88,10 +88,6 @@
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-#include <linux/io_record.h>
-#endif
-
 #include "pgalloc-track.h"
 #include "internal.h"
 #include "swap.h"
@@ -415,6 +411,8 @@ void free_pgtables(struct mmu_gather *tlb, struct maple_tree *mt,
 		 * be 0.  This will underflow and is okay.
 		 */
 		next = mas_find(&mas, ceiling - 1);
+		if (unlikely(xa_is_zero(next)))
+			next = NULL;
 
 		/*
 		 * Hide vma from rmap and truncate_pagecache before freeing
@@ -436,6 +434,8 @@ void free_pgtables(struct mmu_gather *tlb, struct maple_tree *mt,
 			       && !is_vm_hugetlb_page(next)) {
 				vma = next;
 				next = mas_find(&mas, ceiling - 1);
+				if (unlikely(xa_is_zero(next)))
+					next = NULL;
 				if (mm_wr_locked)
 					vma_start_write(vma);
 				unlink_anon_vmas(vma);
@@ -1740,7 +1740,8 @@ void unmap_vmas(struct mmu_gather *tlb, struct maple_tree *mt,
 	do {
 		unmap_single_vma(tlb, vma, start_addr, end_addr, &details,
 				 mm_wr_locked);
-	} while ((vma = mas_find(&mas, end_t - 1)) != NULL);
+		vma = mas_find(&mas, end_t - 1);
+	} while (vma && likely(!xa_is_zero(vma)));
 	mmu_notifier_invalidate_range_end(&range);
 }
 
@@ -3104,6 +3105,36 @@ static inline void wp_page_reuse(struct vm_fault *vmf)
 }
 
 /*
+ * We could add a bitflag somewhere, but for now, we know that all
+ * vm_ops that have a ->map_pages have been audited and don't need
+ * the mmap_lock to be held.
+ */
+static inline vm_fault_t vmf_can_call_fault(const struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+
+	if (vma->vm_ops->map_pages || !(vmf->flags & FAULT_FLAG_VMA_LOCK))
+		return 0;
+	vma_end_read(vma);
+	return VM_FAULT_RETRY;
+}
+
+static vm_fault_t vmf_anon_prepare(struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+
+	if (likely(vma->anon_vma))
+		return 0;
+	if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
+		vma_end_read(vma);
+		return VM_FAULT_RETRY;
+	}
+	if (__anon_vma_prepare(vma))
+		return VM_FAULT_OOM;
+	return 0;
+}
+
+/*
  * Handle the case of a page which we actually need to copy to a new page,
  * either due to COW or unsharing.
  *
@@ -3130,12 +3161,13 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	pte_t entry;
 	int page_copied = 0;
 	struct mmu_notifier_range range;
-	int ret;
+	vm_fault_t ret;
 
 	delayacct_wpcopy_start();
 
-	if (unlikely(anon_vma_prepare(vma)))
-		goto oom;
+	ret = vmf_anon_prepare(vmf);
+	if (unlikely(ret))
+		goto out;
 
 	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
 		new_page = alloc_zeroed_user_highpage_movable(vma,
@@ -3143,13 +3175,14 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		if (!new_page)
 			goto oom;
 	} else {
+		int err;
 		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
 				vmf->address);
 		if (!new_page)
 			goto oom;
 
-		ret = __wp_page_copy_user(new_page, old_page, vmf);
-		if (ret) {
+		err = __wp_page_copy_user(new_page, old_page, vmf);
+		if (err) {
 			/*
 			 * COW failed, if the fault was solved by other,
 			 * it's fine. If not, userspace would re-fault on
@@ -3162,7 +3195,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 				put_page(old_page);
 
 			delayacct_wpcopy_end();
-			return ret == -EHWPOISON ? VM_FAULT_HWPOISON : 0;
+			return err == -EHWPOISON ? VM_FAULT_HWPOISON : 0;
 		}
 		kmsan_copy_page_meta(new_page, old_page);
 	}
@@ -3275,11 +3308,13 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 oom_free_new:
 	put_page(new_page);
 oom:
+	ret = VM_FAULT_OOM;
+out:
 	if (old_page)
 		put_page(old_page);
 
 	delayacct_wpcopy_end();
-	return VM_FAULT_OOM;
+	return ret;
 }
 
 /**
@@ -3328,10 +3363,9 @@ static vm_fault_t wp_pfn_shared(struct vm_fault *vmf)
 		vm_fault_t ret;
 
 		pte_unmap_unlock(vmf->pte, vmf->ptl);
-		if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
-			vma_end_read(vmf->vma);
-			return VM_FAULT_RETRY;
-		}
+		ret = vmf_can_call_fault(vmf);
+		if (ret)
+			return ret;
 
 		vmf->flags |= FAULT_FLAG_MKWRITE;
 		ret = vma->vm_ops->pfn_mkwrite(vmf);
@@ -3355,10 +3389,10 @@ static vm_fault_t wp_page_shared(struct vm_fault *vmf)
 		vm_fault_t tmp;
 
 		pte_unmap_unlock(vmf->pte, vmf->ptl);
-		if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
+		tmp = vmf_can_call_fault(vmf);
+		if (tmp) {
 			put_page(vmf->page);
-			vma_end_read(vmf->vma);
-			return VM_FAULT_RETRY;
+			return tmp;
 		}
 
 		tmp = do_page_mkwrite(vmf);
@@ -3514,12 +3548,6 @@ reuse:
 		return wp_page_shared(vmf);
 	}
 copy:
-	if ((vmf->flags & FAULT_FLAG_VMA_LOCK) && !vma->anon_vma) {
-		pte_unmap_unlock(vmf->pte, vmf->ptl);
-		vma_end_read(vmf->vma);
-		return VM_FAULT_RETRY;
-	}
-
 	/*
 	 * Ok, we need to copy. Oh, well..
 	 */
@@ -4511,7 +4539,7 @@ vm_fault_t finish_fault(struct vm_fault *vmf)
 }
 
 static unsigned long fault_around_bytes __read_mostly =
-	rounddown_pow_of_two(CONFIG_FAULT_AROUND_BYTES);
+	rounddown_pow_of_two(65536);
 
 #ifdef CONFIG_DEBUG_FS
 static int fault_around_bytes_get(void *data, u64 *val)
@@ -4614,9 +4642,6 @@ static inline bool should_fault_around(struct vm_fault *vmf)
 
 static vm_fault_t do_read_fault(struct vm_fault *vmf)
 {
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	struct vm_area_struct *vma = vmf->vma;
-#endif
 	vm_fault_t ret = 0;
 
 	/*
@@ -4628,16 +4653,11 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 		ret = do_fault_around(vmf);
 		if (ret)
 			return ret;
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	} else if (vma->vm_ops->map_pages && fault_around_bytes >> PAGE_SHIFT == 1) {
-		record_io_info(vma->vm_file, vmf->pgoff, 1);
-#endif
 	}
 
-	if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
-		vma_end_read(vmf->vma);
-		return VM_FAULT_RETRY;
-	}
+	ret = vmf_can_call_fault(vmf);
+	if (ret)
+		return ret;
 
 	ret = __do_fault(vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
@@ -4655,13 +4675,11 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	vm_fault_t ret;
 
-	if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
-		vma_end_read(vma);
-		return VM_FAULT_RETRY;
-	}
-
-	if (unlikely(anon_vma_prepare(vma)))
-		return VM_FAULT_OOM;
+	ret = vmf_can_call_fault(vmf);
+	if (!ret)
+		ret = vmf_anon_prepare(vmf);
+	if (ret)
+		return ret;
 
 	vmf->cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vmf->address);
 	if (!vmf->cow_page)
@@ -4699,10 +4717,9 @@ static vm_fault_t do_shared_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	vm_fault_t ret, tmp;
 
-	if (vmf->flags & FAULT_FLAG_VMA_LOCK) {
-		vma_end_read(vma);
-		return VM_FAULT_RETRY;
-	}
+	ret = vmf_can_call_fault(vmf);
+	if (ret)
+		return ret;
 
 	ret = __do_fault(vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
@@ -5525,7 +5542,7 @@ retry:
 	 * concurrent mremap() with MREMAP_DONTUNMAP could dissociate the VMA
 	 * from its anon_vma.
 	 */
-	if (unlikely(!vma->anon_vma))
+	if (vma_is_anonymous(vma) && !vma->anon_vma)
 		goto inval_end_read;
 
 	/* Check since vm_start/vm_end might change before we lock the VMA */

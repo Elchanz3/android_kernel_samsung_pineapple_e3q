@@ -271,7 +271,6 @@ static int __dquot_initialize(struct inode *inode, int type);
 
 static void quota_release_workfn(struct work_struct *work);
 static DECLARE_DELAYED_WORK(quota_release_work, quota_release_workfn);
-static struct workqueue_struct *quota_release_wq;
 
 static inline unsigned int
 hashfn(const struct super_block *sb, struct kqid qid)
@@ -584,12 +583,6 @@ restart:
 			continue;
 		/* Wait for dquot users */
 		if (atomic_read(&dquot->dq_count)) {
-			/* dquot in releasing_dquots, flush and retry */
-			if (!list_empty(&dquot->dq_free)) {
-				spin_unlock(&dq_list_lock);
-				goto restart;
-			}
-
 			atomic_inc(&dquot->dq_count);
 			spin_unlock(&dq_list_lock);
 			/*
@@ -895,7 +888,7 @@ void dqput(struct dquot *dquot)
 	put_releasing_dquots(dquot);
 	atomic_dec(&dquot->dq_count);
 	spin_unlock(&dq_list_lock);
-	queue_delayed_work(quota_release_wq, &quota_release_work, 1);
+	queue_delayed_work(system_unbound_wq, &quota_release_work, 1);
 }
 EXPORT_SYMBOL(dqput);
 
@@ -1091,7 +1084,59 @@ out:
 	return err;
 }
 
-static void remove_dquot_ref(struct super_block *sb, int type)
+/*
+ * Remove references to dquots from inode and add dquot to list for freeing
+ * if we have the last reference to dquot
+ */
+static void remove_inode_dquot_ref(struct inode *inode, int type,
+				   struct list_head *tofree_head)
+{
+	struct dquot **dquots = i_dquot(inode);
+	struct dquot *dquot = dquots[type];
+
+	if (!dquot)
+		return;
+
+	dquots[type] = NULL;
+	if (list_empty(&dquot->dq_free)) {
+		/*
+		 * The inode still has reference to dquot so it can't be in the
+		 * free list
+		 */
+		spin_lock(&dq_list_lock);
+		list_add(&dquot->dq_free, tofree_head);
+		spin_unlock(&dq_list_lock);
+	} else {
+		/*
+		 * Dquot is already in a list to put so we won't drop the last
+		 * reference here.
+		 */
+		dqput(dquot);
+	}
+}
+
+/*
+ * Free list of dquots
+ * Dquots are removed from inodes and no new references can be got so we are
+ * the only ones holding reference
+ */
+static void put_dquot_list(struct list_head *tofree_head)
+{
+	struct list_head *act_head;
+	struct dquot *dquot;
+
+	act_head = tofree_head->next;
+	while (act_head != tofree_head) {
+		dquot = list_entry(act_head, struct dquot, dq_free);
+		act_head = act_head->next;
+		/* Remove dquot from the list so we won't have problems... */
+		list_del_init(&dquot->dq_free);
+		dqput(dquot);
+	}
+}
+
+static void remove_dquot_ref(struct super_block *sb, int type,
+		struct list_head *tofree_head)
 {
 	struct inode *inode;
 #ifdef CONFIG_QUOTA_DEBUG
@@ -1108,16 +1153,11 @@ static void remove_dquot_ref(struct super_block *sb, int type)
 		 */
 		spin_lock(&dq_data_lock);
 		if (!IS_NOQUOTA(inode)) {
-			struct dquot **dquots = i_dquot(inode);
-			struct dquot *dquot = dquots[type];
-
 #ifdef CONFIG_QUOTA_DEBUG
 			if (unlikely(inode_get_rsv_space(inode) > 0))
 				reserved = 1;
 #endif
-			dquots[type] = NULL;
-			if (dquot)
-				dqput(dquot);
+			remove_inode_dquot_ref(inode, type, tofree_head);
 		}
 		spin_unlock(&dq_data_lock);
 	}
@@ -1134,8 +1174,13 @@ static void remove_dquot_ref(struct super_block *sb, int type)
 /* Gather all references from inodes and drop them */
 static void drop_dquot_ref(struct super_block *sb, int type)
 {
-	if (sb->dq_op)
-		remove_dquot_ref(sb, type);
+	LIST_HEAD(tofree_head);
+
+	if (sb->dq_op) {
+		remove_dquot_ref(sb, type, &tofree_head);
+		synchronize_srcu(&dquot_srcu);
+		put_dquot_list(&tofree_head);
+	}
 }
 
 static inline
@@ -2358,6 +2403,20 @@ static int vfs_setup_quota_inode(struct inode *inode, int type)
 	if (sb_has_quota_loaded(sb, type))
 		return -EBUSY;
 
+	/*
+	 * Quota files should never be encrypted.  They should be thought of as
+	 * filesystem metadata, not user data.  New-style internal quota files
+	 * cannot be encrypted by users anyway, but old-style external quota
+	 * files could potentially be incorrectly created in an encrypted
+	 * directory, hence this explicit check.  Some reasons why encrypted
+	 * quota files don't work include: (1) some filesystems that support
+	 * encryption don't handle it in their quota_read and quota_write, and
+	 * (2) cleaning up encrypted quota files at unmount would need special
+	 * consideration, as quota files are cleaned up later than user files.
+	 */
+	if (IS_ENCRYPTED(inode))
+		return -EINVAL;
+
 	dqopt->files[type] = igrab(inode);
 	if (!dqopt->files[type])
 		return -EIO;
@@ -3006,11 +3065,6 @@ static int __init dquot_init(void)
 			(SLAB_HWCACHE_ALIGN|SLAB_RECLAIM_ACCOUNT|
 				SLAB_MEM_SPREAD|SLAB_PANIC),
 			NULL);
-
-	quota_release_wq = alloc_workqueue("quota_release_wq",
-				WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!quota_release_wq)
-		panic("Cannot create quota_release workqueue");
 
 	order = 0;
 	dquot_hash = (struct hlist_head *)__get_free_pages(GFP_KERNEL, order);

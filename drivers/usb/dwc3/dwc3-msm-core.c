@@ -337,6 +337,18 @@ struct dload_struct {
 	u32	serial_magic;
 };
 
+struct usb_udc {
+	struct usb_gadget_driver	*driver;
+	struct usb_gadget		*gadget;
+	struct device			dev;
+	struct list_head		list;
+	bool				vbus;
+	bool				started;
+	bool				allow_connect;
+	struct work_struct		vbus_work;
+	struct mutex			connect_lock;
+};
+
 struct dwc3_hw_ep {
 	struct dwc3_ep		*dep;
 	enum usb_hw_ep_mode	mode;
@@ -580,6 +592,7 @@ struct dwc3_msm {
 	unsigned long		inputs;
 	enum dwc3_drd_state	drd_state;
 	enum usb_dr_mode	dr_mode;
+	bool                    otg_capable;
 	enum bus_vote		default_bus_vote;
 	enum bus_vote		override_bus_vote;
 	struct icc_path		*icc_paths[3];
@@ -1190,11 +1203,11 @@ static int dwc3_msm_is_ports_suspended(struct dwc3_msm *mdwc)
 	for (i = 0; i < num_ports; i++) {
 		reg = dwc3_msm_read_reg(mdwc->base, USB3_PORTSC + i*0x10);
 		pr_err("%s reg = %x\n", __func__, reg);
-		if (((reg & PORT_PLS_MASK) == XDEV_U3))
-			return 1;
+		if (((reg & PORT_PLS_MASK) != XDEV_U3) && ((reg & PORT_PLS_MASK) != XDEV_RXDETECT))
+			return 0; // If any port is not U3 or RXDETECT, return 0
 	}
 
-	return 0;
+	return 1; // All ports are U3 or RXDETECT, return 1
 }
 
 static bool dwc3_msm_is_host_superspeed(struct dwc3_msm *mdwc)
@@ -3575,6 +3588,13 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 	case DWC3_CONTROLLER_CONNDONE_EVENT:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_CONNDONE_EVENT received\n");
 
+		if ((dwc->speed != DWC3_DSTS_SUPERSPEED) &&
+			(dwc->speed != DWC3_DSTS_SUPERSPEED_PLUS)) {
+			reg = dwc3_msm_read_reg(mdwc->base, DWC3_GUSB3PIPECTL(0));
+			reg |= DWC3_GUSB3PIPECTL_SUSPHY;
+			dwc3_msm_write_reg(mdwc->base, DWC3_GUSB3PIPECTL(0), reg);
+		}
+
 		/*
 		 * SW WA for CV9 RESET DEVICE TEST(TD 9.23) compliance failure.
 		 * Visit eUSB2 phy driver for more details.
@@ -3672,6 +3692,16 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 		break;
 	case DWC3_CONTROLLER_NOTIFY_CLEAR_DB:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_NOTIFY_CLEAR_DB\n");
+
+		/*
+		 * Clear the susphy bit here to ensure it is not set during
+		 * the course of controller initialisation process.
+		 */
+		reg = dwc3_msm_read_reg(mdwc->base, DWC3_GUSB3PIPECTL(0));
+		reg &= ~(DWC3_GUSB3PIPECTL_SUSPHY);
+		dwc3_msm_write_reg(mdwc->base, DWC3_GUSB3PIPECTL(0), reg);
+		udelay(1000);
+
 		handle_gsi_clear_db(dwc);
 		break;
 	case DWC3_IMEM_UPDATE_PID:
@@ -5670,7 +5700,7 @@ static ssize_t bus_vote_store(struct device *dev,
 		mdwc->override_bus_vote = BUS_VOTE_MIN;
 	} else if (sysfs_streq(buf, "max")) {
 		bv_fixed = true;
-		mdwc->override_bus_vote = BUS_VOTE_MAX;
+		mdwc->override_bus_vote = BUS_VOTE_NOMINAL;
 	} else if (sysfs_streq(buf, "cancel")) {
 		bv_fixed = false;
 		mdwc->override_bus_vote = BUS_VOTE_NONE;
@@ -5702,6 +5732,10 @@ static ssize_t enable_l1_suspend_show(struct device *dev,
 	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
 	struct dwc3	 *dwc = platform_get_drvdata(mdwc->dwc3);
 
+	/* gadget lpm capability only when otg/gadget mode is supported */
+	if (!(mdwc->otg_capable) && (dwc->dr_mode == USB_DR_MODE_HOST))
+		return -EPERM;
+
 	return scnprintf(buf, PAGE_SIZE, "%d\n", dwc->gadget->lpm_capable);
 
 }
@@ -5714,6 +5748,10 @@ static ssize_t enable_l1_suspend_store(struct device *dev,
 	struct dwc3	 *dwc = platform_get_drvdata(mdwc->dwc3);
 	bool		 enable_l1;
 	int		 ret;
+
+	/* gadget lpm capability only when otg/gadget mode is supported */
+	if (!(mdwc->otg_capable) && (dwc->dr_mode == USB_DR_MODE_HOST))
+		return -EPERM;
 
 	ret = kstrtobool(buf, &enable_l1);
 	if (ret < 0) {
@@ -6009,6 +6047,16 @@ int dwc3_msm_set_dp_mode(struct device *dev, bool dp_connected, int lanes)
 	dbg_log_string("Set DP lanes:%d refcnt:%d\n", lanes, mdwc->refcnt_dp_usb);
 
 	if (lanes == 2) {
+		if (!mdwc->in_host_mode) {
+			msleep(20);
+			/*
+			 * There are scenarios where DP driver calls this API before dwc3-msm
+			 * gets the role information, hence return if host mode hasn't started.
+			 * DP Altmode driver has retry mechanism we return -EAGAIN or -EBUSY.
+			 */
+			return -EAGAIN;
+		}
+
 		mutex_lock(&mdwc->role_switch_mutex);
 		mdwc->dp_state = DP_2_LANE;
 		mdwc->refcnt_dp_usb++;
@@ -6876,6 +6924,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 			.allow_userspace_control = true,
 		};
 
+		mdwc->otg_capable = true;
 		role_desc.fwnode = dev_fwnode(&pdev->dev);
 		mdwc->role_switch = usb_role_switch_register(mdwc->dev,
 								&role_desc);
@@ -7375,6 +7424,8 @@ static void msm_dwc3_perf_vote_enable(struct dwc3_msm *mdwc, bool enable)
 		schedule_delayed_work(&mdwc->perf_vote_work,
 				msecs_to_jiffies(PM_QOS_DEFAULT_SAMPLE_MS));
 	} else {
+		if (!mdwc->pm_qos_latency_cfg)
+			return;
 		cancel_delayed_work_sync(&mdwc->perf_vote_work);
 		msm_dwc3_perf_vote_update(mdwc, false);
 		cpu_latency_qos_remove_request(&mdwc->pm_qos_req_dma);
@@ -7598,17 +7649,21 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 			dwc3_msm_clear_dp_only_params(mdwc);
 		}
 
-		usb_role_switch_set_role(mdwc->dwc3_drd_sw, USB_ROLE_DEVICE);
-		if (dwc->dr_mode == USB_DR_MODE_OTG)
-			flush_work(&dwc->drd_work);
-
-		usb_phy_notify_disconnect(mdwc->hs_phy, USB_SPEED_HIGH);
+		/*
+		 * Performing phy disconnect before flush work to
+		 * address TypeC certification--TD 4.7.4 failure.
+		 */
 		if (mdwc->ss_phy->flags & PHY_HOST_MODE) {
 			usb_phy_notify_disconnect(mdwc->ss_phy,
 					USB_SPEED_SUPER);
 			mdwc->ss_phy->flags &= ~PHY_HOST_MODE;
 		}
 		usb_redriver_notify_disconnect(mdwc->redriver);
+		usb_phy_notify_disconnect(mdwc->hs_phy, USB_SPEED_HIGH);
+
+		usb_role_switch_set_role(mdwc->dwc3_drd_sw, USB_ROLE_DEVICE);
+		if (dwc->dr_mode == USB_DR_MODE_OTG)
+			flush_work(&dwc->drd_work);
 
 		mdwc->hs_phy->flags &= ~PHY_HOST_MODE;
 		usb_unregister_notify(&mdwc->host_nb);

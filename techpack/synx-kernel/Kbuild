@@ -1,0 +1,12 @@
+# In-tree build (techpack/): what the external Android/Bazel build passed
+# on the make command line. Exported -> reaches this techpack's subdirs only.
+ifeq ($(KBUILD_EXTMOD),)
+export SYNX_ROOT := $(abs_srctree)/$(src)
+endif
+
+# SPDX-License-Identifier: GPL-2.0-only
+
+CONFIG_BUILD_VENDORSI := true
+
+# auto-detect subdirs
+obj-y +=msm/

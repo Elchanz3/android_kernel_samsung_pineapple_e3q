@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# In-tree build (techpack/). Every extension used to be its own M= build with
+# RMNET_CORE_INC_DIR pointing at datarmnet/core.
+export RMNET_CORE_INC_DIR := $(TECHPACK_ROOT)/datarmnet/core
+export RMNET_CORE_PATH := $(TECHPACK_ROOT)/datarmnet/core
+export RMNET_SHS_INC_DIR := $(abs_srctree)/$(src)/shs
+subdir-ccflags-y += -DRMNET_TRACE_INCLUDE_PATH=../../techpack/datarmnet/core
+
+subdir-ccflags-y += $(TP_INC_IPA)
+
+obj-y += mem/ aps/ offload/ perf/ perf_tether/ sch/ shs/ wlan/

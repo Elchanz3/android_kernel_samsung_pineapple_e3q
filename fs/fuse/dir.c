@@ -426,7 +426,12 @@ static int fuse_dentry_canonical_path(const struct path *path,
 
 #ifdef CONFIG_FUSE_BPF
 	struct fuse_err_ret fer;
+#endif
 
+	if (fm->fc->no_dentry_canonical_path)
+		goto out;
+
+#ifdef CONFIG_FUSE_BPF
 	fer = fuse_bpf_backing(inode, struct fuse_dummy_io,
 			       fuse_canonical_path_initialize,
 			       fuse_canonical_path_backing,
@@ -453,9 +458,13 @@ static int fuse_dentry_canonical_path(const struct path *path,
 	free_page((unsigned long)path_name);
 	if (err > 0)
 		return 0;
-	if (err < 0)
+	if (err < 0 && err != -ENOSYS)
 		return err;
 
+	if (err == -ENOSYS)
+		fm->fc->no_dentry_canonical_path = 1;
+
+out:
 	canonical_path->dentry = path->dentry;
 	canonical_path->mnt = path->mnt;
 	path_get(canonical_path);
@@ -1874,7 +1883,7 @@ void fuse_set_nowrite(struct inode *inode)
 	BUG_ON(fi->writectr < 0);
 	fi->writectr += FUSE_NOWRITE;
 	spin_unlock(&fi->lock);
-	fuse_wait_event(fi->page_waitq, fi->writectr == FUSE_NOWRITE);
+	wait_event(fi->page_waitq, fi->writectr == FUSE_NOWRITE);
 }
 
 /*

@@ -317,7 +317,7 @@ RETRY_ACCEL_SELFTEST:
 
 		if (retry < ACCEL_ST_TRY_CNT) {
 			retry++;
-			msleep(200);
+			msleep(50);
 			cnt = 0;
 			pr_info("[FACTORY] %s: retry\n", __func__);
 			goto RETRY_ACCEL_SELFTEST;

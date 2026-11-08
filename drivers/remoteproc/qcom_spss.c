@@ -303,9 +303,9 @@ static int spss_load(struct rproc *rproc, const struct firmware *fw)
 	struct qcom_spss *spss = (struct qcom_spss *)rproc->priv;
 
 	return qcom_mdt_load(spss->dev, fw, rproc->firmware, spss->pas_id,
-			     spss->mem_region, spss->mem_phys, spss->mem_size,
-			     &spss->mem_reloc);
-}
+			spss->mem_region, spss->mem_phys, spss->mem_size,
+			&spss->mem_reloc);
+	}
 
 static int spss_stop(struct rproc *rproc)
 {
@@ -722,6 +722,7 @@ static const struct of_device_id spss_of_match[] = {
 	{ .compatible = "qcom,waipio-spss-pas", .data = &spss_resource_init},
 	{ .compatible = "qcom,kalama-spss-pas", .data = &spss_resource_init},
 	{ .compatible = "qcom,pineapple-spss-pas", .data = &spss_resource_init},
+	{ .compatible = "qcom,niobe-spss-pas", .data = &spss_resource_init},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, spss_of_match);

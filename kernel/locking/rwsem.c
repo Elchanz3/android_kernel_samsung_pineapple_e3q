@@ -1414,7 +1414,6 @@ static inline void __up_write(struct rw_semaphore *sem)
 			    !rwsem_test_oflags(sem, RWSEM_NONSPINNABLE), sem);
 
 	preempt_disable();
-	BUG_ON(atomic_long_read(&sem->count) <= 0);
 	rwsem_clear_owner(sem);
 	tmp = atomic_long_fetch_add_release(-RWSEM_WRITER_LOCKED, &sem->count);
 	if (unlikely(tmp & RWSEM_FLAG_WAITERS))

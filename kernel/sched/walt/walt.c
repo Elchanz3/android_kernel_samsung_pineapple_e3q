@@ -1385,8 +1385,7 @@ static void update_task_pred_demand(struct rq *rq, struct task_struct *p, int ev
 	new_pred_demand_scaled = get_pred_busy(p, busy_to_bucket(curr_window_scaled),
 			     curr_window_scaled, wts->bucket_bitmask);
 
-	if (task_on_rq_queued(p) && (!task_has_dl_policy(p) ||
-				!p->dl.dl_throttled))
+	if (task_on_rq_queued(p))
 		fixup_walt_sched_stats_common(rq, p,
 				wts->demand_scaled,
 				new_pred_demand_scaled);
@@ -2099,9 +2098,8 @@ static void update_history(struct rq *rq, struct task_struct *p,
 	demand_scaled = scale_time_to_util(demand);
 
 	/*
-	 * A throttled deadline sched class task gets dequeued without
-	 * changing p->on_rq. Since the dequeue decrements walt stats
-	 * avoid decrementing it here again.
+	 * Avoid double accounting of task demand as demand will be updated
+	 * to CRA as part of enqueue/dequeue.
 	 *
 	 * When window is rolled over, the cumulative window demand
 	 * is reset to the cumulative runnable average (contribution from
@@ -2110,11 +2108,9 @@ static void update_history(struct rq *rq, struct task_struct *p,
 	 * average. So add the task demand separately to cumulative window
 	 * demand.
 	 */
-	if (!task_has_dl_policy(p) || !p->dl.dl_throttled) {
-		if (task_on_rq_queued(p))
-			fixup_walt_sched_stats_common(rq, p,
-					demand_scaled, pred_demand_scaled);
-	}
+	if (task_on_rq_queued(p))
+		fixup_walt_sched_stats_common(rq, p,
+					      demand_scaled, pred_demand_scaled);
 
 	wts->demand = demand;
 	wts->demand_scaled = demand_scaled;
@@ -4655,18 +4651,33 @@ void fmax_uncap_checkpoint(int nr_big, u64 window_start, u32 wakeup_ctr_sum)
 void update_freq_relation(struct walt_sched_cluster *cluster)
 {
 	int cluster_id = cluster->id;
-	int tgt_cpu, i;
-	unsigned int tgt_freq;
+	int tgt_cpu, i, cpu;
+	unsigned int tgt_freq = 0;
 	struct walt_sched_cluster *tgt_cluster;
 	unsigned int prev_cap = fmax_cap[FREQ_REL_CAP][cluster_id];
+	bool cluster_active = false;
 
 	for (i = 0; i < MAX_FREQ_RELATIONS; i++) {
+		cluster_active = false;
+		tgt_freq = 0;
 		tgt_cpu = relation_data[cluster_id][i].target_cluster_cpu;
 		if (tgt_cpu < 0)
 			break;
 		tgt_cluster = cpu_cluster(tgt_cpu);
-		tgt_freq = (arch_scale_freq_capacity(tgt_cpu) *
-			(unsigned long)tgt_cluster->max_possible_freq) >> SCHED_CAPACITY_SHIFT;
+		/* frequency is valid only if we are running something */
+		for_each_cpu(cpu, &tgt_cluster->cpus) {
+			struct rq *rq = cpu_rq(cpu);
+
+			if (rq->nr_running) {
+				cluster_active = true;
+				break;
+			}
+		}
+
+		if (cluster_active)
+			tgt_freq = (arch_scale_freq_capacity(tgt_cpu) *
+				    (unsigned long)tgt_cluster->max_possible_freq) >>
+					SCHED_CAPACITY_SHIFT;
 
 		if (tgt_freq < relation_data[cluster_id][i].tgt_freq) {
 			fmax_cap[FREQ_REL_CAP][cluster_id] = relation_data[cluster_id][i].src_freq;
@@ -4821,6 +4832,9 @@ static void walt_sched_init_rq(struct rq *rq)
 
 	wrq->num_mvp_tasks = 0;
 	INIT_LIST_HEAD(&wrq->mvp_tasks);
+	wrq->mvp_arrival_time = 0;
+	wrq->mvp_throttle_time = 0;
+	wrq->skip_mvp = false;
 }
 
 void sched_window_nr_ticks_change(void)
@@ -5256,8 +5270,6 @@ static void android_rvh_sched_exec(void *unused, bool *cond)
 
 static void android_rvh_build_perf_domains(void *unused, bool *eas_check)
 {
-	if (unlikely(walt_disabled))
-		return;
 	*eas_check = true;
 }
 
@@ -5563,7 +5575,7 @@ static void walt_init(struct work_struct *work)
 
 	wait_for_completion_interruptible(&tick_sched_clock_completion);
 
-	if (!rcu_dereference(rd->pd)) {
+	if (!rcu_access_pointer(rd->pd)) {
 		/*
 		 * perf domains not properly configured.  this is a must as
 		 * create_util_to_cost depends on rd->pd being properly
@@ -5582,7 +5594,7 @@ static void walt_init(struct work_struct *work)
 	 * see walt_find_energy_efficient_cpu(), and
 	 * create_util_to_cost().
 	 */
-	if (!rcu_dereference(rd->pd) && num_sched_clusters > 1)
+	if (!rcu_access_pointer(rd->pd) && num_sched_clusters > 1)
 		WALT_BUG(WALT_BUG_WALT, NULL,
 			 "root domain's perf-domain values not initialized rd->pd=%d.",
 			 rd->pd);

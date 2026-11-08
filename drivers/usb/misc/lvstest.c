@@ -163,8 +163,8 @@ static struct usb_device *create_lvs_device(struct usb_interface *intf)
 			}
 		}
 	}
-
-	usb_set_device_state(udev, USB_STATE_DEFAULT);
+	/* add 100 to notify that it is called from the lvs driver. */
+	usb_set_device_state(udev, USB_STATE_DEFAULT + 100);
 
 	if (hcd->driver->enable_device) {
 		if (hcd->driver->enable_device(hcd, udev) < 0) {
@@ -205,7 +205,13 @@ static ssize_t u3_entry_store(struct device *dev,
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
 	struct usb_device *udev;
+	int port;
 	int ret;
+
+	if (!kstrtoint(buf, 0, &port) && port >= 1 && port <= 255) {
+		lvs->portnum = port;
+		lvs->present = true;
+	}
 
 	udev = create_lvs_device(intf);
 	if (!udev) {
@@ -234,7 +240,13 @@ static ssize_t u3_exit_store(struct device *dev,
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
 	struct usb_device *udev;
+	int port;
 	int ret;
+
+	if (!kstrtoint(buf, 0, &port) && port >= 1 && port <= 255) {
+		lvs->portnum = port;
+		lvs->present = true;
+	}
 
 	udev = create_lvs_device(intf);
 	if (!udev) {
@@ -262,10 +274,14 @@ static ssize_t hot_reset_store(struct device *dev,
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
+	int port;
 	int ret;
 
 	pr_info("lvs:%s\n", __func__);
-	ret = lvs_rh_set_port_feature(hdev, lvs->portnum,
+	if (kstrtoint(buf, 0, &port) || port < 1 || port > 255)
+		port = lvs->portnum;
+
+	ret = lvs_rh_set_port_feature(hdev, port,
 			USB_PORT_FEAT_RESET);
 	if (ret < 0) {
 		dev_err(dev, "can't issue hot reset %d\n", ret);
@@ -282,11 +298,14 @@ static ssize_t warm_reset_store(struct device *dev,
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
+	int port;
 	int ret;
 
 	pr_info("lvs:%s\n", __func__);
-	ret = lvs_rh_set_port_feature(hdev, lvs->portnum,
-			USB_PORT_FEAT_BH_PORT_RESET);
+	if (kstrtoint(buf, 0, &port) || port < 1 || port > 255)
+		port = lvs->portnum;
+
+	ret = lvs_rh_set_port_feature(hdev, port, USB_PORT_FEAT_BH_PORT_RESET);
 	if (ret < 0) {
 		dev_err(dev, "can't issue warm reset %d\n", ret);
 		return ret;
@@ -361,9 +380,14 @@ static ssize_t get_dev_desc_store(struct device *dev,
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
 	struct usb_device *udev;
 	struct usb_device_descriptor *descriptor;
-	int ret;
+	int ret, port;
 
 	pr_info("lvs: %s\n", __func__);
+	if (!kstrtoint(buf, 0, &port) && port >= 1 && port <= 255) {
+		lvs->portnum = port;
+		lvs->present = true;
+	}
+
 	descriptor = kmalloc(sizeof(*descriptor), GFP_KERNEL);
 	if (!descriptor)
 		return -ENOMEM;
@@ -408,11 +432,15 @@ static ssize_t enable_compliance_store(struct device *dev,
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	struct lvs_rh *lvs = usb_get_intfdata(intf);
+	int port;
 	int ret;
 
 	pr_info("lvs:%s\n", __func__);
+	if (kstrtoint(buf, 0, &port) || port < 1 || port > 255)
+		port = lvs->portnum;
+
 	ret = lvs_rh_set_port_feature(hdev,
-			lvs->portnum | USB_SS_PORT_LS_COMP_MOD << 3,
+			port | (USB_SS_PORT_LS_COMP_MOD << 3),
 			USB_PORT_FEAT_LINK_STATE);
 	if (ret < 0) {
 		dev_err(dev, "can't enable compliance mode %d\n", ret);

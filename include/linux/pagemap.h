@@ -199,9 +199,6 @@ enum mapping_flags {
 	/* writeback related tags are not used */
 	AS_NO_WRITEBACK_TAGS = 5,
 	AS_LARGE_FOLIO_SUPPORT = 6,
-#ifdef CONFIG_DDAR
-	AS_SENSITIVE = __GFP_BITS_SHIFT + 5, /* Group of sensitive pages to be cleaned up */
-#endif
 };
 
 /**
@@ -347,25 +344,6 @@ static inline void filemap_nr_thps_dec(struct address_space *mapping)
 	WARN_ON_ONCE(mapping_large_folio_support(mapping) == 0);
 #endif
 }
-
-#ifdef CONFIG_DDAR
-static inline void mapping_set_sensitive(struct address_space *mapping)
-{
-	set_bit(AS_SENSITIVE, &mapping->flags);
-}
-
-static inline void mapping_clear_sensitive(struct address_space *mapping)
-{
-	clear_bit(AS_SENSITIVE, &mapping->flags);
-}
-
-static inline int mapping_sensitive(struct address_space *mapping)
-{
-	if (mapping)
-		return test_bit(AS_SENSITIVE, &mapping->flags);
-	return !!mapping;
-}
-#endif
 
 struct address_space *page_mapping(struct page *);
 struct address_space *folio_mapping(struct folio *);
@@ -744,6 +722,8 @@ unsigned filemap_get_folios(struct address_space *mapping, pgoff_t *start,
 		pgoff_t end, struct folio_batch *fbatch);
 unsigned filemap_get_folios_contig(struct address_space *mapping,
 		pgoff_t *start, pgoff_t end, struct folio_batch *fbatch);
+unsigned filemap_get_folios_tag(struct address_space *mapping, pgoff_t *start,
+		pgoff_t end, xa_mark_t tag, struct folio_batch *fbatch);
 unsigned find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
 			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
 			struct page **pages);

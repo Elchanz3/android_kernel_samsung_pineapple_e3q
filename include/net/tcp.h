@@ -40,9 +40,6 @@
 #include <net/inet_ecn.h>
 #include <net/dst.h>
 #include <net/mptcp.h>
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-#include <net/skb_tracer.h>
-#endif
 
 #include <linux/seq_file.h>
 #include <linux/memcontrol.h>
@@ -144,6 +141,9 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCP_RTO_MAX	((unsigned)(120*HZ))
 #define TCP_RTO_MIN	((unsigned)(HZ/5))
 #define TCP_TIMEOUT_MIN	(2U) /* Min timeout for TCP timers in jiffies */
+
+#define TCP_TIMEOUT_MIN_US (2*USEC_PER_MSEC) /* Min TCP timeout in microsecs */
+
 #define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))	/* RFC6298 2.1 initial RTO value	*/
 #define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value, now
 						 * used as a fallback RTO for the
@@ -810,7 +810,7 @@ static inline u32 tcp_time_stamp(const struct tcp_sock *tp)
 }
 
 /* Convert a nsec timestamp into TCP TSval timestamp (ms based currently) */
-static inline u32 tcp_ns_to_ts(u64 ns)
+static inline u64 tcp_ns_to_ts(u64 ns)
 {
 	return div_u64(ns, NSEC_PER_SEC / TCP_TS_HZ);
 }
@@ -1460,15 +1460,20 @@ static inline int tcp_full_space(const struct sock *sk)
 	return tcp_win_from_space(sk, READ_ONCE(sk->sk_rcvbuf));
 }
 
-static inline void tcp_adjust_rcv_ssthresh(struct sock *sk)
+static inline void __tcp_adjust_rcv_ssthresh(struct sock *sk, u32 new_ssthresh)
 {
 	int unused_mem = sk_unused_reserved_mem(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	tp->rcv_ssthresh = min(tp->rcv_ssthresh, 4U * tp->advmss);
+	tp->rcv_ssthresh = min(tp->rcv_ssthresh, new_ssthresh);
 	if (unused_mem)
 		tp->rcv_ssthresh = max_t(u32, tp->rcv_ssthresh,
 					 tcp_win_from_space(sk, unused_mem));
+}
+
+static inline void tcp_adjust_rcv_ssthresh(struct sock *sk)
+{
+	__tcp_adjust_rcv_ssthresh(sk, 4U * tcp_sk(sk)->advmss);
 }
 
 void tcp_cleanup_rbuf(struct sock *sk, int copied);
@@ -1919,9 +1924,6 @@ static inline bool tcp_rtx_and_write_queues_empty(const struct sock *sk)
 static inline void tcp_add_write_queue_tail(struct sock *sk, struct sk_buff *skb)
 {
 	__skb_queue_tail(&sk->sk_write_queue, skb);
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-	skb_tracer_mask_with(skb, &sk->sk_write_queue);
-#endif
 
 	/* Queue it, remembering where we must start sending. */
 	if (sk->sk_write_queue.next == skb)
@@ -1934,19 +1936,12 @@ static inline void tcp_insert_write_queue_before(struct sk_buff *new,
 						  struct sock *sk)
 {
 	__skb_queue_before(&sk->sk_write_queue, skb, new);
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-	skb_tracer_mask_with(new, &sk->sk_write_queue);
-#endif
 }
 
 static inline void tcp_unlink_write_queue(struct sk_buff *skb, struct sock *sk)
 {
 	tcp_skb_tsorted_anchor_cleanup(skb);
 	__skb_unlink(skb, &sk->sk_write_queue);
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-	skb_tracer_unmask_with(skb, &sk->sk_write_queue);
-#endif
-
 }
 
 void tcp_rbtree_insert(struct rb_root *root, struct sk_buff *skb);
@@ -1955,9 +1950,6 @@ static inline void tcp_rtx_queue_unlink(struct sk_buff *skb, struct sock *sk)
 {
 	tcp_skb_tsorted_anchor_cleanup(skb);
 	rb_erase(&skb->rbnode, &sk->tcp_rtx_queue);
-#if IS_ENABLED(CONFIG_SKB_TRACER)
-	skb_tracer_unmask_with(skb, &sk->tcp_rtx_queue);
-#endif
 }
 
 static inline void tcp_rtx_queue_unlink_and_free(struct sk_buff *skb, struct sock *sk)

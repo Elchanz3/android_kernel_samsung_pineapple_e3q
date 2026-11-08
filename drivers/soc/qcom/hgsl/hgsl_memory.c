@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "hgsl_memory.h"
@@ -267,9 +267,9 @@ static int hgsl_mem_dma_buf_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
 
 	if (IS_ERR_OR_NULL(mem_node->vmapping))
 		mem_node->vmapping = vmap(mem_node->pages,
-				mem_node->page_count,
-				VM_IOREMAP,
-				prot);
+			    mem_node->page_count,
+			    VM_IOREMAP,
+			    prot);
 
 	if (!IS_ERR_OR_NULL(mem_node->vmapping))
 		mem_node->vmap_count++;
@@ -342,15 +342,27 @@ static void _dma_cache_op(struct device *dev, struct page *page,
 	sg_set_page(&sgl, page, size_bytes, 0);
 	sg_dma_address(&sgl) = page_to_phys(page);
 
+	/*
+	 * APIs for Cache Maintenance Operations are updated in kernel
+	 * version 6.1. Prior to 6.1, dma_sync_sg_for_device() with
+	 * DMA_FROM_DEVICE as direction triggers cache invalidate and
+	 * clean whereas in kernel version 6.1, it triggers only cache
+	 * clean. Hence use dma_sync_sg_for_cpu() for cache invalidate
+	 * for kernel version 6.1 and above.
+	 */
+
 	switch (op) {
 	case GSL_CACHEFLAGS_FLUSH:
-		dma_sync_sg_for_device(dev, &sgl, 1, DMA_BIDIRECTIONAL);
+		/*This change is for kernel version 6.1*/
+		dma_sync_sg_for_device(dev, &sgl, 1, DMA_TO_DEVICE);
+		dma_sync_sg_for_cpu(dev, &sgl, 1, DMA_FROM_DEVICE);
 		break;
 	case GSL_CACHEFLAGS_CLEAN:
 		dma_sync_sg_for_device(dev, &sgl, 1, DMA_TO_DEVICE);
 		break;
 	case GSL_CACHEFLAGS_INVALIDATE:
-		dma_sync_sg_for_device(dev, &sgl, 1, DMA_FROM_DEVICE);
+		/*This change is for kernel version 6.1*/
+		dma_sync_sg_for_cpu(dev, &sgl, 1, DMA_FROM_DEVICE);
 		break;
 	default:
 		LOGE("invalid cache operation");
@@ -511,10 +523,9 @@ static int hgsl_alloc_pages(struct device *dev, uint32_t requested_pcount,
 		for (i = 0; i < pcount; i++)
 			pages[i] = nth_page(page, i);
 		_dma_cache_op(dev, page, pcount, GSL_CACHEFLAGS_FLUSH);
-	}
-
-	mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
+		mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
 						(1 << order));
+	}
 
 	return pcount;
 }
@@ -617,6 +628,20 @@ struct hgsl_mem_node *hgsl_mem_find_base_locked(struct list_head *head,
 	}
 
 	return node_found;
+}
+
+void *hgsl_mem_node_zalloc(bool iocoherency)
+{
+	struct hgsl_mem_node *mem_node = NULL;
+
+	mem_node = hgsl_zalloc(sizeof(*mem_node));
+	if (mem_node == NULL)
+		goto out;
+
+	mem_node->default_iocoherency = iocoherency;
+
+out:
+	return mem_node;
 }
 
 MODULE_IMPORT_NS(DMA_BUF);

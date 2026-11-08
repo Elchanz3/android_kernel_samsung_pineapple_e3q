@@ -40,10 +40,7 @@
 
 struct madvise_walk_private {
 	struct mmu_gather *tlb;
-	struct vm_area_struct *vma;
 	bool pageout;
-	bool writeback;
-	bool prefetch;
 };
 
 /*
@@ -64,8 +61,6 @@ static int madvise_need_mmap_write(int behavior)
 	case MADV_POPULATE_READ:
 	case MADV_POPULATE_WRITE:
 	case MADV_COLLAPSE:
-	case MADV_WRITEBACK:
-	case MADV_PREFETCH:
 		return 0;
 	default:
 		/* be safe, default to 1. list exceptions explicitly */
@@ -201,9 +196,7 @@ success:
 static int swapin_walk_pmd_entry(pmd_t *pmd, unsigned long start,
 	unsigned long end, struct mm_walk *walk)
 {
-	struct madvise_walk_private *private = walk->private;
-	struct vm_area_struct *vma = private->vma;
-	bool prefetch = private->prefetch;
+	struct vm_area_struct *vma = walk->private;
 	unsigned long index;
 	struct swap_iocb *splug = NULL;
 
@@ -227,8 +220,6 @@ static int swapin_walk_pmd_entry(pmd_t *pmd, unsigned long start,
 		if (unlikely(non_swap_entry(entry)))
 			continue;
 		trace_android_vh_madvise_swapin_walk_pmd_entry(entry);
-		if (prefetch)
-			continue;
 
 		page = read_swap_cache_async(entry, GFP_HIGHUSER_MOVABLE,
 					     vma, index, &splug);
@@ -286,23 +277,16 @@ static void force_shm_swapin_readahead(struct vm_area_struct *vma,
  */
 static long madvise_willneed(struct vm_area_struct *vma,
 			     struct vm_area_struct **prev,
-			     unsigned long start, unsigned long end,
-			     bool prefetch)
+			     unsigned long start, unsigned long end)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct file *file = vma->vm_file;
 	loff_t offset;
 
 	*prev = vma;
-	if (prefetch && file)
-		return 0;
 #ifdef CONFIG_SWAP
 	if (!file) {
-		struct madvise_walk_private private = {
-			.vma = vma,
-			.prefetch = prefetch,
-		};
-		walk_page_range(mm, start, end, &swapin_walk_ops, &private);
+		walk_page_range(vma->vm_mm, start, end, &swapin_walk_ops, vma);
 		lru_add_drain(); /* Push any new pages onto the LRU now */
 		return 0;
 	}
@@ -354,10 +338,6 @@ static inline bool can_do_file_pageout(struct vm_area_struct *vma)
 	       file_permission(vma->vm_file, MAY_WRITE) == 0;
 }
 
-#ifdef CONFIG_HUGEPAGE_POOL
-extern bool is_hugepage_avail_low_ok(void);
-#endif
-
 static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 				unsigned long addr, unsigned long end,
 				struct mm_walk *walk)
@@ -372,14 +352,10 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 	struct page *page = NULL;
 	LIST_HEAD(page_list);
 	bool pageout_anon_only_filter;
-	bool writeback = private->writeback;
 	swp_entry_t entry;
 
 	if (fatal_signal_pending(current))
 		return -EINTR;
-
-	if ((pageout || writeback) && rwsem_is_contended(&mm->mmap_lock))
-		return -EBUSY;
 
 	pageout_anon_only_filter = pageout && !vma_is_anonymous(vma) &&
 					!can_do_file_pageout(vma);
@@ -469,14 +445,12 @@ regular_page:
 		if (pte_none(ptent))
 			continue;
 
-		if (!pte_present(ptent) && writeback) {
+		if (!pte_present(ptent)) {
 			entry = pte_to_swp_entry(ptent);
 			trace_android_vh_madvise_pageout_swap_entry(entry,
 					swp_swapcount(entry));
 			continue;
 		}
-		if (!pte_present(ptent) || writeback)
-			continue;
 
 		page = vm_normal_page(vma, addr, ptent);
 		if (!page || is_zone_device_page(page))
@@ -493,10 +467,6 @@ regular_page:
 		 * are sure it's worth. Split it if we are only owner.
 		 */
 		if (PageTransCompound(page)) {
-#ifdef CONFIG_HUGEPAGE_POOL
-			if (is_hugepage_avail_low_ok())
-				break;
-#endif
 			if (page_mapcount(page) != 1)
 				break;
 			if (pageout_anon_only_filter && !PageAnon(page))
@@ -612,39 +582,30 @@ static long madvise_cold(struct vm_area_struct *vma,
 	return 0;
 }
 
-static int madvise_pageout_page_range(struct mmu_gather *tlb,
+static void madvise_pageout_page_range(struct mmu_gather *tlb,
 			     struct vm_area_struct *vma,
-			     unsigned long addr, unsigned long end,
-			     bool writeback)
+			     unsigned long addr, unsigned long end)
 {
 	struct madvise_walk_private walk_private = {
 		.pageout = true,
 		.tlb = tlb,
-		.writeback = writeback,
 	};
-	int err;
 
 	tlb_start_vma(tlb, vma);
-	err = walk_page_range(vma->vm_mm, addr, end, &cold_walk_ops, &walk_private);
+	walk_page_range(vma->vm_mm, addr, end, &cold_walk_ops, &walk_private);
 	tlb_end_vma(tlb, vma);
-	return err;
 }
 
 static long madvise_pageout(struct vm_area_struct *vma,
 			struct vm_area_struct **prev,
-			unsigned long start_addr, unsigned long end_addr,
-			bool writeback)
+			unsigned long start_addr, unsigned long end_addr)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct mmu_gather tlb;
-	int err;
 
 	*prev = vma;
 	if (!can_madv_lru_vma(vma))
-		return 0;
-
-	if (rwsem_is_contended(&mm->mmap_lock))
-		return -EBUSY;
+		return -EINVAL;
 
 	/*
 	 * If the VMA belongs to a private file mapping, there can be private
@@ -658,11 +619,9 @@ static long madvise_pageout(struct vm_area_struct *vma,
 
 	lru_add_drain();
 	tlb_gather_mmu(&tlb, mm);
-	err = madvise_pageout_page_range(&tlb, vma, start_addr, end_addr, writeback);
+	madvise_pageout_page_range(&tlb, vma, start_addr, end_addr);
 	tlb_finish_mmu(&tlb);
 
-	if (err == -EBUSY)
-		return -EBUSY;
 	return 0;
 }
 
@@ -1089,15 +1048,11 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 	case MADV_REMOVE:
 		return madvise_remove(vma, prev, start, end);
 	case MADV_WILLNEED:
-		return madvise_willneed(vma, prev, start, end, false);
-	case MADV_PREFETCH:
-		return madvise_willneed(vma, prev, start, end, true);
+		return madvise_willneed(vma, prev, start, end);
 	case MADV_COLD:
 		return madvise_cold(vma, prev, start, end);
 	case MADV_PAGEOUT:
-		return madvise_pageout(vma, prev, start, end, false);
-	case MADV_WRITEBACK:
-		return madvise_pageout(vma, prev, start, end, true);
+		return madvise_pageout(vma, prev, start, end);
 	case MADV_FREE:
 	case MADV_DONTNEED:
 	case MADV_DONTNEED_LOCKED:
@@ -1256,8 +1211,6 @@ madvise_behavior_valid(int behavior)
 	case MADV_SOFT_OFFLINE:
 	case MADV_HWPOISON:
 #endif
-	case MADV_WRITEBACK:
-	case MADV_PREFETCH:
 		return true;
 
 	default:
@@ -1272,8 +1225,6 @@ static bool process_madvise_behavior_valid(int behavior)
 	case MADV_PAGEOUT:
 	case MADV_WILLNEED:
 	case MADV_COLLAPSE:
-	case MADV_WRITEBACK:
-	case MADV_PREFETCH:
 		return true;
 	default:
 		return false;
@@ -1525,9 +1476,6 @@ SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
 	return do_madvise(current->mm, start, len_in, behavior);
 }
 
-static DEFINE_SPINLOCK(madvise_writeback_lock);
-static bool madvise_writeback_ongoing;
-
 SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 		size_t, vlen, int, behavior, unsigned int, flags)
 {
@@ -1539,17 +1487,6 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 	struct mm_struct *mm;
 	size_t total_len;
 	unsigned int f_flags;
-
-	/* we only allow single MADV_WRITEBACK at a time */
-	if (behavior == MADV_WRITEBACK) {
-		spin_lock(&madvise_writeback_lock);
-		if (madvise_writeback_ongoing) {
-			spin_unlock(&madvise_writeback_lock);
-			return -EBUSY;
-		}
-		madvise_writeback_ongoing = true;
-		spin_unlock(&madvise_writeback_lock);
-	}
 
 	if (flags != 0) {
 		ret = -EINVAL;
@@ -1599,8 +1536,6 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 	}
 
 	trace_android_vh_process_madvise_end(behavior, &ret);
-	if (behavior == MADV_WRITEBACK && ret < 0)
-		goto release_mm;
 	ret = (total_len - iov_iter_count(&iter)) ? : ret;
 
 release_mm:
@@ -1610,10 +1545,5 @@ release_task:
 free_iov:
 	kfree(iov);
 out:
-	if (behavior == MADV_WRITEBACK) {
-		spin_lock(&madvise_writeback_lock);
-		madvise_writeback_ongoing = false;
-		spin_unlock(&madvise_writeback_lock);
-	}
 	return ret;
 }

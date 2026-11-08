@@ -7,7 +7,7 @@
  *
  * Copyright (C) 2011 Google, Inc.
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/dma-mapping.h>
@@ -433,6 +433,7 @@ int qcom_secure_carveout_heap_create(struct platform_heap *heap_data)
 		pr_err("secure carveout heap memory regions need to be created with no-map\n");
 		return -EINVAL;
 	}
+
 	sc_heap = kzalloc(sizeof(*sc_heap), GFP_KERNEL);
 	if (!sc_heap)
 		return -ENOMEM;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/seq_file.h>
@@ -880,15 +880,18 @@ int walt_find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 
 	wts = (struct walt_task_struct *) p->android_vendor_data1;
 	pipeline_cpu = wts->pipeline_cpu;
-	if (walt_pipeline_low_latency_task(p) &&
+	if ((wts->low_latency & WALT_LOW_LATENCY_MASK) &&
 			(pipeline_cpu != -1) &&
+			walt_task_skip_min_cpu(p) &&
 			cpumask_test_cpu(pipeline_cpu, p->cpus_ptr) &&
 			cpu_active(pipeline_cpu) &&
-			!cpu_halted(pipeline_cpu) &&
+			!cpu_halted(pipeline_cpu)) {
+		if ((p == cpu_rq(pipeline_cpu)->curr) ||
 			!walt_pipeline_low_latency_task(cpu_rq(pipeline_cpu)->curr)) {
 			best_energy_cpu = pipeline_cpu;
 			fbt_env.fastpath = PIPELINE_FASTPATH;
 			goto out;
+		}
 	}
 
 	walt_get_indicies(p, &order_index, &end_index, task_boost, uclamp_boost,
@@ -1221,12 +1224,12 @@ static void walt_cfs_account_mvp_runtime(struct rq *rq, struct task_struct *curr
 		if ((rq->clock - wrq->mvp_throttle_time) > MVP_THROTTLE_TIME_NS) {
 			wrq->skip_mvp = false;
 			wrq->mvp_throttle_time = 0;
-			wrq->mvp_arrival_time = 0;
 		}
 	} else if (wrq->mvp_arrival_time) {
 		if ((rq->clock - wrq->mvp_arrival_time) > MAX_MVP_TIME_NS) {
 			wrq->skip_mvp = true;
-			wrq->mvp_throttle_time = rq_clock(rq);
+			wrq->mvp_arrival_time = 0;
+			wrq->mvp_throttle_time = rq->clock;
 		}
 	}
 
@@ -1438,9 +1441,14 @@ static void walt_cfs_replace_next_task_fair(void *unused, struct rq *rq, struct 
 			 (*p)->on_rq, task_thread_info(*p)->cpu,
 			 cpu_of(rq), ((*p)->flags & PF_KTHREAD));
 
-	/* We don't have MVP tasks queued */
-	if (wrq->skip_mvp || list_empty(&wrq->mvp_tasks))
+	/* RQ is in MVP throttled state*/
+	if (wrq->skip_mvp)
 		return;
+
+	if (list_empty(&wrq->mvp_tasks)) {
+		wrq->mvp_arrival_time = 0;
+		return;
+	}
 
 	/* Return the first task from MVP queue */
 	wts = list_first_entry(&wrq->mvp_tasks, struct walt_task_struct, mvp_list);
@@ -1449,6 +1457,11 @@ static void walt_cfs_replace_next_task_fair(void *unused, struct rq *rq, struct 
 	*p = mvp;
 	*se = &mvp->se;
 	*repick = true;
+
+	/* TODO: check with team if it is fine in case clock is not updated */
+	/* Mark arrival of MVP task */
+	if (!wrq->mvp_arrival_time)
+		wrq->mvp_arrival_time = rq->clock;
 
 	if (simple) {
 		for_each_sched_entity((*se)) {
@@ -1473,27 +1486,6 @@ static void walt_cfs_replace_next_task_fair(void *unused, struct rq *rq, struct 
 	trace_walt_cfs_mvp_pick_next(mvp, wts, walt_cfs_mvp_task_limit(mvp));
 }
 
-static void mvp_task_arrival_marker(void *unused, bool preempt,
-	struct task_struct *prev, struct task_struct *next,
-	unsigned int prev_state)
-{
-	unsigned int cpu = raw_smp_processor_id();
-	struct rq *rq = cpu_rq(cpu);
-	struct walt_rq *wrq = &per_cpu(walt_rq, cpu);
-	struct walt_task_struct *wts = (struct walt_task_struct *) next->android_vendor_data1;
-
-	if (unlikely(walt_disabled))
-		return;
-
-	if (is_mvp(wts)) {
-		if (!wrq->mvp_arrival_time)
-			/* rq clock already yupdated before vendor hook */
-			wrq->mvp_arrival_time = rq_clock(rq);
-	} else {
-		wrq->mvp_arrival_time = 0;
-	}
-}
-
 void walt_cfs_init(void)
 {
 	register_trace_android_rvh_select_task_rq_fair(walt_select_task_rq_fair, NULL);
@@ -1505,5 +1497,4 @@ void walt_cfs_init(void)
 
 	register_trace_android_rvh_check_preempt_wakeup(walt_cfs_check_preempt_wakeup, NULL);
 	register_trace_android_rvh_replace_next_task_fair(walt_cfs_replace_next_task_fair, NULL);
-	register_trace_sched_switch(mvp_task_arrival_marker, NULL);
 }

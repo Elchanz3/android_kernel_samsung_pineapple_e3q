@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/io.h>
@@ -18,11 +18,13 @@ static void q2spi_rx_xfer_completion_event(struct msm_gpi_dma_async_tx_cb_param 
 	struct q2spi_dma_transfer *xfer;
 	u32 status = 0;
 
-	if (q2spi_pkt->m_cmd_param == Q2SPI_RX_ONLY)
+	if (q2spi_pkt->m_cmd_param == Q2SPI_RX_ONLY) {
+		Q2SPI_DEBUG(q2spi, "%s for Doorbell\n", __func__);
 		xfer = q2spi->db_xfer;
-	else
-		xfer = q2spi->xfer;
-
+	} else {
+		xfer = q2spi_pkt->xfer;
+		Q2SPI_DEBUG(q2spi, "%s for Rx Event\n", __func__);
+	}
 	if (!xfer || !xfer->rx_buf) {
 		pr_err("%s rx buf NULL!!!\n", __func__);
 		return;
@@ -34,18 +36,21 @@ static void q2spi_rx_xfer_completion_event(struct msm_gpi_dma_async_tx_cb_param 
 		    __func__, xfer, xfer->rx_buf, (void *)xfer->rx_dma, xfer->rx_len,
 		    q2spi_pkt->m_cmd_param);
 
-	status = cb_param->status; //check status is 0 or EOT for success
+	/* check status is 0 or EOT for success */
+	status = cb_param->status;
 	if (cb_param->length <= xfer->rx_len) {
 		xfer->rx_len = cb_param->length;
 		q2spi_dump_ipc(q2spi, q2spi->ipc, "rx_xfer_completion_event RX",
 			       (char *)xfer->rx_buf, cb_param->length);
-		complete_all(&q2spi->rx_cb);
-		Q2SPI_DEBUG(q2spi, "%s q2spi_pkt:%p in_use=%d vtype:%d\n",
-			    __func__, q2spi_pkt, q2spi_pkt->in_use, q2spi_pkt->vtype);
-		if (q2spi_pkt->vtype == VARIANT_1_LRA) {
-			Q2SPI_DEBUG(q2spi, "%s completed rx xfer PID=%d\n", __func__, current->pid);
-			complete_all(&q2spi->sync_wait);
+		if (q2spi_pkt->m_cmd_param == Q2SPI_RX_ONLY) {
+			Q2SPI_DEBUG(q2spi, "%s call db_rx_cb\n", __func__);
+			complete_all(&q2spi->db_rx_cb);
+		} else {
+			Q2SPI_DEBUG(q2spi, "%s call rx_cb\n", __func__);
+			complete_all(&q2spi->rx_cb);
 		}
+		Q2SPI_DEBUG(q2spi, "%s q2spi_pkt:%p state=%d vtype:%d\n",
+			    __func__, q2spi_pkt, q2spi_pkt->state, q2spi_pkt->vtype);
 	} else {
 		Q2SPI_ERROR(q2spi, "%s Err length miss-match %d %d\n",
 			    __func__, cb_param->length, xfer->rx_len);
@@ -56,7 +61,7 @@ static void q2spi_tx_xfer_completion_event(struct msm_gpi_dma_async_tx_cb_param 
 {
 	struct q2spi_packet *q2spi_pkt = cb_param->userdata;
 	struct q2spi_geni *q2spi = q2spi_pkt->q2spi;
-	struct q2spi_dma_transfer *xfer = q2spi->xfer;
+	struct q2spi_dma_transfer *xfer = q2spi_pkt->xfer;
 
 	Q2SPI_DEBUG(q2spi, "%s xfer->tx_len:%d cb_param_length:%d\n", __func__,
 		    xfer->tx_len, cb_param->length);
@@ -77,12 +82,8 @@ static void q2spi_parse_q2spi_status(struct msm_gpi_dma_async_tx_cb_param *cb_pa
 	status = cb_param->q2spi_status;
 	Q2SPI_DEBUG(q2spi, "%s status:%d complete_tx_cb\n", __func__, status);
 	complete_all(&q2spi->tx_cb);
-	Q2SPI_DEBUG(q2spi, "%s q2spi_pkt:%p in_use=%d vtype:%d\n",
-		    __func__, q2spi_pkt, q2spi_pkt->in_use, q2spi_pkt->vtype);
-	if (q2spi_pkt->vtype == VARIANT_1_LRA) {
-		Q2SPI_DEBUG(q2spi, "%s completed transfer PID=%d\n", __func__, current->pid);
-		complete_all(&q2spi->sync_wait);
-	}
+	Q2SPI_DEBUG(q2spi, "%s q2spi_pkt:%p state=%d vtype:%d\n",
+		    __func__, q2spi_pkt, q2spi_pkt->state, q2spi_pkt->vtype);
 }
 
 static void q2spi_parse_cr_header(struct q2spi_geni *q2spi, struct msm_gpi_cb const *cb)
@@ -190,7 +191,7 @@ static void q2spi_geni_deallocate_chan(struct q2spi_gsi *gsi)
 void q2spi_geni_gsi_release(struct q2spi_geni *q2spi)
 {
 	q2spi_geni_deallocate_chan(q2spi->gsi);
-	q2spi_kfree(q2spi, q2spi->gsi, __LINE__);
+	kfree(q2spi->gsi);
 }
 
 /**
@@ -205,7 +206,7 @@ int q2spi_geni_gsi_setup(struct q2spi_geni *q2spi)
 	struct q2spi_gsi *gsi = NULL;
 	int ret = 0;
 
-	gsi = q2spi_kzalloc(q2spi, sizeof(struct q2spi_gsi), __LINE__);
+	gsi = kzalloc(sizeof(struct q2spi_gsi), GFP_ATOMIC);
 	if (!gsi) {
 		Q2SPI_ERROR(q2spi, "%s Err GSI structure memory alloc failed\n", __func__);
 		return -ENOMEM;
@@ -414,14 +415,14 @@ msm_gpi_tre *setup_dma_tre(struct msm_gpi_tre *tre, dma_addr_t buf, u32 len,
 	return tre;
 }
 
-int check_gsi_transfer_completion_rx(struct q2spi_geni *q2spi)
+int check_gsi_transfer_completion_db_rx(struct q2spi_geni *q2spi)
 {
 	int i = 0, ret = 0;
 	unsigned long timeout = 0, xfer_timeout = 0;
 
 	xfer_timeout = XFER_TIMEOUT_OFFSET;
-	timeout = wait_for_completion_timeout(&q2spi->rx_cb, msecs_to_jiffies(xfer_timeout));
-	if (timeout <= 0) {
+	timeout = wait_for_completion_timeout(&q2spi->db_rx_cb, msecs_to_jiffies(xfer_timeout));
+	if (!timeout) {
 		Q2SPI_ERROR(q2spi, "%s Rx[%d] timeout%lu\n", __func__, i, timeout);
 		ret = -ETIMEDOUT;
 		goto err_gsi_geni_transfer;
@@ -443,8 +444,8 @@ int check_gsi_transfer_completion(struct q2spi_geni *q2spi)
 	for (i = 0 ; i < q2spi->gsi->num_tx_eot; i++) {
 		timeout =
 			wait_for_completion_timeout(&q2spi->tx_cb, msecs_to_jiffies(xfer_timeout));
-		if (timeout <= 0) {
-			Q2SPI_ERROR(q2spi, "%s Tx[%d] timeout\n", __func__, i);
+		if (!timeout) {
+			Q2SPI_ERROR(q2spi, "%s PID:%d Tx[%d] timeout\n", __func__, current->pid, i);
 			ret = -ETIMEDOUT;
 			goto err_gsi_geni_transfer;
 		} else {
@@ -455,8 +456,8 @@ int check_gsi_transfer_completion(struct q2spi_geni *q2spi)
 	for (i = 0 ; i < q2spi->gsi->num_rx_eot; i++) {
 		timeout =
 			wait_for_completion_timeout(&q2spi->rx_cb, msecs_to_jiffies(xfer_timeout));
-		if (timeout <= 0) {
-			Q2SPI_ERROR(q2spi, "%s Rx[%d] timeout\n", __func__, i);
+		if (!timeout) {
+			Q2SPI_ERROR(q2spi, "%s PID:%d Rx[%d] timeout\n", __func__, current->pid, i);
 			ret = -ETIMEDOUT;
 			goto err_gsi_geni_transfer;
 		} else {
@@ -464,7 +465,8 @@ int check_gsi_transfer_completion(struct q2spi_geni *q2spi)
 		}
 	}
 err_gsi_geni_transfer:
-	if (q2spi->gsi->qup_gsi_err) {
+	if (q2spi->gsi->qup_gsi_err || !timeout) {
+		ret = -ETIMEDOUT;
 		Q2SPI_ERROR(q2spi, "%s Err QUP Gsi Error\n", __func__);
 		q2spi->gsi->qup_gsi_err = false;
 		q2spi->setup_config0 = false;
@@ -494,13 +496,11 @@ int q2spi_setup_gsi_xfer(struct q2spi_packet *q2spi_pkt)
 	if (q2spi_pkt->m_cmd_param == Q2SPI_RX_ONLY)
 		xfer = q2spi->db_xfer;
 	else
-		xfer = q2spi->xfer;
+		xfer = q2spi_pkt->xfer;
 	cmd = xfer->cmd;
 
 	Q2SPI_DEBUG(q2spi, "%s PID=%d xfer:%p vtype=%d\n", __func__,
 		    current->pid, xfer, q2spi_pkt->vtype);
-	if (q2spi_pkt->vtype == VARIANT_5_HRF)
-		reinit_completion(&q2spi->doorbell_up);
 
 	Q2SPI_DEBUG(q2spi, "%s cmd:%d q2spi_pkt:%p\n", __func__, cmd, q2spi_pkt);
 	q2spi->gsi->num_tx_eot = 0;
@@ -561,6 +561,7 @@ int q2spi_setup_gsi_xfer(struct q2spi_packet *q2spi_pkt)
 		Q2SPI_ERROR(q2spi, "%s Err setting up tx desc\n", __func__);
 		return -EIO;
 	}
+	q2spi->gsi->tx_ev.init.cb_param = q2spi_pkt;
 	q2spi->gsi->tx_desc->callback = q2spi_gsi_tx_callback;
 	q2spi->gsi->tx_desc->callback_param = &q2spi->gsi->tx_cb_param;
 	q2spi->gsi->tx_cb_param.userdata = q2spi_pkt;
@@ -573,7 +574,7 @@ int q2spi_setup_gsi_xfer(struct q2spi_packet *q2spi_pkt)
 		return -EINVAL;
 	}
 
-	if (cmd & Q2SPI_RX_ONLY) {
+	if (cmd == Q2SPI_TX_RX) {
 		rx_tre = &q2spi->gsi->rx_dma_tre;
 		rx_tre = setup_dma_tre(rx_tre, xfer->rx_dma, xfer->rx_len, q2spi, 1);
 		if (IS_ERR_OR_NULL(rx_tre)) {
@@ -587,6 +588,7 @@ int q2spi_setup_gsi_xfer(struct q2spi_packet *q2spi_pkt)
 			Q2SPI_ERROR(q2spi, "%s rx_desc fail\n", __func__);
 			return -EIO;
 		}
+		q2spi->gsi->rx_ev.init.cb_param = q2spi_pkt;
 		q2spi->gsi->rx_desc->callback = q2spi_gsi_rx_callback;
 		q2spi->gsi->rx_desc->callback_param = &q2spi->gsi->rx_cb_param;
 		q2spi->gsi->rx_cb_param.userdata = q2spi_pkt;
@@ -600,11 +602,42 @@ int q2spi_setup_gsi_xfer(struct q2spi_packet *q2spi_pkt)
 			dmaengine_terminate_all(q2spi->gsi->rx_c);
 			return -EINVAL;
 		}
+	} else if (cmd == Q2SPI_RX_ONLY) {
+		rx_tre = &q2spi->gsi->rx_dma_tre;
+		rx_tre = setup_dma_tre(rx_tre, xfer->rx_dma, xfer->rx_len, q2spi, 1);
+		if (IS_ERR_OR_NULL(rx_tre)) {
+			Q2SPI_ERROR(q2spi, "%s Err setting up rx tre\n", __func__);
+			return -EINVAL;
+		}
+		sg_set_buf(xfer_rx_sg, rx_tre, sizeof(*rx_tre));
+		q2spi->gsi->db_rx_desc = dmaengine_prep_slave_sg(q2spi->gsi->rx_c,
+								 q2spi->gsi->rx_sg,
+								 rx_nent, DMA_DEV_TO_MEM, flags);
+		if (IS_ERR_OR_NULL(q2spi->gsi->db_rx_desc)) {
+			Q2SPI_ERROR(q2spi, "%s Err db_rx_desc fail\n", __func__);
+			return -EIO;
+		}
+		q2spi->gsi->db_rx_desc->callback = q2spi_gsi_rx_callback;
+		q2spi->gsi->db_rx_desc->callback_param = &q2spi->gsi->db_rx_cb_param;
+		q2spi->gsi->db_rx_cb_param.userdata = q2spi_pkt;
+		q2spi->gsi->num_rx_eot++;
+		q2spi->gsi->rx_cookie = dmaengine_submit(q2spi->gsi->db_rx_desc);
+		Q2SPI_DEBUG(q2spi, "%s DB cb_param:%p\n", __func__,
+			    q2spi->gsi->db_rx_desc->callback_param);
+		if (dma_submit_error(q2spi->gsi->rx_cookie)) {
+			Q2SPI_ERROR(q2spi, "%s Err dmaengine_submit failed (%d)\n",
+				    __func__, q2spi->gsi->rx_cookie);
+			dmaengine_terminate_all(q2spi->gsi->rx_c);
+			return -EINVAL;
+		}
 	}
 	if (cmd & Q2SPI_RX_ONLY) {
 		Q2SPI_DEBUG(q2spi, "%s rx_c dma_async_issue_pending\n", __func__);
 		q2spi_dump_ipc(q2spi, q2spi->ipc, "GSI DMA-RX", (char *)xfer->rx_buf, tx_rx_len);
-		reinit_completion(&q2spi->rx_cb);
+		if (q2spi_pkt->m_cmd_param == Q2SPI_RX_ONLY)
+			reinit_completion(&q2spi->db_rx_cb);
+		else
+			reinit_completion(&q2spi->rx_cb);
 		dma_async_issue_pending(q2spi->gsi->rx_c);
 	}
 
@@ -623,6 +656,7 @@ void q2spi_gsi_ch_ev_cb(struct dma_chan *ch, struct msm_gpi_cb const *cb, void *
 {
 	const struct qup_q2spi_cr_header_event *q2spi_cr_hdr_event;
 	struct q2spi_geni *q2spi = ptr;
+	int num_crs, i = 0;
 
 	Q2SPI_DEBUG(q2spi, "%s event:%d\n", __func__, cb->cb_event);
 	switch (cb->cb_event) {
@@ -644,12 +678,28 @@ void q2spi_gsi_ch_ev_cb(struct dma_chan *ch, struct msm_gpi_cb const *cb, void *
 			    __func__, cb->error_log.routine, cb->error_log.type,
 			    cb->error_log.error_code);
 		q2spi->gsi->qup_gsi_err = true;
+		complete_all(&q2spi->tx_cb);
+		complete_all(&q2spi->rx_cb);
 		break;
 	case MSM_GPI_QUP_CR_HEADER:
 		q2spi_cr_hdr_event = &cb->q2spi_cr_header_event;
-		if (q2spi_cr_hdr_event->cr_hdr_0 == CR_ADDR_LESS_RD)
-			atomic_inc(&q2spi->doorbell_pending);
-		Q2SPI_DEBUG(q2spi, "%s GSI doorbell event\n", __func__);
+		num_crs = q2spi_cr_hdr_event->byte0_len;
+		for (i = 0; i < num_crs; i++) {
+			if (q2spi_cr_hdr_event->cr_hdr[i] == CR_ADDR_LESS_RD) {
+				reinit_completion(&q2spi->sma_rd_comp);
+				atomic_inc(&q2spi->doorbell_pending);
+				if (!atomic_read(&q2spi->sma_wr_pending))
+					atomic_set(&q2spi->sma_rd_pending, 1);
+			}
+			if (q2spi_cr_hdr_event->cr_hdr[i] == CR_BULK_ACCESS_STATUS)
+				atomic_dec(&q2spi->doorbell_pending);
+			if (q2spi_cr_hdr_event->cr_hdr[i] == CR_ADDR_LESS_WR) {
+				if (!atomic_read(&q2spi->sma_rd_pending))
+					atomic_set(&q2spi->sma_wr_pending, 1);
+			}
+		}
+		Q2SPI_DEBUG(q2spi, "%s GSI doorbell event, db_pending:%d\n",
+			    __func__, atomic_read(&q2spi->doorbell_pending));
 		q2spi_parse_cr_header(q2spi, cb);
 		break;
 	default:

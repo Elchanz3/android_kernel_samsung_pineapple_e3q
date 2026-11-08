@@ -442,13 +442,6 @@ config HAVE_FAST_GUP
 	depends on MMU
 	bool
 
-config MEMBLOCK_MEMSIZE
-	bool "memblock based reserved memory profiling"
-	default y
-	help
-	  This patch introduce a procfs node, memblock/memsize, to see reserved
-	  memory easily.
-
 # Don't discard allocated memory used to track "memory" and "reserved" memblocks
 # after early boot, so it can still be used to test for validity of memory.
 # Also, memblocks are updated with memory hot(un)plug.
@@ -518,6 +511,18 @@ config MHP_MEMMAP_ON_MEMORY
 	def_bool y
 	depends on MEMORY_HOTPLUG && SPARSEMEM_VMEMMAP
 	depends on ARCH_MHP_MEMMAP_ON_MEMORY_ENABLE
+
+config MEMORY_HOTPLUG_SUBSECTIONS
+	bool "Allow memory to be mapped at a subsection granularity"
+	depends on MEMORY_HOTPLUG
+	help
+	  The default functions used for adding memory, add_memory(), only maps
+	  memory at 128 MB chunks and has a 256 KB overhead in the page table
+	  space it consumes (assuming the logical mapping is not using block
+	  mappings). For low memory environments where we don't want to map
+	  large amounts of memory, we add downstream functions that add and
+	  remove memory on a subsection-size granularity.
+	  If unsure, say N.
 
 endif # MEMORY_HOTPLUG
 
@@ -1057,43 +1062,6 @@ config PERCPU_STATS
 	  information includes global and per chunk statistics, which can
 	  be used to help understand percpu memory usage.
 
-config KSWAPD_CPU
-	hex "Set kswapd cpu affinity by default"
-	default 0x7F
-	help
-	  Set kswapd cpu affinity by default. 0x3F means allowing CPU as 0 to 5.
-	  To disable this config, set this to 0.
-
-config MMAP_READAROUND_LIMIT
-	int "Limit mmap readaround upperbound"
-	default 16
-	help
-	  Inappropriate mmap readaround size can hurt device performance
-	  during the sluggish situation. Add the hard upper-limit for
-	  mmap readaround.
-
-config FAULT_AROUND_BYTES
-	int "Fault around bytes"
-	default 32768
-	range 4096 65536
-	help
-	  The number of bytes to be mapped around the fault.
-
-config DIRECT_RECLAIM_FILE_PAGES_ONLY
-	bool "Reclaim file pages only on direct reclaim path"
-	depends on SWAP
-	default y
-
-config BALANCE_ANON_FILE_RECLAIM
-	bool "During reclaim treat anon and file backed pages equally"
-	depends on SWAP
-	default y
-	help
-	  When performing memory reclaim treat anonymous and file backed pages
-	  equally.
-	  Swapping anonymous pages out to memory can be efficient enough to justify
-	  treating anonymous and file backed pages equally.
-
 config GUP_TEST
 	bool "Enable infrastructure for get_user_pages()-related unit tests"
 	depends on DEBUG_FS
@@ -1246,22 +1214,6 @@ config LOCK_MM_AND_FIND_VMA
 
 source "mm/damon/Kconfig"
 
-config PAGE_BOOST
-	bool "PAGE_BOOST feature"
-	depends on MMU
-	default y
-	help
-	  Enable this for PAGE_BOOST feature
-
-config PAGE_BOOST_RECORDING
-	bool "PAGE_BOOST recording feature"
-	depends on PAGE_BOOST
-	default y
-	help
-	  Record Everything for the chosen process.
-	  As Android executes an app one by one, only allow 1 recording
-	  at a time.
-
 config HUGEPAGE_POOL
 	bool "hugepage pool management"
 	default y
@@ -1273,5 +1225,3 @@ config HUGEPAGE_POOL
 	  allocation requests efficiently.
 
 endmenu
-
-source "mm/sec_mm/Kconfig"

@@ -1,0 +1,24 @@
+# In-tree build (techpack/): what the external Android/Bazel build passed
+# on the make command line. Exported -> reaches this techpack's subdirs only.
+ifeq ($(KBUILD_EXTMOD),)
+export EVA_ROOT := $(abs_srctree)/$(src)
+subdir-ccflags-y += $(TP_INC_DSP) $(TP_INC_SYNX) $(TP_INC_SMCINVOKE)
+endif
+
+# SPDX-License-Identifier: GPL-2.0-only
+
+CONFIG_BUILD_VENDORSI := true
+
+# auto-detect subdirs
+ifneq ($(CONFIG_BUILD_VENDORSI), true)
+ifneq ($(CONFIG_ARCH_QTI_VM), y)
+include $(srctree)/techpack/eva/config/waipioeva.conf
+LINUXINCLUDE    += -include $(srctree)/techpack/eva/config/waipioevaconf.h
+endif
+
+LINUXINCLUDE    += -I$(srctree)/techpack/eva/include \
+                   -I$(srctree)/techpack/eva/include/uapi \
+		   -I$(srctree)/techpack/eva/include/uapi/eva
+endif
+
+obj-y +=msm/

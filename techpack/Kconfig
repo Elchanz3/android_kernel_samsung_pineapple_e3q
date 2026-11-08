@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Qualcomm vendor "techpacks" built as part of the main kernel tree.
+#
+# On GKI 2.0 these drivers live in vendor/qcom/opensource and are built as
+# external modules (Bazel DDK / Kbuild M=). Here they are plain kernel
+# subdirectories: one `make` builds the kernel, the in-tree modules and every
+# techpack module, with a single modpost (no KBUILD_EXTRA_SYMBOLS juggling).
+#
+# Each techpack keeps its own internal configuration (.conf/.mk files and the
+# -include'd config headers). The options below only decide which techpack
+# directories are descended into; they intentionally do not reuse the
+# techpacks' own Kconfig symbol names (e.g. CONFIG_DRM_MSM), which would
+# collide with upstream drivers.
+
+menuconfig QCOM_TECHPACKS
+	bool "Qualcomm vendor techpacks (in-tree)"
+	depends on ARCH_QCOM && MODULES
+	help
+	  Build the Qualcomm/Samsung vendor kernel modules (display, camera,
+	  audio, video, GPU, WLAN, data, security, ...) from techpack/ as part
+	  of the normal kernel build. All techpacks are built as modules.
+
+if QCOM_TECHPACKS
+
+config TECHPACK_PROJECT_NAME
+	string "Samsung project name"
+	default "e3q"
+	help
+	  Samsung project (device) name passed to the techpacks as
+	  PROJECT_NAME, as the Samsung build did. Selects device specific
+	  code, e.g. the camera sensor set. e3q = Galaxy S24 Ultra.
+
+config TECHPACK_BUILD_VARIANT
+	string "Android build variant"
+	default "user"
+	help
+	  Value of TARGET_BUILD_VARIANT seen by the techpacks
+	  (user, userdebug or eng).
+
+config TECHPACK_MMRM
+	bool "MMRM - multimedia resource manager (msm-mmrm.ko)"
+	default y
+
+config TECHPACK_MMRM_CLIENTS
+	bool "Let video and EVA use the real MMRM API"
+	depends on TECHPACK_MMRM
+	default n
+	help
+	  The video and EVA Kbuild files force CONFIG_MSM_MMRM, which makes
+	  msm_video.ko and msm-eva.ko register their clocks with msm-mmrm.
+	  The stock S24 Ultra modules are built without it (MMRM stubs), so
+	  this is off by default to match stock behaviour.
+
+config TECHPACK_SYNX
+	bool "Synx - global synchronization framework (synx-driver.ko, ipclite.ko)"
+	default y
+
+config TECHPACK_MM_DRIVERS
+	bool "MM drivers (msm_ext_display.ko, sync_fence.ko, msm_hw_fence.ko)"
+	depends on TECHPACK_SYNX
+	default y
+
+config TECHPACK_SECUREMSM
+	bool "SecureMSM (qseecom, smcinvoke, tz_log, qce/qcedev/qcrypto, hdcp, qrng, smmu_proxy)"
+	default y
+
+config TECHPACK_DISPLAY
+	bool "Display - SDE/DSI/DP DRM driver with Samsung panels (msm_drm.ko)"
+	depends on TECHPACK_MMRM && TECHPACK_MM_DRIVERS && TECHPACK_SECUREMSM
+	default y
+
+config TECHPACK_GRAPHICS
+	bool "Graphics - Adreno KGSL (msm_kgsl.ko)"
+	depends on TECHPACK_MM_DRIVERS
+	default y
+
+config TECHPACK_VIDEO
+	bool "Video - Iris V4L2 driver (msm_video.ko, video.ko)"
+	depends on TECHPACK_MMRM && TECHPACK_MM_DRIVERS && TECHPACK_SYNX
+	default y
+
+config TECHPACK_CAMERA
+	bool "Camera - Spectra camera driver with Samsung sensors (camera.ko)"
+	depends on TECHPACK_MMRM && TECHPACK_SYNX && TECHPACK_SECUREMSM
+	default y
+
+config TECHPACK_AUDIO
+	bool "Audio - SPF/ASoC audio drivers (*_dlkm.ko)"
+	depends on TECHPACK_MM_DRIVERS
+	default y
+
+config TECHPACK_AUDIO_SEC_AMP
+	bool "Audio - Samsung amplifier/haptics glue (Cirrus amp, CS40L26)"
+	depends on TECHPACK_AUDIO
+	default y
+	help
+	  Enables COMMON_AMP_CIRRUS and USE_CS40L26 in the audio machine
+	  driver, as the Samsung Bazel build does for e1q/e2q/e3q. The plain
+	  Kbuild path of audio-kernel never set these.
+
+config TECHPACK_DSP
+	bool "DSP - FastRPC (frpc-adsprpc.ko, cdsp-loader.ko)"
+	default y
+
+config TECHPACK_EVA
+	bool "EVA - engine for visual analytics (msm-eva.ko)"
+	depends on TECHPACK_MMRM && TECHPACK_SYNX && TECHPACK_DSP
+	default y
+
+config TECHPACK_SPU
+	bool "SPU - secure processor (spcom.ko, spss_utils.ko)"
+	default y
+
+config TECHPACK_BT
+	bool "Bluetooth/FM (btpower.ko, bt_fm_slim.ko, radio-i2c-rtc6226-qca.ko)"
+	default y
+
+config TECHPACK_DATA
+	bool "Data - IPA + RmNet (gsim, ipam, ipanetm, rmnet_core/ctl and rmnet_* extensions)"
+	default y
+	help
+	  dataipa, datarmnet and datarmnet-ext depend on each other
+	  (ipam uses rmnet_mem, the rmnet extensions use rmnet_core and
+	  rmnet_core uses ipam), so they are enabled together.
+
+config TECHPACK_MM_SYS
+	bool "MM sys - UBWC-P (ubwcp.ko)"
+	default y
+
+config TECHPACK_WLAN_PLATFORM
+	bool "WLAN platform (cnss2.ko, cnss_utils.ko, cnss_nl.ko, cnss_prealloc.ko, ...)"
+	default y
+
+config TECHPACK_WLAN
+	bool "WLAN host driver qcacld-3.0"
+	depends on TECHPACK_WLAN_PLATFORM && TECHPACK_DATA
+	default y
+
+config TECHPACK_WLAN_CHIPSET
+	string "WLAN chipset"
+	depends on TECHPACK_WLAN
+	default "kiwi_v2"
+	help
+	  Chip name; the module is built as qca_cld3_<chipset>.ko.
+	  S24 Ultra (FastConnect 7800) uses kiwi_v2.
+
+config TECHPACK_WLAN_PROFILE
+	string "WLAN qcacld-3.0 config profile"
+	depends on TECHPACK_WLAN
+	default "kiwi_v2"
+	help
+	  Name of techpack/wlan/qcacld-3.0/configs/<profile>_defconfig.
+	  kiwi_v2 is the Kbuild profile for this chip (what the non-DDK
+	  Android.mk build uses). The <target>_gki_<chip>_defconfig files are
+	  written for the Bazel DDK build (its own Kconfig and source lists)
+	  and do not map 1:1 onto the Kbuild source selection.
+
+config TECHPACK_TOUCH
+	bool "Qualcomm reference touch drivers (not used by Samsung devices)"
+	default n
+
+endif # QCOM_TECHPACKS

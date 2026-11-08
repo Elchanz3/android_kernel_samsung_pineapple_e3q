@@ -11,7 +11,6 @@
 #include <linux/uio.h>
 
 #define BIO_MAX_VECS		256U
-#define BIO_MAX_BYTES		(BIO_MAX_VECS * PAGE_SIZE)
 
 static inline unsigned int bio_max_segs(unsigned int nr_segs)
 {

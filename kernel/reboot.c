@@ -48,9 +48,6 @@ int reboot_default = 1;
 int reboot_cpu;
 enum reboot_type reboot_type = BOOT_ACPI;
 int reboot_force;
-/* @fs.sec -- d1fbf05204832e38d0dd3c9d4c98160a -- */
-// To prevent kernel panic by EIO during shutdown
-int ignore_fs_panic;
 
 struct sys_off_handler {
 	struct notifier_block nb;
@@ -78,6 +75,7 @@ void __weak (*pm_power_off)(void);
 void emergency_restart(void)
 {
 	kmsg_dump(KMSG_DUMP_EMERG);
+	system_state = SYSTEM_RESTART;
 	machine_emergency_restart();
 }
 EXPORT_SYMBOL_GPL(emergency_restart);
@@ -87,7 +85,6 @@ void kernel_restart_prepare(char *cmd)
 	blocking_notifier_call_chain(&reboot_notifier_list, SYS_RESTART, cmd);
 	system_state = SYSTEM_RESTART;
 	usermodehelper_disable();
-	ignore_fs_panic = 1;
 	device_shutdown();
 }
 
@@ -288,7 +285,6 @@ static void kernel_shutdown_prepare(enum system_states state)
 		(state == SYSTEM_HALT) ? SYS_HALT : SYS_POWER_OFF, NULL);
 	system_state = state;
 	usermodehelper_disable();
-	ignore_fs_panic = 1;
 	device_shutdown();
 }
 /**

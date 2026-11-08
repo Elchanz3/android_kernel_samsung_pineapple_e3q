@@ -45,16 +45,7 @@
 #include <linux/migrate.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
-#include <trace/events/samsung.h>
 #include "internal.h"
-
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-#include <linux/io_record.h>
-#endif
-
-#ifdef CONFIG_DDAR
-#include <ddar/cache_cleanup.h>
-#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
@@ -206,8 +197,6 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 	__lruvec_stat_mod_folio(folio, NR_FILE_PAGES, -nr);
 	if (folio_test_swapbacked(folio)) {
 		__lruvec_stat_mod_folio(folio, NR_SHMEM, -nr);
-		if (is_gpu_folio(folio))
-			gpu_page_mod_shmem(-nr);
 		if (folio_test_pmd_mappable(folio))
 			__lruvec_stat_mod_folio(folio, NR_SHMEM_THPS, -nr);
 	} else if (folio_test_pmd_mappable(folio)) {
@@ -242,11 +231,6 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 void __filemap_remove_folio(struct folio *folio, void *shadow)
 {
 	struct address_space *mapping = folio->mapping;
-
-#ifdef CONFIG_DDAR
-	if (mapping_sensitive(mapping))
-		ddar_page_cleanup(&folio->page);
-#endif
 
 	trace_mm_filemap_delete_from_page_cache(folio);
 	filemap_unaccount_folio(mapping, folio);
@@ -2297,6 +2281,60 @@ out:
 EXPORT_SYMBOL(filemap_get_folios_contig);
 
 /**
+ * filemap_get_folios_tag - Get a batch of folios matching @tag
+ * @mapping:    The address_space to search
+ * @start:      The starting page index
+ * @end:        The final page index (inclusive)
+ * @tag:        The tag index
+ * @fbatch:     The batch to fill
+ *
+ * Same as filemap_get_folios(), but only returning folios tagged with @tag.
+ *
+ * Return: The number of folios found.
+ * Also update @start to index the next folio for traversal.
+ */
+unsigned filemap_get_folios_tag(struct address_space *mapping, pgoff_t *start,
+			pgoff_t end, xa_mark_t tag, struct folio_batch *fbatch)
+{
+	XA_STATE(xas, &mapping->i_pages, *start);
+	struct folio *folio;
+
+	rcu_read_lock();
+	while ((folio = find_get_entry(&xas, end, tag)) != NULL) {
+		/*
+		 * Shadow entries should never be tagged, but this iteration
+		 * is lockless so there is a window for page reclaim to evict
+		 * a page we saw tagged. Skip over it.
+		 */
+		if (xa_is_value(folio))
+			continue;
+		if (!folio_batch_add(fbatch, folio)) {
+			unsigned long nr = folio_nr_pages(folio);
+
+			if (folio_test_hugetlb(folio))
+				nr = 1;
+			*start = folio->index + nr;
+			goto out;
+		}
+	}
+	/*
+	 * We come here when there is no page beyond @end. We take care to not
+	 * overflow the index @start as it confuses some of the callers. This
+	 * breaks the iteration when there is a page at index -1 but that is
+	 * already broke anyway.
+	 */
+	if (end == (pgoff_t)-1)
+		*start = (pgoff_t)-1;
+	else
+		*start = end + 1;
+out:
+	rcu_read_unlock();
+
+	return folio_batch_count(fbatch);
+}
+EXPORT_SYMBOL(filemap_get_folios_tag);
+
+/**
  * find_get_pages_range_tag - Find and return head pages matching @tag.
  * @mapping:	the address_space to search
  * @index:	the starting page index
@@ -2684,11 +2722,6 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 	int i, error = 0;
 	bool writably_mapped;
 	loff_t isize, end_offset;
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	pgoff_t index;
-	loff_t *ppos = &iocb->ki_pos;
-	pgoff_t last_index;
-#endif
 
 	if (unlikely(iocb->ki_pos >= inode->i_sb->s_maxbytes))
 		return 0;
@@ -2697,12 +2730,6 @@ ssize_t filemap_read(struct kiocb *iocb, struct iov_iter *iter,
 
 	iov_iter_truncate(iter, inode->i_sb->s_maxbytes);
 	folio_batch_init(&fbatch);
-
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	index = *ppos >> PAGE_SHIFT;
-	last_index = (*ppos + iov_iter_count(iter) + PAGE_SIZE-1) >> PAGE_SHIFT;
-	record_io_info(filp, index, last_index - index);
-#endif
 
 	do {
 		cond_resched();
@@ -2994,7 +3021,7 @@ static int lock_folio_maybe_drop_mmap(struct vm_fault *vmf, struct folio *folio,
 
 	/*
 	 * NOTE! This will make us return with VM_FAULT_RETRY, but with
-	 * the mmap_lock still held. That's how FAULT_FLAG_RETRY_NOWAIT
+	 * the fault lock still held. That's how FAULT_FLAG_RETRY_NOWAIT
 	 * is supposed to work. We have way too many special cases..
 	 */
 	if (vmf->flags & FAULT_FLAG_RETRY_NOWAIT)
@@ -3004,13 +3031,14 @@ static int lock_folio_maybe_drop_mmap(struct vm_fault *vmf, struct folio *folio,
 	if (vmf->flags & FAULT_FLAG_KILLABLE) {
 		if (__folio_lock_killable(folio)) {
 			/*
-			 * We didn't have the right flags to drop the mmap_lock,
-			 * but all fault_handlers only check for fatal signals
-			 * if we return VM_FAULT_RETRY, so we need to drop the
-			 * mmap_lock here and return 0 if we don't have a fpin.
+			 * We didn't have the right flags to drop the
+			 * fault lock, but all fault_handlers only check
+			 * for fatal signals if we return VM_FAULT_RETRY,
+			 * so we need to drop the fault lock here and
+			 * return 0 if we don't have a fpin.
 			 */
 			if (*fpin == NULL)
-				mmap_read_unlock(vmf->vma->vm_mm);
+				release_fault_lock(vmf);
 			return 0;
 		}
 	} else
@@ -3018,40 +3046,6 @@ static int lock_folio_maybe_drop_mmap(struct vm_fault *vmf, struct folio *folio,
 
 	return 1;
 }
-
-#ifdef CONFIG_TRACING
-static void filemap_tracing_mark_begin(struct file *file,
-		pgoff_t offset, unsigned int size, bool sync)
-{
-	char buf[TRACING_MARK_BUF_SIZE], *path;
-
-	if (!trace_tracing_mark_write_enabled())
-		return;
-
-	path = file_path(file, buf, TRACING_MARK_BUF_SIZE);
-	if (IS_ERR(path)) {
-		sprintf(buf, "file_path failed(%ld)", PTR_ERR(path));
-		path = buf;
-	}
-
-	tracing_mark_begin("%d , %s , %lu , %d", sync, path, offset, size);
-}
-
-static void filemap_tracing_mark_end(void)
-{
-	tracing_mark_end();
-}
-#else
-static inline void filemap_tracing_mark_begin(struct file *file,
-		pgoff_t offset, unsigned int size, bool sync) { }
-static inline void filemap_tracing_mark_end(void) { }
-#endif
-
-#if CONFIG_MMAP_READAROUND_LIMIT == 0
-unsigned int mmap_readaround_limit = VM_READAHEAD_PAGES; 		/* page */
-#else
-unsigned int mmap_readaround_limit = CONFIG_MMAP_READAROUND_LIMIT;	/* page */
-#endif
 
 /*
  * Synchronous readahead happens when we don't even find a page in the page
@@ -3069,8 +3063,6 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	struct file *fpin = NULL;
 	unsigned long vm_flags = vmf->vma->vm_flags;
 	unsigned int mmap_miss;
-	unsigned int ra_pages;
-	pgoff_t offset = vmf->pgoff;
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	/* Use the readahead code, even if readahead is disabled */
@@ -3098,9 +3090,7 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 
 	if (vm_flags & VM_SEQ_READ) {
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
-		filemap_tracing_mark_begin(file, offset, ra->ra_pages, 1);
 		page_cache_sync_ra(&ractl, ra->ra_pages);
-		filemap_tracing_mark_end();
 		return fpin;
 	}
 
@@ -3120,18 +3110,13 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	 * mmap read-around
 	 */
 	fpin = maybe_unlock_mmap_for_io(vmf, fpin);
-	ra_pages = min_t(unsigned int, ra->ra_pages, mmap_readaround_limit);
-	if (need_memory_boosting())
-		ra_pages = min_t(unsigned int, ra_pages, 8);
-	ra->start = max_t(long, 0, vmf->pgoff - ra_pages / 2);
-	ra->size = ra_pages;
-	ra->async_size = ra_pages / 4;
+	ra->start = max_t(long, 0, vmf->pgoff - ra->ra_pages / 2);
+	ra->size = ra->ra_pages;
+	ra->async_size = ra->ra_pages / 4;
 	trace_android_vh_tune_mmap_readaround(ra->ra_pages, vmf->pgoff,
 			&ra->start, &ra->size, &ra->async_size);
 	ractl._index = ra->start;
-	filemap_tracing_mark_begin(file, offset, ra_pages, 1);
 	page_cache_ra_order(&ractl, ra, 0);
-	filemap_tracing_mark_end();
 	return fpin;
 }
 
@@ -3148,7 +3133,6 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 	DEFINE_READAHEAD(ractl, file, ra, file->f_mapping, vmf->pgoff);
 	struct file *fpin = NULL;
 	unsigned int mmap_miss;
-	pgoff_t offset = vmf->pgoff;
 
 	/* If we don't want any read-ahead, don't bother */
 	if (vmf->vma->vm_flags & VM_RAND_READ || !ra->ra_pages)
@@ -3160,9 +3144,7 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 
 	if (folio_test_readahead(folio)) {
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
-		filemap_tracing_mark_begin(file, offset, ra->ra_pages, 0);
 		page_cache_async_ra(&ractl, folio, ra->ra_pages);
-		filemap_tracing_mark_end();
 	}
 	return fpin;
 }
@@ -3201,7 +3183,6 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 	struct folio *folio;
 	vm_fault_t ret = 0;
 	bool mapping_locked = false;
-	pgoff_t offset = vmf->pgoff;
 
 	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
 	if (unlikely(index >= max_idx))
@@ -3312,9 +3293,7 @@ page_not_uptodate:
 	 * and we need to check for errors.
 	 */
 	fpin = maybe_unlock_mmap_for_io(vmf, fpin);
-	filemap_tracing_mark_begin(file, offset, 1, 1);
 	error = filemap_read_folio(file, mapping->a_ops->read_folio, folio);
-	filemap_tracing_mark_end();
 	if (fpin)
 		goto out_retry;
 	folio_put(folio);
@@ -3361,7 +3340,7 @@ static bool filemap_map_pmd(struct vm_fault *vmf, struct page *page)
 		}
 	}
 
-	if (pmd_none(*vmf->pmd))
+	if (pmd_none(*vmf->pmd) && vmf->prealloc_pte)
 		pmd_install(mm, vmf->pmd, &vmf->prealloc_pte);
 
 	/* See comment in handle_pte_fault() */
@@ -3444,17 +3423,11 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	struct page *page;
 	unsigned int mmap_miss = READ_ONCE(file->f_ra.mmap_miss);
 	vm_fault_t ret = 0;
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	pgoff_t head_pgoff = 0;
-#endif
 
 	rcu_read_lock();
 	folio = first_map_page(mapping, &xas, end_pgoff);
 	if (!folio)
 		goto out;
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	head_pgoff = xas.xa_index;
-#endif
 
 	if (filemap_map_pmd(vmf, &folio->page)) {
 		ret = VM_FAULT_NOPAGE;
@@ -3510,12 +3483,6 @@ unlock:
 out:
 	rcu_read_unlock();
 	WRITE_ONCE(file->f_ra.mmap_miss, mmap_miss);
-
-#ifdef CONFIG_PAGE_BOOST_RECORDING
-	/* end_pgoff is inclusive */
-	if (ret == VM_FAULT_NOPAGE)
-		record_io_info(file, head_pgoff, last_pgoff - head_pgoff + 1);
-#endif
 	return ret;
 }
 EXPORT_SYMBOL(filemap_map_pages);

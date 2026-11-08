@@ -1550,10 +1550,6 @@ out_map:
 	goto out;
 }
 
-#ifdef CONFIG_HUGEPAGE_POOL
-extern bool is_hugepage_avail_low_ok(void);
-#endif
-
 /*
  * Return true if we do MADV_FREE successfully on entire pmd page.
  * Otherwise, return false.
@@ -2761,13 +2757,15 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 			int nr = folio_nr_pages(folio);
 
 			xas_split(&xas, folio, folio_order(folio));
-			if (folio_test_swapbacked(folio)) {
-				__lruvec_stat_mod_folio(folio, NR_SHMEM_THPS,
-							-nr);
-			} else {
-				__lruvec_stat_mod_folio(folio, NR_FILE_THPS,
-							-nr);
-				filemap_nr_thps_dec(mapping);
+			if (folio_test_pmd_mappable(folio)) {
+				if (folio_test_swapbacked(folio)) {
+					__lruvec_stat_mod_folio(folio,
+							NR_SHMEM_THPS, -nr);
+				} else {
+					__lruvec_stat_mod_folio(folio,
+							NR_FILE_THPS, -nr);
+					filemap_nr_thps_dec(mapping);
+				}
 			}
 		}
 
@@ -2855,11 +2853,6 @@ static unsigned long deferred_split_count(struct shrinker *shrink,
 {
 	struct pglist_data *pgdata = NODE_DATA(sc->nid);
 	struct deferred_split *ds_queue = &pgdata->deferred_split_queue;
-
-#ifdef CONFIG_HUGEPAGE_POOL
-	if (is_hugepage_avail_low_ok())
-		return 0;
-#endif
 
 #ifdef CONFIG_MEMCG
 	if (sc->memcg)

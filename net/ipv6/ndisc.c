@@ -954,15 +954,6 @@ have_ifp:
 			     NEIGH_UPDATE_F_WEAK_OVERRIDE|
 			     NEIGH_UPDATE_F_OVERRIDE,
 			     NDISC_NEIGHBOUR_SOLICITATION, &ndopts);
-	
-	if (neigh != NULL && neigh->dev != NULL && !strcmp(neigh->dev->name, "aware_data0")) {
-		pr_info("ipv6 neigh_lookup is done by receiving NS"
-			" from [:%02x%02x] to [:%02x%02x] and sending NA for %s\n",
-			saddr->s6_addr[14], saddr->s6_addr[15], 
-			daddr->s6_addr[14], daddr->s6_addr[15], 
-			neigh->dev->name);
-	}
-
 	if (neigh || !dev->header_ops) {
 		ndisc_send_na(dev, saddr, &msg->target, !!is_router,
 			      true, (ifp != NULL && inc), inc);
@@ -1123,14 +1114,6 @@ static void ndisc_recv_na(struct sk_buff *skb)
 			     NEIGH_UPDATE_F_OVERRIDE_ISROUTER|
 			     (msg->icmph.icmp6_router ? NEIGH_UPDATE_F_ISROUTER : 0),
 			     NDISC_NEIGHBOUR_ADVERTISEMENT, &ndopts);
-
-		if (neigh->dev != NULL && !strcmp(neigh->dev->name, "aware_data0")) {
-			pr_info("ipv6 neigh_lookup is done by receiving NA"
-				" from [:%02x%02x] to [:%02x%02x] for %s\n",
-				saddr->s6_addr[14], saddr->s6_addr[15], 
-				daddr->s6_addr[14], daddr->s6_addr[15], 
-				dev->name);
-		}
 
 		if ((old_flags & ~neigh->flags) & NTF_ROUTER) {
 			/*
@@ -1348,6 +1331,14 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 		goto skip_defrtr;
 	}
 
+	lifetime = ntohs(ra_msg->icmph.icmp6_rt_lifetime);
+	if (lifetime != 0 && lifetime < in6_dev->cnf.accept_ra_min_lft) {
+		ND_PRINTK(2, info,
+			  "RA: router lifetime (%ds) is too short: %s\n",
+			  lifetime, skb->dev->name);
+		goto skip_defrtr;
+	}
+
 	/* Do not accept RA with source-addr found on local machine unless
 	 * accept_ra_from_local is set to true.
 	 */
@@ -1359,8 +1350,6 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			  skb->dev->name);
 		goto skip_defrtr;
 	}
-
-	lifetime = ntohs(ra_msg->icmph.icmp6_rt_lifetime);
 
 #ifdef CONFIG_IPV6_ROUTER_PREF
 	pref = ra_msg->icmph.icmp6_router_pref;
@@ -1535,6 +1524,9 @@ skip_linkparms:
 #endif
 			if (ri->prefix_len == 0 &&
 			    !in6_dev->cnf.accept_ra_defrtr)
+				continue;
+			if (ri->lifetime != 0 &&
+			    ntohl(ri->lifetime) < in6_dev->cnf.accept_ra_min_lft)
 				continue;
 			if (ri->prefix_len < in6_dev->cnf.accept_ra_rt_info_min_plen)
 				continue;

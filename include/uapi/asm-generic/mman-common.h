@@ -79,9 +79,6 @@
 
 #define MADV_COLLAPSE	25		/* Synchronous hugepage collapse */
 
-#define MADV_WRITEBACK  29
-#define MADV_PREFETCH   30
-
 /* compatibility flags */
 #define MAP_FILE	0
 

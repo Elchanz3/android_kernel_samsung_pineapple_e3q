@@ -1543,7 +1543,7 @@ __alloc_vmap_area(struct rb_root *root, struct list_head *head,
 
 	/* Update the free vmap_area. */
 	ret = adjust_va_to_fit_type(root, head, va, nva_start_addr, size);
-	if (ret)
+	if (WARN_ON_ONCE(ret))
 		return vend;
 
 #if DEBUG_AUGMENT_LOWEST_MATCH_CHECK
@@ -3934,7 +3934,7 @@ retry:
 		ret = adjust_va_to_fit_type(&free_vmap_area_root,
 					    &free_vmap_area_list,
 					    va, start, size);
-		if (unlikely(ret))
+		if (WARN_ON_ONCE(unlikely(ret)))
 			/* It is a BUG(), but trigger recovery instead. */
 			goto recovery;
 
