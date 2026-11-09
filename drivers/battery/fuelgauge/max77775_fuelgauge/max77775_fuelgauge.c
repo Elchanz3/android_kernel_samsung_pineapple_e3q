@@ -1010,7 +1010,7 @@ int max77775_fg_reset_soc(struct max77775_fuelgauge_data *fuelgauge)
 int max77775_fg_reset_capacity_by_jig_connection(
 			struct max77775_fuelgauge_data *fuelgauge)
 {
-	union power_supply_propval val;
+	union power_supply_propval val = {0};
 
 	psy_do_property("max77775-charger", set,
 		POWER_SUPPLY_EXT_PROP_FACTORY_MODE, val);
