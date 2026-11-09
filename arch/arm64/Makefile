@@ -109,6 +109,11 @@ ifeq ($(CONFIG_AS_HAS_ARMV8_5), y)
 asm-arch := armv8.5-a
 endif
 
+arm64-mcpu := $(patsubst "%",%,$(CONFIG_ARM64_MCPU))
+ifneq ($(arm64-mcpu),)
+KBUILD_CFLAGS	+= $(call cc-option,-mcpu=$(arm64-mcpu))
+endif
+
 ifdef asm-arch
 KBUILD_CFLAGS	+= -Wa,-march=$(asm-arch) \
 		   -DARM64_ASM_ARCH='"$(asm-arch)"'
