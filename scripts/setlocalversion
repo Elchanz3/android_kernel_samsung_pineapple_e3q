@@ -185,8 +185,10 @@ sec_scm_version()
 {
 	# Forcely use android_release and kmi_generation.
 	# And SEC build provide 'LOCALVERSION' to propagate extra version info.
+	# CONFIG_LOCALVERSION comes from the environment on the Samsung build;
+	# fall back to the value in .config for a plain make build.
 	if [ -n "${android_release}" ] && [ -n "${kmi_generation}" ]; then
-		printf '%s' "-${android_release}-${kmi_generation}${CONFIG_LOCALVERSION}-${SEC_LOCALVERSION}"
+		printf '%s' "-${android_release}-${kmi_generation}${CONFIG_LOCALVERSION:-${config_localversion}}-${SEC_LOCALVERSION}"
 	else
 		echo -n "$res"
 	fi
