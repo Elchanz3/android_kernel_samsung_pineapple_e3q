@@ -10,6 +10,15 @@ export WLAN_FW_API := $(WLAN_ROOT)/../fw-api
 export WLAN_PROFILE := $(patsubst "%",%,$(CONFIG_TECHPACK_WLAN_PROFILE))
 export MODNAME := qca_cld3_$(_wlan_chip)
 export DEVNAME := $(_wlan_chip)
+# MULTI_IF_NAME is the chip name, not the module name: it is the
+# wlan/qca_cld/<chip>/ firmware/ini subdir and the pld_pcie_<chip> driver name.
+export CHIP_NAME := $(_wlan_chip)
+# /dev/wlan, the driver state control node the Wi-Fi HAL writes to
+# (Android.mk derived it from WIFI_DRIVER_STATE_CTRL_PARAM="/dev/wlan").
+export WLAN_CTRL_NAME := wlan
+# cnss2's own defconfig enables CNSS2_DEBUG; on the vendor build it never
+# reached qcacld, where it turns on the debug/unit-test features.
+CONFIG_CNSS2_DEBUG :=
 # the profile defconfig says =y (DDK builds it as a module anyway); keep it =m
 export override CONFIG_QCA_CLD_WLAN := m
 export CONFIG_QCA_WIFI_ISOC := 0
