@@ -395,8 +395,14 @@ apply_config() {
   esac
 
   kmake olddefconfig
+  # kernelrelease reads include/config/auto.conf: refresh it first, or a
+  # changed CONFIG_LOCALVERSION shows up only on the next run.
+  kmake -s syncconfig
   KERNEL_RELEASE="$(kmake -s kernelrelease 2>/dev/null | tail -n1)"
   [[ -n "$KERNEL_RELEASE" ]] || die "could not determine kernelrelease"
+  if (( ${#KERNEL_RELEASE} > 64 )); then
+    die "kernel release '$KERNEL_RELEASE' is ${#KERNEL_RELEASE} chars, the limit is 64: shorten CONFIG_LOCALVERSION by $(( ${#KERNEL_RELEASE} - 64 ))"
+  fi
   log "Kernel release: $KERNEL_RELEASE"
 }
 
@@ -404,6 +410,10 @@ build_kernel() {
   log "Building kernel with goals: $MAKE_GOALS"
   # shellcheck disable=SC2086
   kmake -j"$JOBS" $MAKE_GOALS
+  # The release the build actually used (also limited to 64 chars by make).
+  if [[ -f "$OUT_DIR/include/config/kernel.release" ]]; then
+    KERNEL_RELEASE="$(cat "$OUT_DIR/include/config/kernel.release")"
+  fi
 }
 
 install_modules_tree() {
