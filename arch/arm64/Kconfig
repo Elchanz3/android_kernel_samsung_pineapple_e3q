@@ -1551,6 +1551,17 @@ config ARM64_SW_TTBR0_PAN
 	  zeroed area and reserved ASID. The user access routines
 	  restore the valid TTBR0_EL1 temporarily.
 
+config ARM64_MCPU
+	string "Target CPU for compiler code generation (-mcpu)"
+	default ""
+	help
+	  CPU name passed to the C compiler as -mcpu=<name>, which selects
+	  both the instruction set extensions and the scheduling model the
+	  kernel is compiled for, e.g. "cortex-a720" for the Snapdragon 8
+	  Gen 3 (1x Cortex-X4, 5x Cortex-A720, 2x Cortex-A520, all
+	  Armv9.2-A). Only use a CPU whose instructions every core of the
+	  target SoC supports. Leave empty for the generic Armv8 baseline.
+
 config ARM64_TAGGED_ADDR_ABI
 	bool "Enable the tagged user addresses syscall ABI"
 	default y
