@@ -84,9 +84,12 @@ INSTALL_MOD_STRIP="${INSTALL_MOD_STRIP:-1}"
 UNLISTED_MODULES="${UNLISTED_MODULES:-none}"
 EXTRA_MAKE_ARGS="${EXTRA_MAKE_ARGS:-}"
 
-# Values the Android build (build.config.common/constants) passes to make.
-# GOOGLE_BRANCH + KMI_GENERATION + scripts/sec_env.mk give the stock release
-# string, e.g. 6.1.68-android14-11-29543898-abS928BXXU4AXK4.
+# Kernel release string (uname -r):
+#   short: <version><CONFIG_LOCALVERSION>, e.g. 6.1.68-SharkKernel-v0.1-e3q
+#   stock: as the Samsung/Android build makes it from GOOGLE_BRANCH +
+#          KMI_GENERATION + scripts/sec_env.mk, e.g.
+#          6.1.68-android14-11<CONFIG_LOCALVERSION>-29543898-abS928BXXU4AXK4
+RELEASE_STYLE="${RELEASE_STYLE:-short}"
 GOOGLE_BRANCH="${GOOGLE_BRANCH:-android14-6.1}"
 KMI_GENERATION="${KMI_GENERATION:-11}"
 KCFLAGS="${KCFLAGS:--D__ANDROID_COMMON_KERNEL__}"
@@ -298,10 +301,18 @@ setup_toolchain() {
 
 # Every make call goes through here so the same variables are always used.
 kmake() {
+  local -a release_args
+  case "$RELEASE_STYLE" in
+    stock) release_args=(GOOGLE_BRANCH="$GOOGLE_BRANCH" KMI_GENERATION="$KMI_GENERATION") ;;
+    # No Android/Samsung parts: setlocalversion then gives just
+    # <version><CONFIG_LOCALVERSION> (LOCALVERSION_AUTO off adds nothing).
+    short) release_args=(GOOGLE_BRANCH= KMI_GENERATION= SEC_LOCALVERSION= LOCALVERSION=) ;;
+    *) die "RELEASE_STYLE must be short or stock (got: $RELEASE_STYLE)" ;;
+  esac
   # shellcheck disable=SC2086
   make -C "$SRC_DIR" O="$OUT_DIR" \
     ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-    GOOGLE_BRANCH="$GOOGLE_BRANCH" KMI_GENERATION="$KMI_GENERATION" \
+    "${release_args[@]}" \
     KCFLAGS="$KCFLAGS" \
     $EXTRA_MAKE_ARGS "$@"
 }
@@ -468,6 +479,7 @@ preflight_summary() {
     "$(sha256sum "$SRC_DIR/arch/arm64/configs/$DEFCONFIG" 2>/dev/null | cut -c1-12)"
   [[ -n "$CONFIG_FRAGMENTS" ]] && printf '  fragments:  %s\n' "$CONFIG_FRAGMENTS"
   printf '  lto:        %s\n' "$LTO"
+  printf '  release:    %s style\n' "$RELEASE_STYLE"
   printf '  jobs:       %s\n' "$JOBS"
   printf '  out:        %s\n' "$OUT_DIR"
   printf '  bases:      vendor_boot=%s\n' "${VENDOR_RAMDISK_BASE_DIR:-${STOCK_VENDOR_BOOT_IMG:-<none>}}"
