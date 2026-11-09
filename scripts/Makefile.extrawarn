@@ -48,7 +48,9 @@ else
 ifdef CONFIG_CC_IS_CLANG
 KBUILD_CFLAGS += -Wno-initializer-overrides
 # Clang before clang-16 would warn on default argument promotions.
-ifneq ($(call clang-min-version, 180000),y)
+# The vendor drivers of this tree (techpack/, Samsung drivers) were only ever
+# built with -Wformat disabled (the Android clang is older than 18), so keep
+# it disabled with every clang version.
 # Disable -Wformat
 KBUILD_CFLAGS += -Wno-format
 # Then re-enable flags that were part of the -Wformat group that aren't
@@ -59,7 +61,9 @@ KBUILD_CFLAGS += -Wformat-zero-length -Wnonnull
 ifeq ($(call clang-min-version, 120000),y)
 KBUILD_CFLAGS += -Wformat-insufficient-args
 endif
-endif
+# clang-21+ warns about uninitialized const variables and const members,
+# e.g. the dummy variables of typecheck(); upstream disables it as well.
+KBUILD_CFLAGS += $(call cc-disable-warning, default-const-init-unsafe)
 KBUILD_CFLAGS += -Wno-sign-compare
 KBUILD_CFLAGS += $(call cc-disable-warning, pointer-to-enum-cast)
 KBUILD_CFLAGS += -Wno-tautological-constant-out-of-range-compare
