@@ -61,6 +61,9 @@ static __always_inline void __fpsimd_save_state(struct user_fpsimd_state *state)
 static void __naked __fpsimd_save_state(struct user_fpsimd_state *state)
 {
 	asm volatile (
+		/* this file is built with -mgeneral-regs-only */
+		".arch_extension fp \n\t"
+		".arch_extension simd \n\t"
 		"stp	q0, q1, [x0] \n\t"
 		"stp	q2, q3, [x0, #32] \n\t"
 		"stp	q4, q5, [x0, #64] \n\t"
