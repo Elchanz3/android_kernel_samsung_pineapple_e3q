@@ -5060,19 +5060,10 @@ should_reclaim_retry(gfp_t gfp_mask, unsigned order,
 	else
 		(*no_progress_loops)++;
 
-#ifdef CONFIG_ARCH_QTI_VM
 	if (*no_progress_loops > MAX_RECLAIM_RETRIES)
 		goto out;
-#else
-	/*
-	 * Make sure we converge to OOM if we cannot make any progress
-	 * several times in the row.
-	 */
-	if (*no_progress_loops > MAX_RECLAIM_RETRIES) {
-		/* Before OOM, exhaust highatomic_reserve */
-		return unreserve_highatomic_pageblock(ac, true);
-	}
-#endif
+
+
 	/*
 	 * Keep reclaiming pages while there is a chance this will lead
 	 * somewhere.  If none of the target zones can satisfy our allocation
@@ -5114,12 +5105,11 @@ should_reclaim_retry(gfp_t gfp_mask, unsigned order,
 		schedule_timeout_uninterruptible(1);
 	else
 		cond_resched();
-#ifdef CONFIG_ARCH_QTI_VM
 out:
 	/* Before OOM, exhaust highatomic_reserve */
 	if (!ret)
 		return unreserve_highatomic_pageblock(ac, true);
-#endif
+
 	return ret;
 }
 
