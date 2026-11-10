@@ -8013,14 +8013,14 @@
 					};
 
 					cpu2-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x5b>;
 					};
 
 					cpu2-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x5d>;
@@ -8067,14 +8067,14 @@
 					};
 
 					cpu2-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x5f>;
 					};
 
 					cpu2-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x60>;
@@ -8121,14 +8121,14 @@
 					};
 
 					cpu3-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x61>;
 					};
 
 					cpu3-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x63>;
@@ -8175,14 +8175,14 @@
 					};
 
 					cpu3-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x65>;
 					};
 
 					cpu3-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x66>;
@@ -8229,14 +8229,14 @@
 					};
 
 					cpu4-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x67>;
 					};
 
 					cpu4-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x69>;
@@ -8283,14 +8283,14 @@
 					};
 
 					cpu4-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x6b>;
 					};
 
 					cpu4-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x6c>;
@@ -8337,14 +8337,14 @@
 					};
 
 					cpu5-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x6d>;
 					};
 
 					cpu5-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x6f>;
@@ -8391,14 +8391,14 @@
 					};
 
 					cpu5-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x71>;
 					};
 
 					cpu5-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x72>;
@@ -8445,14 +8445,14 @@
 					};
 
 					cpu6-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x73>;
 					};
 
 					cpu6-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x75>;
@@ -8499,14 +8499,14 @@
 					};
 
 					cpu6-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x77>;
 					};
 
 					cpu6-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x78>;
@@ -8574,14 +8574,14 @@
 					};
 
 					cpu7-emerg0-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x7a>;
 					};
 
 					cpu7-emerg0-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x7c>;
@@ -8628,21 +8628,21 @@
 					};
 
 					cpu7-mon-trip {
-						temperature = <0x15f90>;
+						temperature = <0x186a0>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x80>;
 					};
 
 					cpu7-emerg1-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x7e>;
 					};
 
 					cpu7-emerg1-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x7f>;
@@ -8694,14 +8694,14 @@
 					};
 
 					cpu7-emerg2-cfg {
-						temperature = <0x1a5e0>;
+						temperature = <0x1b198>;
 						hysteresis = <0x1f40>;
 						type = "passive";
 						phandle = <0x81>;
 					};
 
 					cpu7-emerg2-1-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x82>;
@@ -8748,14 +8748,14 @@
 					};
 
 					cpu0-emerg-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x83>;
 					};
 
 					cpu0-emerg1-cfg {
-						temperature = <0x1b580>;
+						temperature = <0x1b968>;
 						hysteresis = <0x2ee0>;
 						type = "passive";
 						phandle = <0x85>;
@@ -8802,14 +8802,14 @@
 					};
 
 					cpu1-emerg-cfg {
-						temperature = <0x1adb0>;
+						temperature = <0x1b580>;
 						hysteresis = <0x2710>;
 						type = "passive";
 						phandle = <0x87>;
 					};
 
 					cpu1-emerg1-cfg {
-						temperature = <0x1b580>;
+						temperature = <0x1b968>;
 						hysteresis = <0x2ee0>;
 						type = "passive";
 						phandle = <0x89>;
@@ -9033,7 +9033,7 @@
 					};
 
 					ddr0-config {
-						temperature = <0x15f90>;
+						temperature = <0x186a0>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x8b>;
@@ -9158,7 +9158,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x8e>;
@@ -9200,7 +9200,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x90>;
@@ -9242,7 +9242,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x91>;
@@ -9284,7 +9284,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x92>;
@@ -9326,7 +9326,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x93>;
@@ -9368,7 +9368,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x94>;
@@ -9410,7 +9410,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x95>;
@@ -9452,7 +9452,7 @@
 					};
 
 					tj_cfg {
-						temperature = <0x17318>;
+						temperature = <0x19a28>;
 						hysteresis = <0x1388>;
 						type = "passive";
 						phandle = <0x96>;
@@ -9494,14 +9494,14 @@
 					};
 
 					mdmss0-config0 {
-						temperature = <0x18e70>;
+						temperature = <0x1a5e0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x97>;
 					};
 
 					mdmss0-config1 {
-						temperature = <0x19a28>;
+						temperature = <0x1adb0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x9b>;
@@ -9563,14 +9563,14 @@
 					};
 
 					mdmss1-config0 {
-						temperature = <0x18e70>;
+						temperature = <0x1a5e0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x9c>;
 					};
 
 					mdmss1-config1 {
-						temperature = <0x19a28>;
+						temperature = <0x1adb0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x9d>;
@@ -9632,14 +9632,14 @@
 					};
 
 					mdmss2-config0 {
-						temperature = <0x18e70>;
+						temperature = <0x1a5e0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x9e>;
 					};
 
 					mdmss2-config1 {
-						temperature = <0x19a28>;
+						temperature = <0x1adb0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0x9f>;
@@ -9701,14 +9701,14 @@
 					};
 
 					mdmss3-config0 {
-						temperature = <0x18e70>;
+						temperature = <0x1a5e0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0xa0>;
 					};
 
 					mdmss3-config1 {
-						temperature = <0x19a28>;
+						temperature = <0x1adb0>;
 						hysteresis = <0xbb8>;
 						type = "passive";
 						phandle = <0xa1>;
