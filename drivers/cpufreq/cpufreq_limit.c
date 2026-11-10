@@ -408,6 +408,10 @@ static void cflm_current_qos(void)
 	int t_min = 0, t_max = 0;
 	unsigned int a_low = 0, a_high = 0;
 
+#ifndef CFLM_DEBUG_LOG
+	return;	/* Samsung QoS dump on every limit update: debug only */
+#endif
+
 	policy = cpufreq_cpu_get(param.s_first);
 	if (policy) {
 		s_min = cflm_freq_qos_read_value(&policy->constraints, FREQ_QOS_MIN);

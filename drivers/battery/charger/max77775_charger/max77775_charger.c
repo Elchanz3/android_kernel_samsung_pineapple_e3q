@@ -9,7 +9,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#define DEBUG
 
 #include <linux/mfd/max77775-private.h>
 #include <linux/debugfs.h>
@@ -1682,7 +1681,7 @@ static int max77775_chg_get_property(struct power_supply *psy,
 			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
 		} else if (charger->slow_charging) {
 			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
-			pr_info("%s: slow-charging mode\n", __func__);
+			pr_debug("%s: slow-charging mode\n", __func__);
 		} else {
 			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
 		}

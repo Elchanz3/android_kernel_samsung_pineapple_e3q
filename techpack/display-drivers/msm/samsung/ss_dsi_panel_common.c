@@ -3224,7 +3224,7 @@ int ss_brightness_dcs(struct samsung_display_driver_data *vdd, int level, int ba
 	ss_set_copr_sum(vdd, COPR_CD_INDEX_0);
 	ss_set_copr_sum(vdd, COPR_CD_INDEX_1);
 
-	LCD_INFO(vdd, "tx_time(%d.%dms) level:%d candela:%dCD hbm:%d acl:(%d|%d) FPS:%dx%d@%d%s\n",
+	LCD_DEBUG(vdd, "tx_time(%d.%dms) level:%d candela:%dCD hbm:%d acl:(%d|%d) FPS:%dx%d@%d%s\n",
 		ktime_us_delta(t_e, t_s) / 1000, ktime_us_delta(t_e, t_s) % 1000,
 		vdd->br_info.common_br.bl_level, vdd->br_info.common_br.cd_level, vdd->br_info.is_hbm,
 		ss_get_acl_status(vdd), vdd->br_info.gradual_acl_val,

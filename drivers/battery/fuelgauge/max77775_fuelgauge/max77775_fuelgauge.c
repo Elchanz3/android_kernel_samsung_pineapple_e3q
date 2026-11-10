@@ -10,7 +10,6 @@
  * published by the Free Software Foundation.
  */
 
-#define DEBUG
 /* #define BATTERY_LOG_MESSAGE */
 
 #include <linux/mfd/max77775-private.h>
@@ -484,7 +483,7 @@ static int max77775_fg_read_qh(struct max77775_fuelgauge_data *fuelgauge)
 	if (sign)
 		qh *= -1;
 
-	pr_info("%s : QH(%d)\n", __func__, qh);
+	pr_debug("%s : QH(%d)\n", __func__, qh);
 
 	return qh;
 }
@@ -768,7 +767,7 @@ static int max77775_fg_read_isys(struct max77775_fuelgauge_data *fuelgauge,
 		i_current = i_current - inow_comp;
 	}
 	if (!(fuelgauge->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: isys_current=%d%s\n", __func__, i_current,
+		pr_debug("%s: isys_current=%d%s\n", __func__, i_current,
 			(unit == SEC_BATTERY_CURRENT_UA)? "uA" : "mA");
 
 	return i_current;
@@ -808,7 +807,7 @@ static int max77775_fg_read_isys_avg(struct max77775_fuelgauge_data *fuelgauge,
 		avg_current = avg_current - avg_inow_comp;
 	}
 	if (!(fuelgauge->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: isys_avg_current=%d%s\n", __func__, avg_current,
+		pr_debug("%s: isys_avg_current=%d%s\n", __func__, avg_current,
 			(unit == SEC_BATTERY_CURRENT_UA)? "uA" : "mA");
 
 	return avg_current;
@@ -1154,7 +1153,7 @@ static void max77775_fg_periodic_read_power(
 	vbyp = max77775_get_fuelgauge_value(fuelgauge, FG_VBYP);
 	qh = max77775_get_fuelgauge_value(fuelgauge, FG_QH);
 
-	pr_info("[FG power] ISYS(%dmA),ISYSAVG(%dmA),VSYS(%dmV),IIN(%dmA),VBYP(%dmV),QH(%d uah),WA(%d)\n",
+	pr_debug("[FG power] ISYS(%dmA),ISYSAVG(%dmA),VSYS(%dmV),IIN(%dmA),VBYP(%dmV),QH(%d uah),WA(%d)\n",
 		isys, isys_avg, vsys, iin, vbyp, qh, fuelgauge->err_cnt);
 }
 

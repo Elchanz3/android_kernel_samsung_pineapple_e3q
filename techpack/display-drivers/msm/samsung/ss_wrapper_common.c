@@ -1339,7 +1339,7 @@ static void ss_op_copy_state(struct samsung_display_driver_data *vdd)
 	state->panel_revision = vdd->panel_revision;
 	state->is_factory_mode = vdd->is_factory_mode;
 
-	LCD_INFO(vdd, "cur info: %dx%d(%dx%d)@%d%s, bl_idx: %d, bl_level: %d, cd: %dnit, " \
+	LCD_DEBUG(vdd, "cur info: %dx%d(%dx%d)@%d%s, bl_idx: %d, bl_level: %d, cd: %dnit, " \
 			"LFD: %u.%.1uhz(%u)~%u.%.1dhz(%u), fix(%d), base_rr: %uhz, " \
 			"vrr: %d, lfd: %d, " \
 			"dsi clk: %dMHZ, clkid: %d, oscid: %d, irc: %s, mode: %s, " \

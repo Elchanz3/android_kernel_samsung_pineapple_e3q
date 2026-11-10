@@ -183,7 +183,7 @@ static int get_cirrus_amp_curr_temperature(enum amp_id id)
 
 	value = cirrus_cal_read_temp(cirrus_amp_suffix[id]);
 	if (value < 0) {
-		dev_err(component->dev, "%s: component is not enabled\n", __func__);
+		dev_dbg(component->dev, "%s: component is not enabled\n", __func__);
 		return -EINVAL;
 	}
 
@@ -204,7 +204,7 @@ static int set_cirrus_amp_surface_temperature(enum amp_id id, int temperature)
 
 	value = cirrus_cal_set_surface_temp(cirrus_amp_suffix[id], temperature);
 	if (value < 0) {
-		dev_err(component->dev, "%s: Amp%d is not enabled\n",
+		dev_dbg(component->dev, "%s: Amp%d is not enabled\n",
 				__func__, id);
 		return -EINVAL;
 	}

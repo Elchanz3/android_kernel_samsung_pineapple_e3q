@@ -1270,7 +1270,7 @@ int32_t stk6d2x_alps_set_config(stk6d2x_data *alps_data, bool en)
 
 	if (en)
 	{
-		ALS_err("ALPS Timer SETTING\n");
+		ALS_dbg("ALPS Timer SETTING\n");
 
 		if (!alps_data->alps_timer_info.is_exist)
 		{

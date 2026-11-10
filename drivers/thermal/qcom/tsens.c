@@ -1144,7 +1144,7 @@ static void __ref ts_print(struct work_struct *work)
 	}
 
 	buffer[added - 1] = ']';
-	pr_info("%s: %s\n", __func__, buffer);
+	pr_debug("%s: %s\n", __func__, buffer);
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	work_flag = schedule_delayed_work(&ts_print_work, msecs_to_jiffies(polling_period));

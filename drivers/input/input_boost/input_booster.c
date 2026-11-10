@@ -307,7 +307,7 @@ void press_timeout_func(struct work_struct* work)
 	if (!target_ib)
 		return;
 
-	pr_info(ITAG" Press Timeout Func :::: Unique_Id(%d) Tail_Time(%d)",
+	pr_debug(ITAG" Press Timeout Func :::: Unique_Id(%d) Tail_Time(%d)",
 		target_ib->uniq_id, target_ib->ib_dt->tail_time);
 
 	int res_type;
@@ -328,7 +328,7 @@ void press_timeout_func(struct work_struct* work)
 
 			tv = find_update_target(target_ib->uniq_id, res.res_id);
 			if (tv == NULL) {
-				pr_err(ITAG" Press Timeout Func :::: %d's TV No Exist(%d)",
+				pr_debug(ITAG" Press Timeout Func :::: %d's TV No Exist(%d)",
 					target_ib->uniq_id, res.res_id);
 				continue;
 			}
@@ -437,14 +437,14 @@ void release_timeout_func(struct work_struct* work)
 	if(!target_ib)
 		return;
 
-	pr_info(ITAG" Release Timeout Func :::: Unique_Id(%d)", target_ib->uniq_id);
+	pr_debug(ITAG" Release Timeout Func :::: Unique_Id(%d)", target_ib->uniq_id);
 	mutex_lock(&sip_rel_lock);
 	for (res_type = 0; res_type < allowed_res_count; res_type++) {
 		res = target_ib->ib_dt->res[allowed_resources[res_type]];
 
 		tv = find_update_target(target_ib->uniq_id, res.res_id);
 		if (tv == NULL) {
-			pr_err(ITAG" Release Timeout Func :::: %d's TV No Exist(%d)",
+			pr_debug(ITAG" Release Timeout Func :::: %d's TV No Exist(%d)",
 				target_ib->uniq_id, res.res_id);
 			continue;
 		}

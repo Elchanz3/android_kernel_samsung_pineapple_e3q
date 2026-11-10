@@ -160,7 +160,7 @@ int is_lpcharge_pdic_param(void)
 	ret = lpcharge;
 
 out:
-	pr_info("%s lpcharge=%d\n", __func__, ret);
+	pr_debug("%s lpcharge=%d\n", __func__, ret);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(is_lpcharge_pdic_param);
