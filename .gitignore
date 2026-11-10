@@ -184,3 +184,4 @@ sphinx_*/
 # The display techpack regenerates these from msm/samsung/panel_data_file
 # when building inside the source dir (not with O=).
 /E3_*_PDF_DATA
+/ksu_modules
