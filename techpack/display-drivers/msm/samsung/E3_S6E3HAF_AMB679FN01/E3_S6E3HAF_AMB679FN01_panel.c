@@ -158,6 +158,7 @@ enum VRR_CMD_RR {
 	VRR_60HS,
 	VRR_80HS,
 	VRR_120HS,
+	VRR_130HS,	/* OC: H-total 432->400 (F2 0x18, .dat TSP_WCM_SYNC), LFD stays 120HS */
 	VRR_MAX
 };
 
@@ -188,6 +189,9 @@ static enum VRR_CMD_RR ss_get_vrr_id(struct samsung_display_driver_data *vdd)
 		break;
 	case 120:
 		vrr_id = VRR_120HS;
+		break;
+	case 130:
+		vrr_id = VRR_130HS;
 		break;
 	default:
 		LCD_ERR(vdd, "invalid refresh rate (%d, %d), set default 120HS..\n", cur_rr, cur_hs);
@@ -260,6 +264,20 @@ static int ss_update_base_lfd_val(struct vrr_info *vrr,
 	case VRR_120HS:
 		base_rr = 240;
 		max_div_def = 2; /* 240/2 = 120hz */
+		min_div_def = 24; /* 10hz */
+		min_div_lowest = 240; /* 1Hz for Scalability 6 */
+		break;
+	case VRR_130HS:
+		/*
+		 * 130HS overclock: the DDI keeps its 120HS LFD/frame-skip setting
+		 * (LFDMAX 120), so every "IF VRR"/"IF LFDMAX" block in the .dat
+		 * resolves to the 120HS values. The rate itself comes from the
+		 * shorter line time (H-total 400 instead of 432 OSC clocks):
+		 * 120 * 432 / 400 = ~129.6Hz. 385 (~135Hz) ran but
+		 * showed a green tint (pixel charge time too short).
+		 */
+		base_rr = 240;
+		max_div_def = 2; /* 240/2 = 120hz (DDI) */
 		min_div_def = 24; /* 10hz */
 		min_div_lowest = 240; /* 1Hz for Scalability 6 */
 		break;
@@ -759,7 +777,7 @@ static int ss_post_vrr(struct samsung_display_driver_data *vdd,
 			int old_rr, bool old_hs, bool old_phs,
 			int new_rr, bool new_hs, bool new_phs)
 {
-	if (new_rr == 120 || new_rr == 96)
+	if (new_rr == 130 || new_rr == 120 || new_rr == 96)
 		vdd->dbg_tear_info.early_te_delay_us = 2000; /* 2ms */
 	else
 		vdd->dbg_tear_info.early_te_delay_us = 0;
@@ -1417,8 +1435,17 @@ void E3_S6E3HAF_AMB679FN01_WQHD_init(struct samsung_display_driver_data *vdd)
 	/* Get f_buf from header file data to cover recovery mode
 	 * Below code should be called before any PDF parsing code such as parsing_glut
 	 */
-	if (!vdd->file_loading && vdd->h_buf) {
-		LCD_INFO(vdd, "Get f_buf from header file data(%llu)\n", vdd->h_size);
+	/*
+	 * Always prefer the built-in panel data. /vendor/firmware ships the
+	 * stock .dat, which is searched first and would silently drop every
+	 * kernel-side panel change (e.g. the 130HS H-total in TSP_WCM_SYNC).
+	 * The firmware copy is left allocated (nothing frees f_buf).
+	 */
+	if (vdd->h_buf) {
+		if (vdd->file_loading)
+			LCD_INFO(vdd, "Ignore /vendor/firmware panel data, use built-in(%llu)\n", vdd->h_size);
+		else
+			LCD_INFO(vdd, "Get f_buf from header file data(%llu)\n", vdd->h_size);
 		vdd->f_buf = vdd->h_buf;
 		vdd->f_size = vdd->h_size;
 	}
