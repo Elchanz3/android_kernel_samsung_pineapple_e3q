@@ -1770,6 +1770,14 @@ int gen7_perfcounter_update(struct adreno_device *adreno_dev,
 		offset += 3;
 	}
 
+	/*
+	 * Ensure there is enough space in the reglist buffer for new triplets:
+	 * 1 main + 1 control.
+	 */
+	if (!select_reg_present && (offset + (2 * 3)) >=
+		(adreno_dev->pwrup_reglist->size / sizeof(u32)))
+		return -ENOSPC;
+
 	if (kgsl_hwlock(lock)) {
 		kgsl_hwunlock(lock);
 		return -EBUSY;

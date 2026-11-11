@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <uapi/linux/sched/types.h>
@@ -344,6 +344,7 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 	}
 
 	memdesc->sgt = NULL;
+	entry->priv_data = NULL;
 }
 
 static const struct kgsl_memdesc_ops kgsl_dmabuf_ops = {
@@ -959,6 +960,7 @@ static void kgsl_destroy_process_private(struct kref *kref)
 
 	kfree(private->cmdline);
 	put_pid(private->pid);
+	mmdrop(private->mm);
 	idr_destroy(&private->mem_idr);
 	idr_destroy(&private->syncsource_idr);
 
@@ -1175,6 +1177,8 @@ static struct kgsl_process_private *kgsl_process_private_new(
 
 	private->fd_count = 1;
 	private->pid = cur_pid;
+	private->mm = current->mm;
+	mmgrab(current->mm);
 	get_task_comm(private->comm, current->group_leader);
 	private->cmdline = kstrdup_quotable_cmdline(current, GFP_KERNEL);
 
@@ -1197,6 +1201,7 @@ static struct kgsl_process_private *kgsl_process_private_new(
 		idr_destroy(&private->mem_idr);
 		idr_destroy(&private->syncsource_idr);
 		put_pid(private->pid);
+		mmdrop(private->mm);
 
 		kfree(private);
 		private = ERR_PTR(err);
@@ -2844,27 +2849,72 @@ long kgsl_ioctl_cmdstream_freememontimestamp_ctxtid(
 	return ret;
 }
 
-static int check_vma(unsigned long hostptr, u64 size)
+static bool _vma_is_cached(struct vm_area_struct *vma)
+{
+	pteval_t pgprot_val = pgprot_val(vma->vm_page_prot);
+
+	/*
+	 * An uncached cpu mapping can either be marked as writecombine or noncached. If it isn't
+	 * either, then it means it is cached.
+	 */
+	if ((pgprot_val != pgprot_val(pgprot_writecombine((vma->vm_page_prot)))) &&
+		(pgprot_val != pgprot_val(pgprot_noncached(vma->vm_page_prot))))
+		return true;
+
+	return false;
+}
+
+static bool check_vma(struct kgsl_device *device, struct kgsl_memdesc *memdesc,
+		unsigned long hostptr)
 {
 	struct vm_area_struct *vma;
 	unsigned long cur = hostptr;
+	bool cached;
 
-	while (cur < (hostptr + size)) {
+	vma = find_vma(current->mm, hostptr);
+	if (!vma)
+		return false;
+
+	/* Don't remap memory that we already own */
+	if (vma->vm_file && (vma->vm_ops == &kgsl_gpumem_vm_ops))
+		return false;
+
+	cached = _vma_is_cached(vma);
+
+	cur = vma->vm_end;
+
+	while (cur < (hostptr + memdesc->size)) {
 		vma = find_vma(current->mm, cur);
 		if (!vma)
 			return false;
 
 		/* Don't remap memory that we already own */
-		if (vma->vm_file && vma->vm_ops == &kgsl_gpumem_vm_ops)
+		if (vma->vm_file && (vma->vm_ops == &kgsl_gpumem_vm_ops))
+			return false;
+
+		/*
+		 * Make sure the entire memdesc is either cached or noncached. Bail out if there is
+		 * a mismatch as it can lead to coherency issues.
+		 */
+		if (cached != _vma_is_cached(vma))
 			return false;
 
 		cur = vma->vm_end;
 	}
 
+	/*
+	 * If cpu side mapping is cached (and io-coherency is enabled), the gpu mapping should be
+	 * marked io-coherent to avoid coherency issues.
+	 */
+	if (cached && kgsl_mmu_has_feature(device, KGSL_MMU_IO_COHERENT) &&
+		IS_ENABLED(CONFIG_QCOM_KGSL_IOCOHERENCY_DEFAULT))
+		memdesc->flags |= KGSL_MEMFLAGS_IOCOHERENT;
+
 	return true;
 }
 
-static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
+static int memdesc_sg_virt(struct kgsl_device *device, struct kgsl_memdesc *memdesc,
+	unsigned long useraddr)
 {
 	int ret = 0;
 	long npages = 0, i;
@@ -2887,7 +2937,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 	}
 
 	mmap_read_lock(current->mm);
-	if (!check_vma(useraddr, memdesc->size)) {
+	if (!check_vma(device, memdesc, useraddr)) {
 		mmap_read_unlock(current->mm);
 		ret = -EFAULT;
 		goto out;
@@ -2933,9 +2983,8 @@ static const struct kgsl_memdesc_ops kgsl_usermem_ops = {
 	.put_gpuaddr = kgsl_unmap_and_put_gpuaddr,
 };
 
-static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
-	struct kgsl_mem_entry *entry, unsigned long hostptr,
-	size_t offset, size_t size)
+static int kgsl_setup_anon_useraddr(struct kgsl_device *device, struct kgsl_pagetable *pagetable,
+	struct kgsl_mem_entry *entry, unsigned long hostptr, size_t offset, size_t size)
 {
 	/* Map an anonymous memory chunk */
 
@@ -2969,7 +3018,7 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 		entry->memdesc.gpuaddr = (uint64_t) hostptr;
 	}
 
-	ret =  memdesc_sg_virt(&entry->memdesc, hostptr);
+	ret =  memdesc_sg_virt(device, &entry->memdesc, hostptr);
 
 	if (ret && kgsl_memdesc_use_cpu_map(&entry->memdesc))
 		kgsl_mmu_put_gpuaddr(pagetable, &entry->memdesc);
@@ -2985,7 +3034,7 @@ static int kgsl_setup_useraddr(struct kgsl_device *device,
 	if (hostptr == 0 || !IS_ALIGNED(hostptr, PAGE_SIZE))
 		return -EINVAL;
 
-	return kgsl_setup_anon_useraddr(pagetable, entry,
+	return kgsl_setup_anon_useraddr(device, pagetable, entry,
 		hostptr, offset, size);
 }
 
@@ -4519,8 +4568,10 @@ static void kgsl_gpumem_vm_open(struct vm_area_struct *vma)
 {
 	struct kgsl_mem_entry *entry = vma->vm_private_data;
 
-	if (!kgsl_mem_entry_get(entry))
+	if (!kgsl_mem_entry_get(entry)) {
 		vma->vm_private_data = NULL;
+		return;
+	}
 
 	atomic_inc(&entry->map_count);
 }
@@ -4654,9 +4705,9 @@ static unsigned long _gpu_set_svm_region(struct kgsl_process_private *private,
 	return addr;
 }
 
-static unsigned long get_align(struct kgsl_mem_entry *entry)
+unsigned long kgsl_get_align(struct kgsl_memdesc *memdesc)
 {
-	int bit = kgsl_memdesc_get_align(&entry->memdesc);
+	u32 bit = kgsl_memdesc_get_align(memdesc);
 
 	if (bit >= ilog2(SZ_2M))
 		return SZ_2M;
@@ -4665,7 +4716,7 @@ static unsigned long get_align(struct kgsl_mem_entry *entry)
 	else if (bit >= ilog2(SZ_64K))
 		return SZ_64K;
 
-	return SZ_4K;
+	return PAGE_SIZE;
 }
 
 static unsigned long set_svm_area(struct file *file,
@@ -4698,7 +4749,7 @@ static unsigned long get_svm_unmapped_area(struct file *file,
 {
 	struct kgsl_device_private *dev_priv = file->private_data;
 	struct kgsl_process_private *private = dev_priv->process_priv;
-	unsigned long align = get_align(entry);
+	unsigned long align = kgsl_get_align(&entry->memdesc);
 	unsigned long ret, iova;
 	u64 start = 0, end = 0;
 	struct vm_area_struct *vma;
@@ -4816,6 +4867,9 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 	struct kgsl_device *device = dev_priv->device;
 	uint64_t flags;
 	int ret;
+
+	if (vma->vm_mm != private->mm)
+		return -EACCES;
 
 	/* Handle leagacy behavior for memstore */
 
