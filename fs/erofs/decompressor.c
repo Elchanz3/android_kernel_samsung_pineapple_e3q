@@ -50,6 +50,8 @@ int z_erofs_load_lz4_config(struct super_block *sb,
 	} else {
 		distance = le16_to_cpu(dsb->u1.lz4_max_distance);
 		sbi->lz4.max_pclusterblks = 1;
+		/* legacy images without compr_cfgs: only LZ4 is available */
+		sbi->available_compr_algs = 1 << Z_EROFS_COMPRESSION_LZ4;
 	}
 
 	sbi->lz4.max_distance_pages = distance ?

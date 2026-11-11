@@ -816,6 +816,8 @@ struct xhci_command {
 	struct completion		*completion;
 	union xhci_trb			*command_trb;
 	struct list_head		cmd_list;
+	/* xHCI command response timeout in milliseconds */
+	unsigned int			timeout_ms;
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
@@ -1576,11 +1578,15 @@ struct xhci_td {
 	struct xhci_segment	*bounce_seg;
 	/* actual_length of the URB has already been set */
 	bool			urb_length_set;
+	bool			error_mid_td;
 	unsigned int		num_trbs;
 };
 
-/* xHCI command default timeout value */
-#define XHCI_CMD_DEFAULT_TIMEOUT	(5 * HZ)
+/*
+ * xHCI command default timeout value in milliseconds.
+ * USB 3.2 spec, section 9.2.6.1
+ */
+#define XHCI_CMD_DEFAULT_TIMEOUT	5000
 
 /* command descriptor */
 struct xhci_cd {
@@ -1967,7 +1973,8 @@ struct xhci_driver_overrides {
 	void (*reset_bandwidth)(struct usb_hcd *, struct usb_device *);
 	int (*update_hub_device)(struct usb_hcd *hcd, struct usb_device *hdev,
 			    struct usb_tt *tt, gfp_t mem_flags);
-	int (*address_device)(struct usb_hcd *hcd, struct usb_device *udev);
+	int (*address_device)(struct usb_hcd *hcd, struct usb_device *udev,
+			      unsigned int timeout_ms);
 	int (*bus_suspend)(struct usb_hcd *hcd);
 	int (*bus_resume)(struct usb_hcd *hcd);
 
@@ -2157,7 +2164,8 @@ int xhci_check_bandwidth(struct usb_hcd *hcd, struct usb_device *udev);
 void xhci_reset_bandwidth(struct usb_hcd *hcd, struct usb_device *udev);
 int xhci_update_hub_device(struct usb_hcd *hcd, struct usb_device *hdev,
 			   struct usb_tt *tt, gfp_t mem_flags);
-int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev);
+int xhci_address_device(struct usb_hcd *hcd, struct usb_device *udev,
+			unsigned int timeout_ms);
 int xhci_disable_slot(struct xhci_hcd *xhci, u32 slot_id);
 int xhci_ext_cap_init(struct xhci_hcd *xhci);
 

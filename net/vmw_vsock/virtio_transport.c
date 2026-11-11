@@ -117,7 +117,7 @@ virtio_transport_send_pkt_work(struct work_struct *work)
 		list_del_init(&pkt->list);
 		spin_unlock_bh(&vsock->send_pkt_list_lock);
 
-		virtio_transport_deliver_tap_pkt(pkt);
+
 
 		reply = pkt->reply;
 
@@ -138,6 +138,8 @@ virtio_transport_send_pkt_work(struct work_struct *work)
 			spin_unlock_bh(&vsock->send_pkt_list_lock);
 			break;
 		}
+
+		virtio_transport_deliver_tap_pkt(pkt);
 
 		if (reply) {
 			struct virtqueue *rx_vq = vsock->vqs[VSOCK_VQ_RX];
