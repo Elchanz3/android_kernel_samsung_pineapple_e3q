@@ -95,35 +95,9 @@ static int of_bus_default_translate(__be32 *addr, u64 offset, int na)
 	return 0;
 }
 
-static unsigned int of_bus_default_flags_get_flags(const __be32 *addr)
-{
-	return of_read_number(addr, 1);
-}
-
 static unsigned int of_bus_default_get_flags(const __be32 *addr)
 {
 	return IORESOURCE_MEM;
-}
-
-static u64 of_bus_default_flags_map(__be32 *addr, const __be32 *range, int na,
-				    int ns, int pna)
-{
-	u64 cp, s, da;
-
-	/* Check that flags match */
-	if (*addr != *range)
-		return OF_BAD_ADDR;
-
-	/* Read address values, skipping high cell */
-	cp = of_read_number(range + 1, na - 1);
-	s  = of_read_number(range + na + pna, ns);
-	da = of_read_number(addr + 1, na - 1);
-
-	pr_debug("default flags map, cp=%llx, s=%llx, da=%llx\n", cp, s, da);
-
-	if (da < cp || da >= (cp + s))
-		return OF_BAD_ADDR;
-	return da - cp;
 }
 
 static int of_bus_default_flags_translate(__be32 *addr, u64 offset, int na)
@@ -342,11 +316,6 @@ static unsigned int of_bus_isa_get_flags(const __be32 *addr)
 	return flags;
 }
 
-static int of_bus_default_flags_match(struct device_node *np)
-{
-	return of_bus_n_addr_cells(np) == 3;
-}
-
 /*
  * Array of bus specific translators
  */
@@ -375,17 +344,6 @@ static struct of_bus of_busses[] = {
 		.translate = of_bus_default_flags_translate,
 		.flag_cells = 1,
 		.get_flags = of_bus_isa_get_flags,
-	},
-	/* Default with flags cell */
-	{
-		.name = "default-flags",
-		.addresses = "reg",
-		.match = of_bus_default_flags_match,
-		.count_cells = of_bus_default_count_cells,
-		.map = of_bus_default_flags_map,
-		.translate = of_bus_default_flags_translate,
-		.flag_cells = 1,
-		.get_flags = of_bus_default_flags_get_flags,
 	},
 	/* Default */
 	{
