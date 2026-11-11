@@ -251,7 +251,6 @@ static ssize_t __dbg_part_blk_write(struct qc_dbg_part_drvdata *drvdata,
 		};
 
 		file.f_op = &f_op;
-		kiocb.ki_pos += ret;
 		ret = generic_write_sync(&kiocb, ret);
 	}
 	return ret;

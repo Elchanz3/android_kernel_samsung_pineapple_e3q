@@ -20,6 +20,7 @@
 #include <linux/sti/abc_common.h>
 #endif
 
+#undef in_range
 #define in_range(range, val) (((range.begin) < (val)) && ((range.end) > (val)))
 
 extern struct msm_vidc_core *g_core;

@@ -111,6 +111,7 @@
 
 
 #define ABS(val)			((val < 0)? -(val) : val)
+#undef MAX
 #define MAX(a, b)			((a > b)? a : b)
 
 static bool module_initialized;

@@ -309,7 +309,6 @@ static ssize_t __qc_param_blk_write(struct qc_param_drvdata *drvdata,
 		};
 
 		file.f_op = &f_op;
-		kiocb.ki_pos += ret;
 		ret = generic_write_sync(&kiocb, ret);
 	}
 	return ret;
