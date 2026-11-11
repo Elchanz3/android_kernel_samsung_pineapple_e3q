@@ -453,6 +453,9 @@ struct kvm_vcpu_arch {
 		FP_STATE_GUEST_OWNED,
 	} fp_state;
 
+	/* Type of FP state saved for the guest (FPSIMD or SVE) */
+	enum fp_type fp_type;
+
 	/* Configuration flags, set once and for all before the vcpu can run */
 	u8 cflags;
 

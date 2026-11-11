@@ -1000,7 +1000,8 @@ static unsigned int cflm_get_table_freq(struct cpufreq_policy *policy,
 	if (!policy->freq_table)
 		return target_freq;
 
-	idx = cpufreq_frequency_table_target(policy, target_freq, relation);
+	idx = cpufreq_frequency_table_target(policy, target_freq, policy->min,
+					     policy->max, relation);
 
 	return policy->freq_table[idx].frequency;
 }

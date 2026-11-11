@@ -1419,6 +1419,9 @@ static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 	if (prev != vma)
 		mas_next(&mas, ULONG_MAX);
 
+	if (vma->vm_start < start)
+		prev = vma;
+
 	ret = 0;
 	do {
 		cond_resched();
@@ -1596,6 +1599,9 @@ static int userfaultfd_unregister(struct userfaultfd_ctx *ctx,
 	prev = mas_prev(&mas, 0);
 	if (prev != vma)
 		mas_next(&mas, ULONG_MAX);
+
+	if (vma->vm_start < start)
+		prev = vma;
 
 	ret = 0;
 	do {
