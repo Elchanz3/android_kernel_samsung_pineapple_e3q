@@ -282,6 +282,7 @@ static int spear_adc_probe(struct platform_device *pdev)
 
 	st = iio_priv(indio_dev);
 
+	init_completion(&st->completion);
 	mutex_init(&st->lock);
 
 	st->np = np;
@@ -311,8 +312,8 @@ static int spear_adc_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0) {
-		ret = -EINVAL;
+	if (irq < 0) {
+		ret = irq;
 		goto errout2;
 	}
 
@@ -345,8 +346,6 @@ static int spear_adc_probe(struct platform_device *pdev)
 	spear_adc_configure(st);
 
 	platform_set_drvdata(pdev, indio_dev);
-
-	init_completion(&st->completion);
 
 	indio_dev->name = SPEAR_ADC_MOD_NAME;
 	indio_dev->info = &spear_adc_info;

@@ -475,6 +475,8 @@ static int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
 			if (cmsg->cmsg_len < CMSG_LEN(sizeof(u32)))
 				return -EINVAL;
 			con->aead_assoclen = *(u32 *)CMSG_DATA(cmsg);
+			if (con->aead_assoclen >= 0x80000000u)
+				return -EINVAL;
 			break;
 
 		default:
@@ -975,7 +977,7 @@ ssize_t af_alg_sendpage(struct socket *sock, struct page *page,
 {
 	struct bio_vec bvec;
 	struct msghdr msg = {
-		.msg_flags = flags | MSG_SPLICE_PAGES,
+		.msg_flags = flags,
 	};
 
 	if (flags & MSG_SENDPAGE_NOTLAST)
