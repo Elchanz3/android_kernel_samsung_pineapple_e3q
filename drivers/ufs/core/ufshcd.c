@@ -10637,11 +10637,11 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	 * Default power saving mode is to keep UFS link in Hibern8 state
 	 * and UFS device in sleep state.
 	 */
-	if (!hba->rpm_lvl)
+	if (!hba->rpm_lvl || (unsigned int)hba->rpm_lvl >= UFS_PM_LVL_MAX)
 		hba->rpm_lvl = ufs_get_desired_pm_lvl_for_dev_link_state(
 						UFS_SLEEP_PWR_MODE,
 						UIC_LINK_HIBERN8_STATE);
-	if (!hba->spm_lvl)
+	if (!hba->spm_lvl || (unsigned int)hba->spm_lvl >= UFS_PM_LVL_MAX)
 		hba->spm_lvl = ufs_get_desired_pm_lvl_for_dev_link_state(
 						UFS_SLEEP_PWR_MODE,
 						UIC_LINK_HIBERN8_STATE);
