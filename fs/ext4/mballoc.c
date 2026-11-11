@@ -20,6 +20,21 @@
 #include <trace/events/ext4.h>
 
 /*
+ * The folio conversions backported from newer kernels expect
+ * __filemap_get_folio() to return an ERR_PTR on failure, but on 6.1 it
+ * returns NULL. Translate NULL so the IS_ERR() checks below are correct.
+ */
+static inline struct folio *ext4_mb_get_folio(struct address_space *mapping,
+		pgoff_t index, int fgp_flags, gfp_t gfp)
+{
+	struct folio *folio = __filemap_get_folio(mapping, index, fgp_flags, gfp);
+
+	if (!folio)
+		return ERR_PTR((fgp_flags & FGP_CREAT) ? -ENOMEM : -ENOENT);
+	return folio;
+}
+
+/*
  * MUSTDO:
  *   - test ext4_ext_search_left() and ext4_ext_search_right()
  *   - search for metadata in few groups
@@ -1373,7 +1388,7 @@ static int ext4_mb_get_buddy_page_lock(struct super_block *sb,
 	block = group * 2;
 	pnum = block / blocks_per_page;
 	poff = block % blocks_per_page;
-	folio = __filemap_get_folio(inode->i_mapping, pnum,
+	folio = ext4_mb_get_folio(inode->i_mapping, pnum,
 			FGP_LOCK | FGP_ACCESSED | FGP_CREAT, gfp);
 	if (IS_ERR(folio))
 		return PTR_ERR(folio);
@@ -1387,7 +1402,7 @@ static int ext4_mb_get_buddy_page_lock(struct super_block *sb,
 	}
 
 	/* blocks_per_page == 1, hence we need another page for the buddy */
-	folio = __filemap_get_folio(inode->i_mapping, block + 1,
+	folio = ext4_mb_get_folio(inode->i_mapping, block + 1,
 			FGP_LOCK | FGP_ACCESSED | FGP_CREAT, gfp);
 	if (IS_ERR(folio))
 		return PTR_ERR(folio);
@@ -1532,7 +1547,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 	poff = block % blocks_per_page;
 
 	/* Avoid locking the folio in the fast path ... */
-	folio = __filemap_get_folio(inode->i_mapping, pnum, FGP_ACCESSED, 0);
+	folio = ext4_mb_get_folio(inode->i_mapping, pnum, FGP_ACCESSED, 0);
 	if (IS_ERR(folio) || !folio_test_uptodate(folio) || folio_test_locked(folio)) {
 		/*
 		 * folio_test_locked is employed to detect ongoing folio
@@ -1545,7 +1560,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 		 */
 		if (!IS_ERR(folio))
 			folio_put(folio);
-		folio = __filemap_get_folio(inode->i_mapping, pnum,
+		folio = ext4_mb_get_folio(inode->i_mapping, pnum,
 				FGP_LOCK | FGP_ACCESSED | FGP_CREAT, gfp);
 		if (!IS_ERR(folio)) {
 			if (WARN_RATELIMIT(folio->mapping != inode->i_mapping,
@@ -1584,11 +1599,11 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 	pnum = block / blocks_per_page;
 	poff = block % blocks_per_page;
 
-	folio = __filemap_get_folio(inode->i_mapping, pnum, FGP_ACCESSED, 0);
+	folio = ext4_mb_get_folio(inode->i_mapping, pnum, FGP_ACCESSED, 0);
 	if (IS_ERR(folio) || !folio_test_uptodate(folio) || folio_test_locked(folio)) {
 		if (!IS_ERR(folio))
 			folio_put(folio);
-		folio = __filemap_get_folio(inode->i_mapping, pnum,
+		folio = ext4_mb_get_folio(inode->i_mapping, pnum,
 				FGP_LOCK | FGP_ACCESSED | FGP_CREAT, gfp);
 		if (!IS_ERR(folio)) {
 			if (WARN_RATELIMIT(folio->mapping != inode->i_mapping,
