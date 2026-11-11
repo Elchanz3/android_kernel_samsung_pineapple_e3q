@@ -520,10 +520,6 @@ struct kgsl_process_private {
 	 */
 	struct work_struct fg_work;
 	/**
-	 * @bg_work: Work struct to schedule background work
-	 */
-	struct work_struct bg_work;
-	/**
 	 * @reclaim_lock: Mutex lock to protect KGSL_PROC_PINNED_STATE
 	 */
 	struct mutex reclaim_lock;

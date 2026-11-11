@@ -1144,14 +1144,6 @@ static int kgsl_iommu_fault_handler(struct kgsl_mmu *mmu,
 	kgsl_iommu_print_fault(mmu, ctx, addr, ptbase, contextidr, flags, private,
 		context);
 	kgsl_iommu_add_fault_info(context, addr, flags);
-	
-#if IS_ENABLED(CONFIG_SEC_ABC)
-#if IS_ENABLED(CONFIG_SEC_FACTORY)
-	sec_abc_send_event("MODULE=gpu_qc@INFO=gpu_page_fault");
-#else
-	sec_abc_send_event("MODULE=gpu_qc@WARN=gpu_page_fault");
-#endif
-#endif  
 
 	if (stall) {
 		struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
@@ -1421,10 +1413,8 @@ static struct kgsl_pagetable *kgsl_iommu_default_pagetable(struct kgsl_mmu *mmu)
 	int ret;
 
 	iommu_pt = kzalloc(sizeof(*iommu_pt), GFP_KERNEL);
-	if (!iommu_pt) {
-		pr_err("kgsl: Unable to allocate global pt");
+	if (!iommu_pt)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	kgsl_mmu_pagetable_init(mmu, &iommu_pt->base, KGSL_MMU_GLOBAL_PT);
 
@@ -1461,7 +1451,6 @@ static struct kgsl_pagetable *kgsl_iommu_default_pagetable(struct kgsl_mmu *mmu)
 	 */
 	ret = kgsl_iopgtbl_alloc(&iommu->user_context, iommu_pt);
 	if (ret) {
-		pr_err("kgsl: Unable to allocate user context");
 		kfree(iommu_pt);
 		return ERR_PTR(ret);
 	}
@@ -2359,10 +2348,8 @@ static int kgsl_iommu_setup_context(struct kgsl_mmu *mmu,
 	ret = of_dma_configure(&pdev->dev, node, true);
 	of_node_put(node);
 
-	if (ret) {
-		dev_err(&device->pdev->dev, "Failed to configure node %s: %d", name, ret);
+	if (ret)
 		return ret;
-	}
 
 	context->cb_num = -1;
 	context->name = name;
@@ -2376,7 +2363,6 @@ static int kgsl_iommu_setup_context(struct kgsl_mmu *mmu,
 	/* Create a new context */
 	context->domain = iommu_domain_alloc(&platform_bus_type);
 	if (!context->domain) {
-		dev_err(&device->pdev->dev, "Domain alloc failed for %s", name);
 		/*FIXME: Put back the pdev here? */
 		return -ENODEV;
 	}
@@ -2385,7 +2371,6 @@ static int kgsl_iommu_setup_context(struct kgsl_mmu *mmu,
 
 	ret = iommu_attach_device(context->domain, &context->pdev->dev);
 	if (ret) {
-		dev_err(&device->pdev->dev, "Attach failed for %s", name);
 		/* FIXME: put back the device here? */
 		iommu_domain_free(context->domain);
 		context->domain = NULL;
@@ -2422,10 +2407,8 @@ static int iommu_probe_user_context(struct kgsl_device *device,
 
 	ret = kgsl_iommu_setup_context(mmu, node, &iommu->user_context,
 		"gfx3d_user", kgsl_iommu_default_fault_handler);
-	if (ret) {
-		dev_err(&device->pdev->dev, "Unable to setup gfx3d_user: %d", ret);
+	if (ret)
 		return ret;
-	}
 
 	/*
 	 * It is problamatic if smmu driver does system suspend before consumer
@@ -2444,10 +2427,8 @@ static int iommu_probe_user_context(struct kgsl_device *device,
 	ret = kgsl_iommu_setup_context(mmu, node, &iommu->lpac_context,
 	       "gfx3d_lpac", kgsl_iommu_lpac_fault_handler);
 	/* LPAC is optional, ignore setup failures in absence of LPAC feature */
-	if ((ret < 0) && ADRENO_FEATURE(adreno_dev, ADRENO_LPAC)) {
-		dev_err(&device->pdev->dev, "Unable to setup gfx3d_lpac: %d", ret);
+	if ((ret < 0) && ADRENO_FEATURE(adreno_dev, ADRENO_LPAC))
 		goto err;
-	}
 
 	/*
 	 * FIXME: If adreno_smmu->cookie wasn't initialized then we can't do
@@ -2620,7 +2601,6 @@ int kgsl_iommu_bind(struct kgsl_device *device, struct platform_device *pdev)
 	if (!addr_entry_cache) {
 		addr_entry_cache = KMEM_CACHE(kgsl_iommu_addr_entry, 0);
 		if (!addr_entry_cache) {
-			dev_err(&device->pdev->dev, "Unable to create addr cache");
 			ret = -ENOMEM;
 			goto err;
 		}
@@ -2647,7 +2627,6 @@ int kgsl_iommu_bind(struct kgsl_device *device, struct platform_device *pdev)
 	iommu->clks = devm_kcalloc(&pdev->dev, ARRAY_SIZE(kgsl_iommu_clocks),
 				sizeof(*iommu->clks), GFP_KERNEL);
 	if (!iommu->clks) {
-		dev_err(&device->pdev->dev, "Unable to alloc clks array");
 		ret = -ENOMEM;
 		goto err;
 	}

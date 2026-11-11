@@ -1160,7 +1160,6 @@ static int kgsl_memdesc_file_setup(struct kgsl_memdesc *memdesc)
 	INIT_LIST_HEAD(&memdesc->shmem_page_list);
 	SHMEM_I(memdesc->shmem_filp->f_mapping->host)->android_vendor_data1 = (u64)memdesc;
 	mapping_set_unevictable(memdesc->shmem_filp->f_mapping);
-	memdesc->shmem_filp->f_mapping->private_data = (void *)GPU_PAGE_MAGIC;
 
 	return 0;
 }

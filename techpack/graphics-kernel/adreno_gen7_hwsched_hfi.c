@@ -384,9 +384,6 @@ static void log_gpu_fault_legacy(struct adreno_device *adreno_dev)
 	switch (cmd->error) {
 	case GMU_GPU_HW_HANG:
 		dev_crit_ratelimited(dev, "MISC: GPU hang detected\n");
-#if IS_ENABLED(CONFIG_SEC_ABC)
-		sec_abc_send_event("MODULE=gpu_qc@WARN=gpu_fault");
-#endif 
 		break;
 	case GMU_GPU_SW_HANG:
 		dev_crit_ratelimited(dev, "gpu timeout ctx %d ts %u\n",
@@ -592,9 +589,6 @@ static bool log_gpu_fault(struct adreno_device *adreno_dev)
 	switch (cmd->error) {
 	case GMU_GPU_HW_HANG:
 		dev_crit_ratelimited(dev, "MISC: GPU hang detected\n");
-#if IS_ENABLED(CONFIG_SEC_ABC)
-		sec_abc_send_event("MODULE=gpu_qc@WARN=gpu_fault");
-#endif 		
 		break;
 	case GMU_GPU_SW_HANG:
 		dev_crit_ratelimited(dev, "gpu timeout ctx %d ts %d\n",
@@ -4315,4 +4309,3 @@ done:
 
 	return ret;
 }
-
