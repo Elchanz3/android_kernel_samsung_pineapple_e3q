@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
@@ -2065,7 +2065,7 @@ static int a6xx_gmu_dcvs_set(struct adreno_device *adreno_dev,
 
 	if (ret) {
 		dev_err_ratelimited(&gmu->pdev->dev,
-			"Failed to set GPU perf idx %d, bw idx %d\n",
+			"Failed to set GPU perf idx %u, bw idx %u\n",
 			req.freq, req.bw);
 
 		/*
@@ -2130,7 +2130,7 @@ void a6xx_gmu_send_nmi(struct kgsl_device *device, bool force)
 	 * Do not send NMI if the SMMU is stalled because GMU will not be able
 	 * to save cm3 state to DDR.
 	 */
-	if (a6xx_gmu_gx_is_on(adreno_dev) && a6xx_is_smmu_stalled(device)) {
+	if (a6xx_gmu_gx_is_on(adreno_dev) && adreno_smmu_is_stalled(adreno_dev)) {
 		dev_err(&gmu->pdev->dev,
 			"Skipping NMI because SMMU is stalled\n");
 		return;
@@ -2602,6 +2602,21 @@ static int a6xx_gmu_acd_set(struct kgsl_device *device, bool val)
 	return adreno_power_cycle(adreno_dev, set_acd, &val);
 }
 
+static void a6xx_send_tlb_hint(struct kgsl_device *device, bool val)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct a6xx_gmu_device *gmu = to_a6xx_gmu(adreno_dev);
+
+	if (!gmu->domain)
+		return;
+
+#if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
+	qcom_skip_tlb_management(&gmu->pdev->dev, val);
+#endif
+	if (!val)
+		iommu_flush_iotlb_all(gmu->domain);
+}
+
 static const struct gmu_dev_ops a6xx_gmudev = {
 	.oob_set = a6xx_gmu_oob_set,
 	.oob_clear = a6xx_gmu_oob_clear,
@@ -2613,6 +2628,7 @@ static const struct gmu_dev_ops a6xx_gmudev = {
 	.acd_set = a6xx_gmu_acd_set,
 	.force_first_boot = a6xx_gmu_force_first_boot,
 	.send_nmi = a6xx_gmu_send_nmi,
+	.send_tlb_hint = a6xx_send_tlb_hint,
 };
 
 static int a6xx_gmu_bus_set(struct adreno_device *adreno_dev, int buslevel,
@@ -2637,7 +2653,7 @@ static int a6xx_gmu_bus_set(struct adreno_device *adreno_dev, int buslevel,
 		pwr->cur_ab = ab;
 	}
 
-	trace_kgsl_buslevel(device, pwr->active_pwrlevel, buslevel, ab);
+	trace_kgsl_buslevel(device, pwr->active_pwrlevel, pwr->cur_buslevel, pwr->cur_ab);
 	return ret;
 }
 
@@ -3697,6 +3713,8 @@ int a6xx_gmu_device_probe(struct platform_device *pdev,
 
 	adreno_dev = &a6xx_dev->adreno_dev;
 
+	adreno_dev->irq_mask = A6XX_INT_MASK;
+
 	ret = a6xx_probe_common(pdev, adreno_dev, chipid, gpucore);
 	if (ret)
 		return ret;
@@ -3710,8 +3728,6 @@ int a6xx_gmu_device_probe(struct platform_device *pdev,
 	INIT_WORK(&device->idle_check_ws, gmu_idle_check);
 
 	timer_setup(&device->idle_timer, gmu_idle_timer, 0);
-
-	adreno_dev->irq_mask = A6XX_INT_MASK;
 
 	return 0;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/cacheflush.h>
@@ -721,9 +721,9 @@ static void _dma_cache_op(struct device *dev, struct page *page,
 		dma_sync_sg_for_device(dev, &sgl, 1, DMA_TO_DEVICE);
 #if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
 		dma_sync_sg_for_cpu(dev, &sgl, 1, DMA_FROM_DEVICE);
-#else		
+#else
 		dma_sync_sg_for_device(dev, &sgl, 1, DMA_FROM_DEVICE);
-#endif		
+#endif
 		break;
 	case KGSL_CACHE_OP_CLEAN:
 		dma_sync_sg_for_device(dev, &sgl, 1, DMA_TO_DEVICE);
@@ -732,7 +732,7 @@ static void _dma_cache_op(struct device *dev, struct page *page,
 		dma_sync_sg_for_device(dev, &sgl, 1, DMA_FROM_DEVICE);
 #if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
 		dma_sync_sg_for_cpu(dev, &sgl, 1, DMA_FROM_DEVICE);
-#endif		
+#endif
 		break;
 	}
 }
@@ -963,7 +963,7 @@ void kgsl_get_memory_usage(char *name, size_t name_size, uint64_t memflags)
 	for (i = 0; memtype_attrs[i]; i++) {
 		memtype = container_of(memtype_attrs[i], struct kgsl_memtype, attr);
 		if (memtype->type == type) {
-			strlcpy(name, memtype->attr.name, name_size);
+			strscpy(name, memtype->attr.name, name_size);
 			return;
 		}
 	}
@@ -1504,7 +1504,6 @@ static void kgsl_free_secure_pages(struct kgsl_memdesc *memdesc)
 		return;
 
 	ret = kgsl_unlock_sgt(memdesc->sgt);
-
 	if (ret) {
 		/*
 		 * Unlock of the secure buffer failed. This buffer will

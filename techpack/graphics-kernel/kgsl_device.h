@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef __KGSL_DEVICE_H
 #define __KGSL_DEVICE_H
@@ -302,6 +302,8 @@ struct kgsl_device {
 	rwlock_t event_groups_lock;
 	/** @speed_bin: Speed bin for the GPU device if applicable */
 	u32 speed_bin;
+	/** @soc_code: Identifier containing product and feature code */
+	u32 soc_code;
 	/** @gmu_fault: Set when a gmu or rgmu fault is encountered */
 	bool gmu_fault;
 	/** @regmap: GPU register map */
@@ -336,6 +338,12 @@ struct kgsl_device {
 	unsigned long idle_jiffies;
 	/** @dump_all_ibs: Whether to dump all ibs in snapshot */
 	bool dump_all_ibs;
+	/** @freq_limiter_irq_clear: reset controller to clear freq limiter irq */
+	struct reset_control *freq_limiter_irq_clear;
+	/** @freq_limiter_intr_num: The interrupt number for freq limiter */
+	int freq_limiter_intr_num;
+	/** @cx_host_irq_num: Interrupt number for cx_host_irq */
+	int cx_host_irq_num;
 };
 
 #define KGSL_MMU_DEVICE(_mmu) \
@@ -549,8 +557,10 @@ struct kgsl_device_private {
  * struct kgsl_snapshot - details for a specific snapshot instance
  * @ib1base: Active IB1 base address at the time of fault
  * @ib2base: Active IB2 base address at the time of fault
+ * @ib3base: Active IB3 base address at the time of fault
  * @ib1size: Number of DWORDS pending in IB1 at the time of fault
  * @ib2size: Number of DWORDS pending in IB2 at the time of fault
+ * @ib3size: Number of DWORDS pending in IB3 at the time of fault
  * @ib1dumped: Active IB1 dump status to sansphot binary
  * @ib2dumped: Active IB2 dump status to sansphot binary
  * @start: Pointer to the start of the static snapshot region
@@ -570,10 +580,12 @@ struct kgsl_device_private {
  * @recovered: True if GPU was recovered after previous snapshot
  */
 struct kgsl_snapshot {
-	uint64_t ib1base;
-	uint64_t ib2base;
-	unsigned int ib1size;
-	unsigned int ib2size;
+	u64 ib1base;
+	u64 ib2base;
+	u64 ib3base;
+	u32 ib1size;
+	u32 ib2size;
+	u32 ib3size;
 	bool ib1dumped;
 	bool ib2dumped;
 	u64 ib1base_lpac;
@@ -965,7 +977,7 @@ struct kgsl_process_private *kgsl_process_private_find(pid_t pid);
  * the number of strings in the binary
  */
 #define SNAPSHOT_ERR_NOMEM(_d, _s) \
-	dev_err((_d)->dev, \
+	dev_err_ratelimited((_d)->dev, \
 	"snapshot: not enough snapshot memory for section %s\n", (_s))
 
 /**
@@ -984,6 +996,24 @@ size_t kgsl_snapshot_dump_registers(struct kgsl_device *device, u8 *buf,
 void kgsl_snapshot_indexed_registers(struct kgsl_device *device,
 	struct kgsl_snapshot *snapshot, unsigned int index,
 	unsigned int data, unsigned int start, unsigned int count);
+
+/**
+ * kgsl_snapshot_indexed_registers_v2 - Add a set of indexed registers to the
+ * snapshot
+ * @device: Pointer to the KGSL device being snapshotted
+ * @snapshot: Snapshot instance
+ * @index: Offset for the index register
+ * @data: Offset for the data register
+ * @start: Index to start reading
+ * @count: Number of entries to read
+ * @pipe_id: Pipe ID to be dumped
+ * @slice_id: Slice ID to be dumped
+ *
+ * Dump the values from an indexed register group into the snapshot
+ */
+void kgsl_snapshot_indexed_registers_v2(struct kgsl_device *device,
+	struct kgsl_snapshot *snapshot, u32 index, u32 data,
+	u32 start, u32 count, u32 pipe_id, u32 slice_id);
 
 int kgsl_snapshot_get_object(struct kgsl_snapshot *snapshot,
 	struct kgsl_process_private *process, uint64_t gpuaddr,

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/sysfs.h>
+#include <linux/qcom_scm.h>
 
 #include "adreno.h"
 #include "adreno_sysfs.h"
+#include "adreno_trace.h"
 #include "kgsl_sysfs.h"
 
 static ssize_t _gpu_model_show(struct kgsl_device *device, char *buf)
@@ -99,12 +101,122 @@ static u32 _rt_bus_hint_show(struct adreno_device *adreno_dev)
 	return device->pwrctrl.rt_bus_hint;
 }
 
+/* Tuning values can be set to 0/1/2/3 */
+#define DCVS_TUNING_MAX 3
+#define DCVS_TUNING_EN_BIT BIT(5)
+
+/*
+ * GPU DCVS Tuning allows for small adjustments to the DCVS
+ * algorithm. The default value for each tunable is 0. Setting
+ * a higher tunable value will increase the aggressivenes
+ * of the DCVS algorithm. Currently 0-3 are supported values
+ * for each tunable, 3 being most aggressive.
+ */
+
+/* Mingap is the count of consecutive low requests before moving to lower DCVS levels. */
+#define DCVS_TUNING_MINGAP 0
+/* Penalty is the busy threshold for moving between levels. */
+#define DCVS_TUNING_PENALTY 1
+/* Numbusy is the backoff from mingap to transition power level more quickly. */
+#define DCVS_TUNING_NUMBUSY 2
+
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+static int __dcvs_tuning_scm_entry(struct adreno_device *adreno_dev,
+		u32 param, u32 val)
+{
+	int ret;
+	u32 mingap = 0, penalty = 0, numbusy = 0;
+	u32 *save;
+
+	switch (param) {
+	case DCVS_TUNING_MINGAP:
+		mingap = DCVS_TUNING_EN_BIT | FIELD_PREP(GENMASK(4, 0), val);
+		save = &adreno_dev->dcvs_tuning_mingap_lvl;
+		break;
+	case DCVS_TUNING_PENALTY:
+		penalty = DCVS_TUNING_EN_BIT | FIELD_PREP(GENMASK(4, 0), val);
+		save = &adreno_dev->dcvs_tuning_penalty_lvl;
+		break;
+	case DCVS_TUNING_NUMBUSY:
+		numbusy = DCVS_TUNING_EN_BIT | FIELD_PREP(GENMASK(4, 0), val);
+		save = &adreno_dev->dcvs_tuning_numbusy_lvl;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (!mutex_trylock(&adreno_dev->dcvs_tuning_mutex))
+		return -EDEADLK;
+
+	ret = qcom_scm_kgsl_dcvs_tuning(mingap, penalty, numbusy);
+	if (ret == 0) {
+		*save = val;
+		trace_adreno_dcvs_tuning(param,
+				adreno_dev->dcvs_tuning_mingap_lvl,
+				adreno_dev->dcvs_tuning_penalty_lvl,
+				adreno_dev->dcvs_tuning_numbusy_lvl);
+	}
+	mutex_unlock(&adreno_dev->dcvs_tuning_mutex);
+
+	return ret;
+}
+#else
+static int __dcvs_tuning_scm_entry(struct adreno_device *adreno_dev, u32 param, u32 val)
+{
+	return -EOPNOTSUPP;
+}
+#endif
+
+static int _dcvs_tuning_mingap_store(struct adreno_device *adreno_dev,
+		unsigned int val)
+{
+	if (val > DCVS_TUNING_MAX)
+		return -EINVAL;
+
+	return __dcvs_tuning_scm_entry(adreno_dev, DCVS_TUNING_MINGAP, val);
+}
+
+static u32 _dcvs_tuning_mingap_show(struct adreno_device *adreno_dev)
+{
+	return adreno_dev->dcvs_tuning_mingap_lvl;
+}
+
+static int _dcvs_tuning_penalty_store(struct adreno_device *adreno_dev,
+		unsigned int val)
+{
+	if (val > DCVS_TUNING_MAX)
+		return -EINVAL;
+
+	return __dcvs_tuning_scm_entry(adreno_dev, DCVS_TUNING_PENALTY, val);
+}
+
+static u32 _dcvs_tuning_penalty_show(struct adreno_device *adreno_dev)
+{
+	return adreno_dev->dcvs_tuning_penalty_lvl;
+}
+
+static int _dcvs_tuning_numbusy_store(struct adreno_device *adreno_dev,
+		unsigned int val)
+{
+	if (val > DCVS_TUNING_MAX)
+		return -EINVAL;
+
+	return __dcvs_tuning_scm_entry(adreno_dev, DCVS_TUNING_NUMBUSY, val);
+}
+
+static u32 _dcvs_tuning_numbusy_show(struct adreno_device *adreno_dev)
+{
+	return adreno_dev->dcvs_tuning_numbusy_lvl;
+}
+
 static int _gpu_llc_slice_enable_store(struct adreno_device *adreno_dev,
 		bool val)
 {
-	if (!IS_ERR_OR_NULL(adreno_dev->gpu_llc_slice))
-		adreno_dev->gpu_llc_slice_enable = val;
-	return 0;
+	if (IS_ERR_OR_NULL(adreno_dev->gpu_llc_slice) ||
+		(adreno_dev->gpu_llc_slice_enable == val))
+		return 0;
+
+	return adreno_power_cycle_bool(adreno_dev, &adreno_dev->gpu_llc_slice_enable, val);
 }
 
 static bool _gpu_llc_slice_enable_show(struct adreno_device *adreno_dev)
@@ -115,9 +227,11 @@ static bool _gpu_llc_slice_enable_show(struct adreno_device *adreno_dev)
 static int _gpuhtw_llc_slice_enable_store(struct adreno_device *adreno_dev,
 		bool val)
 {
-	if (!IS_ERR_OR_NULL(adreno_dev->gpuhtw_llc_slice))
-		adreno_dev->gpuhtw_llc_slice_enable = val;
-	return 0;
+	if (IS_ERR_OR_NULL(adreno_dev->gpuhtw_llc_slice) ||
+		(adreno_dev->gpuhtw_llc_slice_enable == val))
+		return 0;
+
+	return adreno_power_cycle_bool(adreno_dev, &adreno_dev->gpuhtw_llc_slice_enable, val);
 }
 
 static bool _gpuhtw_llc_slice_enable_show(struct adreno_device *adreno_dev)
@@ -400,6 +514,10 @@ static ADRENO_SYSFS_BOOL(gmu_ab);
 
 static DEVICE_ATTR_RO(gpu_model);
 
+static ADRENO_SYSFS_U32(dcvs_tuning_mingap);
+static ADRENO_SYSFS_U32(dcvs_tuning_penalty);
+static ADRENO_SYSFS_U32(dcvs_tuning_numbusy);
+
 static const struct attribute *_attr_list[] = {
 	&adreno_attr_ft_policy.attr.attr,
 	&adreno_attr_ft_pagefault_policy.attr.attr,
@@ -425,6 +543,9 @@ static const struct attribute *_attr_list[] = {
 	&adreno_attr_touch_wake.attr.attr,
 	&adreno_attr_gmu_ab.attr.attr,
 	&adreno_attr_clx.attr.attr,
+	&adreno_attr_dcvs_tuning_mingap.attr.attr,
+	&adreno_attr_dcvs_tuning_penalty.attr.attr,
+	&adreno_attr_dcvs_tuning_numbusy.attr.attr,
 	NULL,
 };
 

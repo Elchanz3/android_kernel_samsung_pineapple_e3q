@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2010-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/errno.h>
 #include <linux/devfreq.h>
@@ -52,6 +52,8 @@ static DEFINE_SPINLOCK(suspend_lock);
 #define TZ_V2_INIT_CA_ID_64        0xC
 #define TZ_V2_UPDATE_WITH_CA_ID_64 0xD
 
+#define TZ_DCVS_TUNING_ID          0xE
+
 #define TAG "msm_adreno_tz: "
 
 static u64 suspend_time;
@@ -84,7 +86,7 @@ static ssize_t gpu_load_show(struct device *dev,
 	/*
 	 * Average out the samples taken since last read
 	 * This will keep the average value in sync with
-	 * with the client sampling duration.
+	 * the client sampling duration.
 	 */
 	spin_lock(&sample_lock);
 	if (acc_total)

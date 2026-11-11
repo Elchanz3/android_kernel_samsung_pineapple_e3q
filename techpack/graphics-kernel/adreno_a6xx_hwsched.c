@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/clk.h>
@@ -200,7 +200,6 @@ static void adreno_hwsched_snapshot_rb_payload(struct adreno_device *adreno_dev,
 err:
 	snprintf(str, sizeof(str), "RB addr:0x%llx", gpuaddr);
 	SNAPSHOT_ERR_NOMEM(device, str);
-	return;
 }
 
 static bool parse_payload_rb_legacy(struct adreno_device *adreno_dev,
@@ -1042,7 +1041,7 @@ static int a6xx_hwsched_dcvs_set(struct adreno_device *adreno_dev,
 
 	if (ret) {
 		dev_err_ratelimited(&gmu->pdev->dev,
-			"Failed to set GPU perf idx %d, bw idx %d\n",
+			"Failed to set GPU perf idx %u, bw idx %u\n",
 			req.freq, req.bw);
 
 		/*
@@ -1050,7 +1049,7 @@ static int a6xx_hwsched_dcvs_set(struct adreno_device *adreno_dev,
 		 * dispatcher based reset and recovery.
 		 */
 		if (test_bit(GMU_PRIV_GPU_STARTED, &gmu->flags))
-			adreno_hwsched_fault(adreno_dev, ADRENO_HARD_FAULT);
+			adreno_hwsched_fault(adreno_dev, ADRENO_GMU_FAULT);
 	}
 
 	if (req.freq != INVALID_DCVS_IDX)
@@ -1125,7 +1124,7 @@ static int a6xx_hwsched_bus_set(struct adreno_device *adreno_dev, int buslevel,
 		pwr->cur_ab = ab;
 	}
 
-	trace_kgsl_buslevel(device, pwr->active_pwrlevel, buslevel, ab);
+	trace_kgsl_buslevel(device, pwr->active_pwrlevel, pwr->cur_buslevel, pwr->cur_ab);
 	return ret;
 }
 
@@ -1190,7 +1189,7 @@ void a6xx_hwsched_handle_watchdog(struct adreno_device *adreno_dev)
 	dev_err_ratelimited(&gmu->pdev->dev,
 			"GMU watchdog expired interrupt received\n");
 
-	adreno_hwsched_fault(adreno_dev, ADRENO_HARD_FAULT);
+	adreno_hwsched_fault(adreno_dev, ADRENO_GMU_FAULT);
 }
 
 static void a6xx_hwsched_pm_resume(struct adreno_device *adreno_dev)
@@ -1297,6 +1296,8 @@ int a6xx_hwsched_probe(struct platform_device *pdev,
 
 	adreno_dev->hwsched_enabled = true;
 
+	adreno_dev->irq_mask = A6XX_HWSCHED_INT_MASK;
+
 	ret = a6xx_probe_common(pdev, adreno_dev, chipid, gpucore);
 	if (ret)
 		return ret;
@@ -1306,8 +1307,6 @@ int a6xx_hwsched_probe(struct platform_device *pdev,
 	INIT_WORK(&device->idle_check_ws, hwsched_idle_check);
 
 	timer_setup(&device->idle_timer, hwsched_idle_timer, 0);
-
-	adreno_dev->irq_mask = A6XX_HWSCHED_INT_MASK;
 
 	return adreno_hwsched_init(adreno_dev, &a6xx_hwsched_ops);
 }

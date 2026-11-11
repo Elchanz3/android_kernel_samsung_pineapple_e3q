@@ -670,7 +670,7 @@ static int drawobj_add_sync_fence(struct kgsl_device *device,
 
 		return ret;
 	}
-	
+
 	kgsl_get_fence_info(event);
 
 	for (i = 0; priv && i < priv->num_fences; i++) {

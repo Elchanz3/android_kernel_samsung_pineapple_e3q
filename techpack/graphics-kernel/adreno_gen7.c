@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -18,6 +18,7 @@
 #include "adreno_gen7_hwsched.h"
 #include "adreno_pm4types.h"
 #include "adreno_trace.h"
+#include "kgsl_pwrscale.h"
 #include "kgsl_trace.h"
 #include "kgsl_util.h"
 
@@ -184,8 +185,6 @@ static const u32 gen7_9_x_ifpc_pwrup_reglist[] = {
 	GEN7_TPL1_BICUBIC_WEIGHTS_TABLE_4,
 };
 
-#define F_PWR_ACD_CALIBRATE 78
-
 static int acd_calibrate_set(void *data, u64 val)
 {
 	struct kgsl_device *device = data;
@@ -330,6 +329,8 @@ int gen7_init(struct adreno_device *adreno_dev)
 
 	adreno_dev->highest_bank_bit = gen7_core->highest_bank_bit;
 	adreno_dev->gmu_hub_clk_freq = freq ? freq : 150000000;
+	adreno_dev->ahb_timeout_val = adreno_get_ahb_timeout_val(adreno_dev,
+			gen7_core->noc_timeout_us);
 	adreno_dev->bcl_data = gen7_core->bcl_data;
 
 	adreno_dev->cooperative_reset = ADRENO_FEATURE(adreno_dev,
@@ -666,6 +667,22 @@ static u64 gen7_get_uche_trap_base(void)
 /* Add crashdumper permissions for the BR APRIV */
 #define GEN7_BR_APRIV_DEFAULT (GEN7_APRIV_DEFAULT | BIT(6) | BIT(5))
 
+void gen7_enable_ahb_timeout_detection(struct adreno_device *adreno_dev)
+{
+	u32 val;
+
+	if (!adreno_dev->ahb_timeout_val)
+		return;
+
+	val = (ADRENO_AHB_CNTL_DEFAULT | FIELD_PREP(GENMASK(4, 0),
+			adreno_dev->ahb_timeout_val));
+	adreno_cx_misc_regwrite(adreno_dev, GEN7_GPU_CX_MISC_CX_AHB_AON_CNTL, val);
+	adreno_cx_misc_regwrite(adreno_dev, GEN7_GPU_CX_MISC_CX_AHB_GMU_CNTL, val);
+	adreno_cx_misc_regwrite(adreno_dev, GEN7_GPU_CX_MISC_CX_AHB_CP_CNTL, val);
+	adreno_cx_misc_regwrite(adreno_dev, GEN7_GPU_CX_MISC_CX_AHB_VBIF_SMMU_CNTL, val);
+	adreno_cx_misc_regwrite(adreno_dev, GEN7_GPU_CX_MISC_CX_AHB_HOST_CNTL, val);
+}
+
 int gen7_start(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
@@ -846,7 +863,7 @@ int gen7_start(struct adreno_device *adreno_dev)
 	 */
 	if (adreno_is_gen7_0_0(adreno_dev) || adreno_is_gen7_0_1(adreno_dev) ||
 		adreno_is_gen7_4_0(adreno_dev) || adreno_is_gen7_2_0(adreno_dev)
-		|| adreno_is_gen7_2_1(adreno_dev)) {
+		|| adreno_is_gen7_2_1(adreno_dev) || adreno_is_gen7_11_0(adreno_dev)) {
 		kgsl_regwrite(device, GEN7_CP_CHICKEN_DBG, 0x1);
 		kgsl_regwrite(device, GEN7_CP_BV_CHICKEN_DBG, 0x1);
 		kgsl_regwrite(device, GEN7_CP_LPAC_CHICKEN_DBG, 0x1);
@@ -1566,28 +1583,6 @@ static int gen7_irq_poll_fence(struct adreno_device *adreno_dev)
 	return 0;
 }
 
-static irqreturn_t gen7_hwsched_irq_handler(struct adreno_device *adreno_dev)
-{
-	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-	irqreturn_t ret = IRQ_NONE;
-	u32 status;
-
-	if (gen7_irq_poll_fence(adreno_dev)) {
-		adreno_hwsched_fault(adreno_dev, ADRENO_GMU_FAULT);
-		return ret;
-	}
-
-	kgsl_regread(device, GEN7_RBBM_INT_0_STATUS, &status);
-
-	kgsl_regwrite(device, GEN7_RBBM_INT_CLEAR_CMD, status);
-
-	ret = adreno_irq_callbacks(adreno_dev, gen7_irq_funcs, status);
-
-	trace_kgsl_gen7_irq_status(adreno_dev, status);
-
-	return ret;
-}
-
 static irqreturn_t gen7_irq_handler(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
@@ -1641,10 +1636,11 @@ int gen7_probe_common(struct platform_device *pdev,
 	adreno_dev->hwcg_enabled = true;
 	adreno_dev->uche_client_pf = 1;
 
-	device->pwrscale.avoid_ddr_stall = true;
+	kgsl_pwrscale_fast_bus_hint(gen7_core->fast_bus_hint);
 
 	device->pwrctrl.rt_bus_hint = gen7_core->rt_bus_hint;
-	device->pwrctrl.cx_gdsc_offset = GEN7_GPU_CC_CX_GDSCR;
+	device->pwrctrl.cx_cfg_gdsc_offset = adreno_is_gen7_11_0(adreno_dev) ?
+					GEN7_11_0_GPU_CC_CX_CFG_GDSCR : GEN7_GPU_CC_CX_CFG_GDSCR;
 
 	ret = adreno_device_probe(pdev, adreno_dev);
 	if (ret)
@@ -1712,6 +1708,8 @@ static u32 _get_pipeid(u32 groupid)
 int gen7_perfcounter_remove(struct adreno_device *adreno_dev,
 	struct adreno_perfcount_register *reg, u32 groupid)
 {
+	const struct adreno_perfcounters *counters = ADRENO_PERFCOUNTERS(adreno_dev);
+	const struct adreno_perfcount_group *group;
 	void *ptr = adreno_dev->pwrup_reglist->hostptr;
 	struct cpu_gpu_lock *lock = ptr;
 	u32 *data = ptr + sizeof(*lock);
@@ -1720,15 +1718,28 @@ int gen7_perfcounter_remove(struct adreno_device *adreno_dev,
 	bool remove_counter = false;
 	u32 pipe = FIELD_PREP(GENMASK(13, 12), _get_pipeid(groupid));
 
-	if (lock->dynamic_list_len < 2)
+	if (!lock->dynamic_list_len)
 		return -EINVAL;
+
+	group = &(counters->groups[groupid]);
+
+	if (!(group->flags & ADRENO_PERFCOUNTER_GROUP_RESTORE)) {
+		if (lock->dynamic_list_len != 1)
+			return 0;
+
+		if (kgsl_hwlock(lock)) {
+			kgsl_hwunlock(lock);
+			return -EBUSY;
+		}
+		goto disable_perfcounter;
+	}
 
 	second_last_offset = offset + (lock->dynamic_list_len - 2) * 3;
 	last_offset = second_last_offset + 3;
 
 	/* Look for the perfcounter to remove in the list */
 	for (i = 0; i < lock->dynamic_list_len - 1; i++) {
-		if ((data[offset + 1] == reg->select) && (data[offset] == pipe) ) {
+		if ((data[offset + 1] == reg->select) && (data[offset] == pipe)) {
 			remove_counter = true;
 			break;
 		}
@@ -1761,11 +1772,12 @@ int gen7_perfcounter_remove(struct adreno_device *adreno_dev,
 
 	lock->dynamic_list_len--;
 
+disable_perfcounter:
 	/*
-	 * If dynamic list length is 1, the only entry in the list is the GEN7_RBBM_PERFCTR_CNTL.
-	 * Remove the same.
+	 * If dynamic list length is 1 and no_restore_count is 0, then we can remove the
+	 * only entry in the list, which is the GEN7_RBBM_PERFCTRL_CNTL.
 	 */
-	if (lock->dynamic_list_len == 1) {
+	if (lock->dynamic_list_len == 1 && !adreno_dev->no_restore_count) {
 		memset(&data[offset], 0, 3 * sizeof(u32));
 		lock->dynamic_list_len = 0;
 	}
@@ -1775,33 +1787,37 @@ int gen7_perfcounter_remove(struct adreno_device *adreno_dev,
 }
 
 int gen7_perfcounter_update(struct adreno_device *adreno_dev,
-	struct adreno_perfcount_register *reg, bool update_reg, u32 pipe)
+	struct adreno_perfcount_register *reg, bool update_reg, u32 pipe, unsigned long flags)
 {
 	void *ptr = adreno_dev->pwrup_reglist->hostptr;
 	struct cpu_gpu_lock *lock = ptr;
 	u32 *data = ptr + sizeof(*lock);
 	int i, offset = (lock->ifpc_list_len + lock->preemption_list_len) * 2;
 	bool select_reg_present = false;
+	u32 pending_triplets = 1;
 
-	for (i = 0; i < lock->dynamic_list_len; i++) {
-		if ((data[offset + 1] == reg->select) && (data[offset] == pipe)) {
-			select_reg_present = true;
-			break;
+	if (flags & ADRENO_PERFCOUNTER_GROUP_RESTORE) {
+		/* No of triplet to add if restoring: 1 main + 1 control otherwise: 1 control */
+		pending_triplets++;
+		for (i = 0; i < lock->dynamic_list_len; i++) {
+			if ((data[offset + 1] == reg->select) && (data[offset] == pipe)) {
+				select_reg_present = true;
+				break;
+			}
+
+			if (data[offset + 1] == GEN7_RBBM_PERFCTR_CNTL)
+				break;
+
+			offset += 3;
 		}
-
-		if (data[offset + 1] == GEN7_RBBM_PERFCTR_CNTL)
-			break;
-
-		offset += 3;
+	} else if (lock->dynamic_list_len) {
+		goto update;
 	}
-
-	/*
-	 * Ensure there is enough space in the reglist buffer for new triplets:
-	 * 1 main + 1 control.
-	 */
-	if (!select_reg_present && (offset + (2 * 3)) >=
-		(adreno_dev->pwrup_reglist->size / sizeof(u32)))
+	/* Ensure there is enough space in the reglist buffer for new triplets */
+	if ((!select_reg_present) && (offset + (pending_triplets * 3)) >=
+		(adreno_dev->pwrup_reglist->size / sizeof(u32))) {
 		return -ENOSPC;
+	}
 
 	if (kgsl_hwlock(lock)) {
 		kgsl_hwunlock(lock);
@@ -1815,36 +1831,36 @@ int gen7_perfcounter_update(struct adreno_device *adreno_dev,
 	 */
 	if (select_reg_present) {
 		data[offset + 2] = reg->countable;
+		kgsl_hwunlock(lock);
 		goto update;
 	}
 
+	/* Initialize the lock->dynamic_list_len to account for GEN7_RBBM_PERFCTR_CNTL */
+	if (!lock->dynamic_list_len)
+		lock->dynamic_list_len = 1;
+
 	/*
 	 * For all targets GEN7_RBBM_PERFCTR_CNTL needs to be the last entry,
-	 * so overwrite the existing GEN7_RBBM_PERFCNTL_CTRL and add it back to
+	 * so overwrite the existing GEN7_RBBM_PERFCTR_CNTL and add it back to
 	 * the end.
 	 */
-	data[offset++] = pipe;
-	data[offset++] = reg->select;
-	data[offset++] = reg->countable;
+	if (flags & ADRENO_PERFCOUNTER_GROUP_RESTORE) {
+		data[offset++] = pipe;
+		data[offset++] = reg->select;
+		data[offset++] = reg->countable;
+		lock->dynamic_list_len++;
+	}
 
 	data[offset++] = FIELD_PREP(GENMASK(13, 12), PIPE_NONE);
 	data[offset++] = GEN7_RBBM_PERFCTR_CNTL;
 	data[offset++] = 1;
 
-	lock->dynamic_list_len++;
-
-	/* If this is the first entry, enable perfcounters */
-	if (lock->dynamic_list_len == 1) {
-		lock->dynamic_list_len++;
-		kgsl_regwrite(KGSL_DEVICE(adreno_dev), GEN7_RBBM_PERFCTR_CNTL, 0x1);
-	}
+	kgsl_hwunlock(lock);
 
 update:
 	if (update_reg)
 		kgsl_regwrite(KGSL_DEVICE(adreno_dev), reg->select,
 			reg->countable);
-
-	kgsl_hwunlock(lock);
 	return 0;
 }
 
@@ -2110,12 +2126,56 @@ static void gen7_swfuse_irqctrl(struct adreno_device *adreno_dev, bool state)
 			state ? GEN7_SW_FUSE_INT_MASK : 0);
 }
 
+static void gen7_lpac_fault_header(struct adreno_device *adreno_dev,
+	struct kgsl_drawobj *drawobj_lpac)
+{
+	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	struct adreno_context *drawctxt_lpac;
+	u32 status = 0, lpac_rptr = 0, lpac_wptr = 0, lpac_ib1sz = 0, lpac_ib2sz = 0;
+	u64 lpac_ib1base = 0, lpac_ib2base = 0;
+	bool gx_on = adreno_gx_is_on(adreno_dev);
+
+	drawctxt_lpac = ADRENO_CONTEXT(drawobj_lpac->context);
+	drawobj_lpac->context->last_faulted_cmd_ts = drawobj_lpac->timestamp;
+	drawobj_lpac->context->total_fault_count++;
+
+	pr_context(device, drawobj_lpac->context,
+		"LPAC ctx %d ctx_type %s ts %d dispatch_queue=%d\n",
+		drawobj_lpac->context->id, kgsl_context_type(drawctxt_lpac->type),
+		drawobj_lpac->timestamp, drawobj_lpac->context->gmu_dispatch_queue);
+
+	pr_context(device, drawobj_lpac->context, "lpac cmdline: %s\n",
+			drawctxt_lpac->base.proc_priv->cmdline);
+	if (!gx_on)
+		goto done;
+
+	kgsl_regread(device, GEN7_RBBM_STATUS, &status);
+	kgsl_regread(device, GEN7_CP_LPAC_RB_RPTR, &lpac_rptr);
+	kgsl_regread(device, GEN7_CP_LPAC_RB_WPTR, &lpac_wptr);
+	kgsl_regread64(device, GEN7_CP_LPAC_IB1_BASE,
+		       GEN7_CP_LPAC_IB1_BASE_HI, &lpac_ib1base);
+	kgsl_regread(device, GEN7_CP_LPAC_IB1_REM_SIZE, &lpac_ib1sz);
+	kgsl_regread64(device, GEN7_CP_LPAC_IB2_BASE,
+		       GEN7_CP_LPAC_IB2_BASE_HI, &lpac_ib2base);
+	kgsl_regread(device, GEN7_CP_LPAC_IB2_REM_SIZE, &lpac_ib2sz);
+
+	pr_context(device, drawobj_lpac->context,
+		"LPAC: status %8.8X rb %4.4x/%4.4x ib1 %16.16llX/%4.4x ib2 %16.16llX/%4.4x\n",
+		status, lpac_rptr, lpac_wptr, lpac_ib1base,
+		lpac_ib1sz, lpac_ib2base, lpac_ib2sz);
+
+done:
+	trace_adreno_gpu_fault(drawobj_lpac->context->id, drawobj_lpac->timestamp, status,
+		lpac_rptr, lpac_wptr, lpac_ib1base, lpac_ib1sz, lpac_ib2base, lpac_ib2sz,
+		adreno_get_level(drawobj_lpac->context));
+}
+
 const struct gen7_gpudev adreno_gen7_9_0_hwsched_gpudev = {
 	.base = {
 		.reg_offsets = gen7_register_offsets,
 		.probe = gen7_hwsched_probe,
 		.snapshot = gen7_hwsched_snapshot,
-		.irq_handler = gen7_hwsched_irq_handler,
+		.irq_handler = gen7_irq_handler,
 		.iommu_fault_block = gen7_iommu_fault_block,
 		.preemption_context_init = gen7_preemption_context_init,
 		.context_detach = gen7_hwsched_context_detach,
@@ -2133,6 +2193,7 @@ const struct gen7_gpudev adreno_gen7_9_0_hwsched_gpudev = {
 		.context_destroy = gen7_hwsched_context_destroy,
 		.lpac_store = gen7_9_0_lpac_store,
 		.get_uche_trap_base = gen7_get_uche_trap_base,
+		.lpac_fault_header = gen7_lpac_fault_header,
 	},
 	.hfi_probe = gen7_hwsched_hfi_probe,
 	.hfi_remove = gen7_hwsched_hfi_remove,
@@ -2144,7 +2205,7 @@ const struct gen7_gpudev adreno_gen7_hwsched_gpudev = {
 		.reg_offsets = gen7_register_offsets,
 		.probe = gen7_hwsched_probe,
 		.snapshot = gen7_hwsched_snapshot,
-		.irq_handler = gen7_hwsched_irq_handler,
+		.irq_handler = gen7_irq_handler,
 		.iommu_fault_block = gen7_iommu_fault_block,
 		.preemption_context_init = gen7_preemption_context_init,
 		.context_detach = gen7_hwsched_context_detach,
@@ -2162,6 +2223,7 @@ const struct gen7_gpudev adreno_gen7_hwsched_gpudev = {
 		.context_destroy = gen7_hwsched_context_destroy,
 		.lpac_store = gen7_lpac_store,
 		.get_uche_trap_base = gen7_get_uche_trap_base,
+		.lpac_fault_header = gen7_lpac_fault_header,
 	},
 	.hfi_probe = gen7_hwsched_hfi_probe,
 	.hfi_remove = gen7_hwsched_hfi_remove,

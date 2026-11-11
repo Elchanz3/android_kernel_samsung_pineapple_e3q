@@ -361,6 +361,8 @@ static size_t _iopgtbl_map_sg(struct kgsl_iommu_pt *pt, u64 gpuaddr,
 
 static void kgsl_iommu_send_tlb_hint(struct kgsl_mmu *mmu, bool hint)
 {
+	struct kgsl_device *device = KGSL_MMU_DEVICE(mmu);
+
 #if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
 	struct kgsl_iommu *iommu = &mmu->iommu;
 
@@ -380,6 +382,9 @@ static void kgsl_iommu_send_tlb_hint(struct kgsl_mmu *mmu, bool hint)
 	 */
 	if (!hint)
 		kgsl_iommu_flush_tlb(mmu);
+
+	/* TLB hint for GMU domain */
+	gmu_core_send_tlb_hint(device, hint);
 }
 
 static int
@@ -1362,12 +1367,14 @@ int kgsl_set_smmu_aperture(struct kgsl_device *device,
 	return ret;
 }
 
-static int set_smmu_lpac_aperture(struct kgsl_device *device,
+int kgsl_set_smmu_lpac_aperture(struct kgsl_device *device,
 		struct kgsl_iommu_context *context)
 {
 	int ret;
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
-	if (!test_bit(KGSL_MMU_SMMU_APERTURE, &device->mmu.features))
+	if (!test_bit(KGSL_MMU_SMMU_APERTURE, &device->mmu.features) ||
+			!ADRENO_FEATURE(adreno_dev, ADRENO_LPAC))
 		return 0;
 
 	ret = qcom_scm_kgsl_set_smmu_lpac_aperture(context->cb_num);
@@ -2461,13 +2468,14 @@ static int iommu_probe_user_context(struct kgsl_device *device,
 	/* Enable TTBR0 on the default and LPAC contexts */
 	kgsl_iommu_set_ttbr0(&iommu->user_context, mmu, &pt->info.cfg);
 
-	kgsl_set_smmu_aperture(device, &iommu->user_context);
+	ret = kgsl_set_smmu_aperture(device, &iommu->user_context);
+	if (ret)
+		goto err;
 
 	kgsl_iommu_set_ttbr0(&iommu->lpac_context, mmu, &pt->info.cfg);
 
-	ret = set_smmu_lpac_aperture(device, &iommu->lpac_context);
-	/* LPAC is optional, ignore setup failures in absence of LPAC feature */
-	if ((ret < 0) && ADRENO_FEATURE(adreno_dev, ADRENO_LPAC)) {
+	ret = kgsl_set_smmu_lpac_aperture(device, &iommu->lpac_context);
+	if (ret < 0) {
 		kgsl_iommu_detach_context(&iommu->lpac_context);
 		goto err;
 	}
@@ -2668,10 +2676,8 @@ int kgsl_iommu_bind(struct kgsl_device *device, struct platform_device *pdev)
 
 	/* Probe the default pagetable */
 	ret = iommu_probe_user_context(device, node);
-	if (ret) {
-		of_platform_depopulate(&pdev->dev);
+	if (ret)
 		goto err;
-	}
 
 	/* Probe the secure pagetable (this is optional) */
 	iommu_probe_secure_context(device, node);

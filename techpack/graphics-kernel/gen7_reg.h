@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _GEN7_REG_H
@@ -108,6 +108,9 @@
 #define GEN7_CP_IB2_BASE                 0x92b
 #define GEN7_CP_IB2_BASE_HI              0x92c
 #define GEN7_CP_IB2_REM_SIZE             0x92d
+#define GEN7_CP_IB3_BASE                 0xa67
+#define GEN7_CP_IB3_BASE_HI              0xa68
+#define GEN7_CP_IB3_REM_SIZE             0xa69
 #define GEN7_CP_ALWAYS_ON_COUNTER_LO     0x980
 #define GEN7_CP_ALWAYS_ON_COUNTER_HI     0x981
 #define GEN7_CP_ALWAYS_ON_CONTEXT_LO     0x982
@@ -1160,8 +1163,6 @@
 #define GEN7_GMU_CX_GMU_POWER_COUNTER_SELECT_3	0x1f87f
 #define GEN7_GMU_CX_AO_COUNTER_LO		0x1f880
 #define GEN7_GMU_CX_AO_COUNTER_HI		0x1f881
-#define GEN7_GMU_CX_GMU_ALWAYS_ON_COUNTER_L	0x1f888
-#define GEN7_GMU_CX_GMU_ALWAYS_ON_COUNTER_H	0x1f889
 #define GEN7_GMU_PWR_COL_INTER_FRAME_CTRL	0x1f8c0
 #define GEN7_GMU_PWR_COL_INTER_FRAME_HYST	0x1f8c1
 #define GEN7_GMU_GFX_PWR_CLK_STATUS		0x1f8d0
@@ -1239,7 +1240,6 @@
 #define GEN7_GMU_AHB_FENCE_STATUS		0x23b13
 #define GEN7_GMU_AHB_FENCE_STATUS_CLR		0x23b14
 #define GEN7_GMU_RBBM_INT_UNMASKED_STATUS	0x23b15
-#define GEN7_GMU_AO_SPARE_CNTL			0x23b16
 #define GEN7_GPU_GMU_AO_GPU_LPAC_BUSY_STATUS	0x23b30
 
 /* GMU RSC control registers */
@@ -1253,8 +1253,9 @@
 #define GEN7_GMU_CM3_BUSY_CYCLES		0
 
 /* GPUCC registers */
+#define GEN7_11_0_GPU_CC_CX_CFG_GDSCR		0x26424
+#define GEN7_GPU_CC_CX_CFG_GDSCR		0x26443
 #define GEN7_GPU_CC_GX_DOMAIN_MISC3		0x26541
-#define GEN7_GPU_CC_CX_GDSCR			0x26442
 
 /* GPU RSC sequencer registers */
 #define GEN7_GPU_RSCC_RSC_STATUS0_DRV0			0x00004
@@ -1303,6 +1304,11 @@
 
 /* GPU CX_MISC registers */
 #define GEN7_CX_MISC_BASE			0x27800
+#define GEN7_GPU_CX_MISC_CX_AHB_AON_CNTL	0x10
+#define GEN7_GPU_CX_MISC_CX_AHB_GMU_CNTL	0x11
+#define GEN7_GPU_CX_MISC_CX_AHB_CP_CNTL		0x12
+#define GEN7_GPU_CX_MISC_CX_AHB_VBIF_SMMU_CNTL	0x13
+#define GEN7_GPU_CX_MISC_CX_AHB_HOST_CNTL	0x14
 #define GEN7_GPU_CX_MISC_TCM_RET_CNTL		0x39
 #define GEN7_GPU_CX_MISC_AO_COUNTER_LO		0x80
 #define GEN7_GPU_CX_MISC_AO_COUNTER_HI		0x81

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/clk-provider.h>
@@ -1298,6 +1298,8 @@ int a6xx_rgmu_device_probe(struct platform_device *pdev,
 
 	adreno_dev = &a6xx_dev->adreno_dev;
 
+	adreno_dev->irq_mask = A6XX_INT_MASK;
+
 	ret = a6xx_probe_common(pdev, adreno_dev, chipid, gpucore);
 	if (ret)
 		return ret;
@@ -1311,8 +1313,6 @@ int a6xx_rgmu_device_probe(struct platform_device *pdev,
 	INIT_WORK(&device->idle_check_ws, rgmu_idle_check);
 
 	timer_setup(&device->idle_timer, rgmu_idle_timer, 0);
-
-	adreno_dev->irq_mask = A6XX_INT_MASK;
 
 	return 0;
 }

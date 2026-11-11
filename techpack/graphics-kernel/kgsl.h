@@ -20,7 +20,7 @@
 
 #define KGSL_L3_DEVICE "kgsl-l3"
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+#if (KERNEL_VERSION(6, 1, 0) > LINUX_VERSION_CODE)
 #include <soc/qcom/boot_stats.h>
 #define KGSL_BOOT_MARKER(str)          place_marker("M - DRIVER " str)
 #else
@@ -376,7 +376,7 @@ typedef void (*kgsl_event_func)(struct kgsl_device *, struct kgsl_event_group *,
  * @device: Pointer to the KGSL device that owns the event
  * @context: Pointer to the context that owns the event
  * @timestamp: Timestamp for the event to expire
- * @func: Callback function for for the event when it expires
+ * @func: Callback function for the event when it expires
  * @priv: Private data passed to the callback function
  * @node: List node for the kgsl_event_group list
  * @created: Jiffies when the event was created
@@ -566,6 +566,9 @@ enum kgsl_mmutype kgsl_mmu_get_mmutype(struct kgsl_device *device);
 unsigned long kgsl_get_align(struct kgsl_memdesc *memdesc);
 
 int kgsl_request_irq(struct platform_device *pdev, const  char *name,
+		irq_handler_t handler, void *data);
+
+int kgsl_request_irq_optional(struct platform_device *pdev, const  char *name,
 		irq_handler_t handler, void *data);
 
 int __init kgsl_core_init(void);

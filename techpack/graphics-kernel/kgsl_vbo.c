@@ -281,7 +281,7 @@ static void kgsl_sharedmem_vbo_put_gpuaddr(struct kgsl_memdesc *memdesc)
 	if (!(memdesc->flags & KGSL_MEMFLAGS_VBO_NO_MAP_ZERO))
 		ret = kgsl_mmu_unmap_range(memdesc->pagetable, memdesc,
 			0, memdesc->size);
-	
+
 	unmap_fail = ret;
 
 	/*
@@ -369,15 +369,15 @@ static void kgsl_sharedmem_free_bind_op(struct kgsl_sharedmem_bind_op *op)
 	for (i = 0; i < op->nr_ops; i++) {
 		/* Decrement the vbo_count we added when creating the bind_op */
 		if (op->ops[i].entry)
-			atomic_dec(&op->ops[i].entry->vbo_count);			
+			atomic_dec(&op->ops[i].entry->vbo_count);
 
 		/* Release the reference on the child entry */
-		kgsl_mem_entry_put_deferred(op->ops[i].entry);	
+		kgsl_mem_entry_put_deferred(op->ops[i].entry);
 	}
 
 	/* Release the reference on the target entry */
 	kgsl_mem_entry_put_deferred(op->target);
-	
+
 	kvfree(op->ops);
 	kfree(op);
 }
