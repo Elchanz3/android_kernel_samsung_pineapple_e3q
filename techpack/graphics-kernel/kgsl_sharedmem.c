@@ -823,7 +823,6 @@ void kgsl_memdesc_init(struct kgsl_device *device,
 		memdesc->priv |= KGSL_MEMDESC_SECURE;
 
 	memdesc->flags = flags;
-	memdesc->kgsl_dev = device->dev;
 
 	/*
 	 * For io-coherent buffers don't set memdesc->dev, so that we skip DMA
@@ -1138,7 +1137,7 @@ static int kgsl_alloc_page(struct kgsl_memdesc *memdesc, int *page_size,
 	    (list_empty(&memdesc->shmem_page_list) && (pcount > 1)))
 		clear_highpage(page);
 
-	kgsl_page_sync(memdesc->kgsl_dev, page, PAGE_SIZE, DMA_TO_DEVICE);
+	kgsl_page_sync(memdesc->dev, page, PAGE_SIZE, DMA_TO_DEVICE);
 
 	*page_size = PAGE_SIZE;
 	*pages = page;
@@ -1202,7 +1201,7 @@ static int kgsl_alloc_page(struct kgsl_memdesc *memdesc, int *page_size,
 		return -ENOMEM;
 
 	return kgsl_pool_alloc_page(page_size, pages,
-			pages_len, align, memdesc->kgsl_dev);
+			pages_len, align, memdesc->dev);
 }
 
 static int kgsl_memdesc_file_setup(struct kgsl_memdesc *memdesc)
@@ -1618,13 +1617,12 @@ static int kgsl_system_alloc_pages(struct kgsl_memdesc *memdesc, struct page ***
 	struct page **local;
 	int i, npages = memdesc->size >> PAGE_SHIFT;
 
-	local = kvcalloc(npages, sizeof(*pages), GFP_KERNEL | __GFP_NORETRY);
+	local = kvcalloc(npages, sizeof(*pages), GFP_KERNEL);
 	if (!local)
 		return -ENOMEM;
 
 	for (i = 0; i < npages; i++) {
-		gfp_t gfp = __GFP_ZERO | __GFP_HIGHMEM |
-			GFP_KERNEL | __GFP_NORETRY;
+		gfp_t gfp = __GFP_ZERO | __GFP_HIGHMEM | GFP_KERNEL;
 
 		if (!fatal_signal_pending(current))
 			local[i] = alloc_pages(gfp, get_order(PAGE_SIZE));
@@ -1639,7 +1637,7 @@ static int kgsl_system_alloc_pages(struct kgsl_memdesc *memdesc, struct page ***
 		}
 
 		/* Make sure the cache is clean */
-		kgsl_page_sync(memdesc->kgsl_dev, local[i], PAGE_SIZE, DMA_TO_DEVICE);
+		kgsl_page_sync(memdesc->dev, local[i], PAGE_SIZE, DMA_TO_DEVICE);
 	}
 
 	*pages = local;

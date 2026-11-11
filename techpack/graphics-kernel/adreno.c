@@ -16,7 +16,6 @@
 #include <linux/msm_kgsl.h>
 #include <linux/regulator/consumer.h>
 #include <linux/nvmem-consumer.h>
-#include <linux/soc/qcom/llcc-qcom.h>
 #include <linux/trace.h>
 #include <linux/version.h>
 #include <soc/qcom/dcvs.h>
@@ -213,7 +212,7 @@ static void adreno_input_work(struct work_struct *work)
 
 	mutex_lock(&device->mutex);
 
-	adreno_dev->wake_on_touch = true;
+	device->pwrctrl.wake_on_touch = true;
 
 	ops->touch_wakeup(adreno_dev);
 
@@ -230,7 +229,7 @@ void adreno_touch_wake(struct kgsl_device *device)
 	 * here before
 	 */
 
-	if (adreno_dev->wake_on_touch)
+	if (device->pwrctrl.wake_on_touch)
 		return;
 
 	if (gmu_core_isenabled(device) || (device->state == KGSL_STATE_SLUMBER))
@@ -717,6 +716,7 @@ static void adreno_of_get_initial_pwrlevels(struct kgsl_pwrctrl *pwr,
 	if (level < 0 || level >= pwr->num_pwrlevels || level < pwr->default_pwrlevel)
 		level = pwr->num_pwrlevels - 1;
 
+	pwr->min_render_pwrlevel = level;
 	pwr->min_pwrlevel = level;
 }
 
@@ -1571,6 +1571,12 @@ static int adreno_pm_suspend(struct device *dev)
 	if (status)
 		return status;
 
+	/*
+	 * When the device enters in suspend state, the CX can be collapsed causing
+	 * the GPU CX timer to pause. Clear the ADRENO_DEVICE_CX_TIMER_INITIALIZED
+	 * flag to ensure that the CX timer is reseeded during resume.
+	 */
+	clear_bit(ADRENO_DEVICE_CX_TIMER_INITIALIZED, &adreno_dev->priv);
 	kgsl_reclaim_close();
 	kthread_flush_worker(device->events_worker);
 	flush_workqueue(kgsl_driver.lockless_workqueue);
@@ -1991,11 +1997,7 @@ static int adreno_stop(struct kgsl_device *device)
 
 	adreno_ringbuffer_stop(adreno_dev);
 
-	if (!IS_ERR_OR_NULL(adreno_dev->gpu_llc_slice))
-		llcc_slice_deactivate(adreno_dev->gpu_llc_slice);
-
-	if (!IS_ERR_OR_NULL(adreno_dev->gpuhtw_llc_slice))
-		llcc_slice_deactivate(adreno_dev->gpuhtw_llc_slice);
+	adreno_llcc_slice_deactivate(adreno_dev);
 
 	adreno_set_active_ctxs_null(adreno_dev);
 
@@ -3084,7 +3086,7 @@ int adreno_verify_cmdobj(struct kgsl_device_private *dev_priv,
 			 * been submitted since the last time we set it.
 			 * But only clear it when we have rendering commands.
 			 */
-			ADRENO_DEVICE(device)->wake_on_touch = false;
+			device->pwrctrl.wake_on_touch = false;
 		}
 
 		/* A3XX does not have support for drawobj profiling */
@@ -3606,6 +3608,13 @@ static int adreno_hibernation_suspend(struct device *dev)
 	status = ops->pm_suspend(adreno_dev);
 	if (status)
 		goto err;
+
+	/*
+	 * When the device enters in hibernation state, the CX will be collapsed causing
+	 * the GPU CX timer to pause. Clear the ADRENO_DEVICE_CX_TIMER_INITIALIZED flag
+	 * to ensure that the CX timer is reseeded during resume.
+	 */
+	clear_bit(ADRENO_DEVICE_CX_TIMER_INITIALIZED, &adreno_dev->priv);
 
 	/*
 	 * Unload zap shader during device hibernation and reload it

@@ -314,7 +314,7 @@ void kgsl_pwrctrl_set_constraint(struct kgsl_device *device,
 		kgsl_pwrctrl_pwrlevel_change(device, constraint);
 		/* Trace the constraint being set by the driver */
 		trace_kgsl_constraint(device, pwrc_old->type, constraint, 1);
-	} else if (pwrc_old->type == pwrc->type) {
+	} else if ((pwrc_old->type == pwrc->type) && (pwrc_old->sub_type == pwrc->sub_type)) {
 		pwrc_old->owner_id = id;
 		pwrc_old->owner_timestamp = ts;
 		pwrc_old->expires = jiffies +
@@ -411,8 +411,9 @@ static void kgsl_pwrctrl_min_pwrlevel_set(struct kgsl_device *device,
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 
 	mutex_lock(&device->mutex);
-	if (level >= pwr->num_pwrlevels)
-		level = pwr->num_pwrlevels - 1;
+
+	if (level > pwr->min_render_pwrlevel)
+		level = pwr->min_render_pwrlevel;
 
 	/* You can't set a minimum power level lower than the maximum */
 	if (level < pwr->max_pwrlevel)
@@ -1462,7 +1463,16 @@ static int kgsl_pwrctrl_pwrrail(struct kgsl_device *device, bool state)
 			&pwr->power_flags)) {
 			kgsl_mmu_send_tlb_hint(&device->mmu, true);
 			trace_kgsl_rail(device, state);
+
+			/* Set the parent in retention voltage to disable CPR interrupts */
+			kgsl_regulator_set_voltage(device->dev, pwr->gx_gdsc_parent,
+					pwr->gx_gdsc_parent_min_corner);
+
 			kgsl_pwrctrl_disable_gx_gdsc(device);
+
+			/* Remove the vote for the vdd parent supply */
+			kgsl_regulator_set_voltage(device->dev, pwr->gx_gdsc_parent, 0);
+
 			kgsl_pwrctrl_disable_cx_gdsc(device);
 		}
 	} else {
@@ -2112,6 +2122,9 @@ void kgsl_pwrctrl_set_state(struct kgsl_device *device,
 	trace_kgsl_pwr_set_state(device, state);
 	device->state = state;
 	device->requested_state = KGSL_STATE_NONE;
+
+	if (state == KGSL_STATE_SLUMBER)
+		device->pwrctrl.wake_on_touch = false;
 
 	spin_lock(&device->submit_lock);
 	if (state == KGSL_STATE_ACTIVE)

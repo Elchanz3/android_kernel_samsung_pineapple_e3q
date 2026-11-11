@@ -17,7 +17,6 @@
 #include <linux/qcom-iommu-util.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
-#include <linux/soc/qcom/llcc-qcom.h>
 #include <linux/sysfs.h>
 #include <linux/mailbox/qmp.h>
 #include <soc/qcom/cmd-db.h>
@@ -1468,6 +1467,12 @@ static void gen7_gmu_pwrctrl_suspend(struct adreno_device *adreno_dev)
   /* Assert the Qactive to wake up GEMNOC from uIdle state */
   gmu_core_regwrite(device, GEN7_GPU_GMU_CX_GMU_CX_FALNEXT_INTF, 0x1);
 
+	/*
+	 * GEMNOC can enter power collapse state during GPU power down sequence.
+	 * This could abort CX GDSC collapse. Assert Qactive to avoid this.
+	 */
+	gmu_core_regwrite(device, GEN7_GPU_GMU_CX_GMU_CX_FALNEXT_INTF, 0x1);
+
 	/* Check no outstanding RPMh voting */
 	gen7_complete_rpmh_votes(gmu, 1);
 
@@ -1493,6 +1498,9 @@ static void gen7_gmu_pwrctrl_suspend(struct adreno_device *adreno_dev)
 
 	if (gen7_gmu_gx_is_on(adreno_dev))
 		kgsl_regwrite(device, GEN7_RBBM_SW_RESET_CMD, 0x1);
+
+	/* Make sure above writes are posted before turning off power resources */
+	wmb();
 
 	/* Allow the software reset to complete */
 	udelay(100);
@@ -1557,6 +1565,13 @@ static int gen7_gmu_notify_slumber(struct adreno_device *adreno_dev)
 
 	/* Make sure the fence is in ALLOW mode */
 	gmu_core_regwrite(device, GEN7_GMU_AO_AHB_FENCE_CTRL, 0);
+
+	/*
+	 * GEMNOC can enter power collapse state during GPU power down sequence.
+	 * This could abort CX GDSC collapse. Assert Qactive to avoid this.
+	 */
+	gmu_core_regwrite(device, GEN7_GPU_GMU_CX_GMU_CX_FALNEXT_INTF, 0x1);
+
 	
 	return ret;
 }
@@ -1942,6 +1957,9 @@ static int gen7_gmu_first_boot(struct adreno_device *adreno_dev)
 	level = pwr->pwrlevels[pwr->default_pwrlevel].bus_min;
 	icc_set_bw(pwr->icc_path, 0, kBps_to_icc(pwr->ddr_table[level]));
 
+	/* Clear any GPU faults that might have been left over */
+	adreno_clear_gpu_fault(adreno_dev);
+
 	ret = gen7_gmu_device_start(adreno_dev);
 	if (ret)
 		goto err;
@@ -2013,6 +2031,9 @@ static int gen7_gmu_boot(struct adreno_device *adreno_dev)
 	if (ret)
 		goto gdsc_off;
 
+	/* Initialize the CX timer */
+	gen7_cx_timer_init(adreno_dev);
+
 	ret = gen7_rscc_wakeup_sequence(adreno_dev);
 	if (ret)
 		goto clks_gdsc_off;
@@ -2024,6 +2045,9 @@ static int gen7_gmu_boot(struct adreno_device *adreno_dev)
 	gen7_gmu_register_config(adreno_dev);
 
 	gen7_gmu_irq_enable(adreno_dev);
+
+	/* Clear any GPU faults that might have been left over */
+	adreno_clear_gpu_fault(adreno_dev);
 
 	ret = gen7_gmu_device_start(adreno_dev);
 	if (ret)
@@ -2197,34 +2221,41 @@ static int gen7_gmu_bus_set(struct adreno_device *adreno_dev, int buslevel,
 u32 gen7_bus_ab_quantize(struct adreno_device *adreno_dev, u32 ab)
 {
 	u16 vote = 0;
+	u32 max_bw, max_ab;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 
 	if (!adreno_dev->gmu_ab || (ab == INVALID_AB_VALUE))
 		return (FIELD_PREP(GENMASK(31, 16), INVALID_AB_VALUE));
 
-	if (pwr->ddr_table[pwr->ddr_table_count - 1]) {
-		/*
-		 * if ab is calculated as higher than theoretical max bandwidth, set ab as
-		 * theoretical max to prevent truncation during quantization.
-		 *
-		 * max ddr bandwidth (kbps) = (Max bw in kbps per channel * number of channel)
-		 * max ab (Mbps) = max ddr bandwidth (kbps) / 1000
-		 */
-		u32 max_bw = pwr->ddr_table[pwr->ddr_table_count - 1] * NUM_CHANNELS;
-		u32 max_ab = max_bw / 1000;
+	/*
+	 * max ddr bandwidth (kbps) = (Max bw in kbps per channel * number of channel)
+	 * max ab (Mbps) = max ddr bandwidth (kbps) / 1000
+	 */
+	max_bw = pwr->ddr_table[pwr->ddr_table_count - 1] * NUM_CHANNELS;
+	max_ab = max_bw / 1000;
 
-		ab = min_t(u32, ab, max_ab);
-
-		/*
-		 * Power FW supports a 16 bit AB BW level. We can quantize the entire vote-able BW
-		 * range to a 16 bit space and the quantized value can be used to vote for AB though
-		 * GMU. Quantization can be performed as below.
-		 *
-		 * quantized_vote = (ab vote (kbps) * 2^16) / max ddr bandwidth (kbps)
-		 */
+	/*
+	 * If requested AB is higher than theoretical max bandwidth, set AB vote as max
+	 * allowable quantized AB value.
+	 *
+	 * Power FW supports a 16 bit AB BW level. We can quantize the entire vote-able BW
+	 * range to a 16 bit space and the quantized value can be used to vote for AB though
+	 * GMU. Quantization can be performed as below.
+	 *
+	 * quantized_vote = (ab vote (kbps) * 2^16) / max ddr bandwidth (kbps)
+	 */
+	if (ab >= max_ab)
+		vote = MAX_AB_VALUE;
+	else
 		vote = (u16)(((u64)ab * 1000 * (1 << 16)) / max_bw);
-	}
+
+	/*
+	 * Vote will be calculated as 0 for smaller AB values.
+	 * Set a minimum non-zero vote in such cases.
+	 */
+	if (ab && !vote)
+		vote = 0x1;
 
 	/*
 	 * Set ab enable mask and valid AB vote. req.bw is 32 bit value 0xABABENIB
@@ -2740,9 +2771,6 @@ static int gen7_gpu_boot(struct adreno_device *adreno_dev)
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	int ret;
 
-	/* Clear any GPU faults that might have been left over */
-	adreno_clear_gpu_fault(adreno_dev);
-
 	adreno_set_active_ctxs_null(adreno_dev);
 
 	ret = kgsl_mmu_start(device);
@@ -2989,11 +3017,7 @@ no_gx_power:
 
 	adreno_ringbuffer_stop(adreno_dev);
 
-	if (!IS_ERR_OR_NULL(adreno_dev->gpu_llc_slice))
-		llcc_slice_deactivate(adreno_dev->gpu_llc_slice);
-
-	if (!IS_ERR_OR_NULL(adreno_dev->gpuhtw_llc_slice))
-		llcc_slice_deactivate(adreno_dev->gpuhtw_llc_slice);
+	adreno_llcc_slice_deactivate(adreno_dev);
 
 	clear_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 
@@ -3288,6 +3312,8 @@ int gen7_gmu_reset(struct adreno_device *adreno_dev)
 	gen7_gmu_suspend(adreno_dev);
 
 	gen7_reset_preempt_records(adreno_dev);
+
+	adreno_llcc_slice_deactivate(adreno_dev);
 
 	clear_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 

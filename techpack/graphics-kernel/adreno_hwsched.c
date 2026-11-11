@@ -1969,6 +1969,14 @@ void adreno_hwsched_fault(struct adreno_device *adreno_dev,
 	adreno_hwsched_trigger(adreno_dev);
 }
 
+void adreno_hwsched_clear_fault(struct adreno_device *adreno_dev)
+{
+	atomic_set(&adreno_dev->hwsched.fault, 0);
+
+	/* make sure other CPUs see the update */
+	smp_wmb();
+}
+
 static bool is_tx_slot_available(struct adreno_device *adreno_dev)
 {
 	struct adreno_hwsched *hwsched = &adreno_dev->hwsched;
