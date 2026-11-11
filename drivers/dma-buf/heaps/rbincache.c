@@ -381,7 +381,7 @@ out:
 /* rbincache rb_tree & ra_tree helper functions */
 
 /* Cleancache API implementation start */
-static bool is_zero_page(struct page *page)
+static bool rbincache_is_zero_page(struct page *page)
 {
 	unsigned long *ptr = kmap_atomic(page);
 	int i;
@@ -463,7 +463,7 @@ static void rc_store_page(int pool_id, struct cleancache_filekey key,
 		return;
 
 	atomic_inc(&rc_num_puts);
-	zero = is_zero_page(src);
+	zero = rbincache_is_zero_page(src);
 	if (zero) {
 		handle = (struct rr_handle *)ZERO_HANDLE;
 		goto out_zero;

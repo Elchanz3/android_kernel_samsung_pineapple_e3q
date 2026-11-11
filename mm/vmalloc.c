@@ -2729,7 +2729,8 @@ static void __vunmap(const void *addr, int deallocate_pages)
 #endif
 
 			BUG_ON(!page);
-			mod_memcg_page_state(page, MEMCG_VMALLOC, -1);
+			if (!(area->flags & VM_MAP_PUT_PAGES))
+				mod_memcg_page_state(page, MEMCG_VMALLOC, -1);
 #ifdef CONFIG_RKP
 			va = (u64)phys_to_virt(page_to_phys(page));
 			if (is_rkp_ro_buffer(va))
@@ -2745,7 +2746,8 @@ static void __vunmap(const void *addr, int deallocate_pages)
 #endif
 			cond_resched();
 		}
-		atomic_long_sub(area->nr_pages, &nr_vmalloc_pages);
+		if (!(area->flags & VM_MAP_PUT_PAGES))
+			atomic_long_sub(area->nr_pages, &nr_vmalloc_pages);
 
 		kvfree(area->pages);
 	}

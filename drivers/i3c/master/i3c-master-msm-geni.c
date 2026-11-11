@@ -3567,7 +3567,8 @@ static int geni_i3c_remove(struct platform_device *pdev)
 		I3C_LOG_DBG(gi3c->ipcl, false, gi3c->se.dev,
 			" i3c: pinctrl_select_state failed\n");
 
-	ret = i3c_master_unregister(&gi3c->ctrlr);
+	i3c_master_unregister(&gi3c->ctrlr);
+	ret = 0;	/* i3c_master_unregister() returns void now (always succeeded) */
 	/* TBD : If we need debug for previous session, Don't delete logs */
 	if (gi3c->ipcl)
 		ipc_log_context_destroy(gi3c->ipcl);
