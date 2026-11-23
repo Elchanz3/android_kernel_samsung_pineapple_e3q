@@ -795,7 +795,7 @@ int32_t stk6d2x_enable_fifo(struct stk6d2x_data * alps_data, bool en)
 
 	if (alps_data->fifo_info.fifo_enable == en)
 	{
-		ALS_err("FIFO already set\n");
+		ALS_dbg("FIFO already set\n");
 		return ret;
 	}
 

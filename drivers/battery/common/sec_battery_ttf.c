@@ -211,7 +211,7 @@ void sec_bat_calc_time_to_full(struct sec_battery_info * battery)
 		charge = sec_get_ttf_standard_curr(battery);
 		ttf = sec_calc_ttf(battery, charge);
 		battery->ttf_d->timetofull = check_ttf_valid(battery->ttf_d, ttf);
-		dev_info(battery->dev, "%s: T: %5d|%5d sec, passed time: %5ld, current: %d\n",
+		dev_dbg(battery->dev, "%s: T: %5d|%5d sec, passed time: %5ld, current: %d\n",
 				__func__, battery->ttf_d->timetofull, ttf, battery->charging_passed_time, charge);
 	} else {
 		init_ttf(battery->ttf_d);

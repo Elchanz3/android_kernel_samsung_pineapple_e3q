@@ -3624,7 +3624,7 @@ __visible_for_testing int sec_bat_set_polling(struct sec_battery_info *battery)
 		(battery->charging_mode ==
 		SEC_BATTERY_CHARGING_NONE) ? "No" : "Yes",
 		battery->polling_short ? "Yes" : "No");
-	dev_info(battery->dev, "%s: Polling time %d/%d sec.\n", __func__,
+	dev_dbg(battery->dev, "%s: Polling time %d/%d sec.\n", __func__,
 		battery->polling_short ?
 		(polling_time_temp * battery->polling_count) :
 		polling_time_temp, battery->polling_time);

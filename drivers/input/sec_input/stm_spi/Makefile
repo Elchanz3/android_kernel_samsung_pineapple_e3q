@@ -13,3 +13,7 @@ obj-$(CONFIG_TOUCHSCREEN_STM_SPI) += $(TARGET_SPI).o
 
 ccflags-y += -Wformat
 
+
+# stm_ts_print_frame() sizes its table columns by truncating snprintf() on
+# purpose; clang-23 reports that as -Wformat-truncation.
+CFLAGS_stm_cmd.o += $(call cc-disable-warning, format-truncation)

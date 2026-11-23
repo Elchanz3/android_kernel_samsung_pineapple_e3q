@@ -4330,7 +4330,7 @@ ssize_t sec_bat_store_attrs(
 #endif
 	case LRP:
 		if (sscanf(buf, "%10d\n", &x) == 1) {
-			dev_info(battery->dev, "%s: LRP(%d)\n", __func__, x);
+			dev_dbg(battery->dev, "%s: LRP(%d)\n", __func__, x);
 			if ((x >= -200 && x <= 900) && (battery->lrp_test == 0))
 				battery->lrp = x;
 			ret = count;

@@ -7652,7 +7652,7 @@ static int pca9481_chg_get_property(struct power_supply *psy,
 			break;
 		case POWER_SUPPLY_EXT_PROP_DIRECT_CHARGER_CHG_STATUS:
 			val->strval = charging_state_str[pca9481->charging_state];
-			pr_info("%s: CHARGER_STATUS(%s)\n", __func__, val->strval);
+			pr_debug("%s: CHARGER_STATUS(%s)\n", __func__, val->strval);
 			break;
 		case POWER_SUPPLY_EXT_PROP_CHARGING_ENABLED:
 			ret = get_charging_enabled(pca9481);
