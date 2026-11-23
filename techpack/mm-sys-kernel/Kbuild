@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# In-tree build (techpack/)
+obj-y += ubwcp/

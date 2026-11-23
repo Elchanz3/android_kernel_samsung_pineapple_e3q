@@ -1,0 +1,8 @@
+# In-tree build (techpack/): what the external Android/Bazel build passed
+# on the make command line. Exported -> reaches this techpack's subdirs only.
+ifeq ($(KBUILD_EXTMOD),)
+export VIDEO_ROOT := $(abs_srctree)/$(src)
+export CONFIG_MSM_VIDC_V4L2 := m
+endif
+
+obj-m := msm_video/

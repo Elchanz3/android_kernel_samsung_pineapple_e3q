@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# In-tree build of the Qualcomm vendor techpacks (see techpack/Kconfig).
+#
+# The variables below used to be passed on the make command line by the
+# Android/Bazel external-module build. Exported variables reach only the
+# techpack subdirectories (each directory is a separate sub-make), so nothing
+# here leaks into the rest of the kernel. Per-techpack variables (the *_ROOT
+# paths, MODNAME, ...) are set at the top of each techpack's own Kbuild.
+
+unquote = $(patsubst "%",%,$(1))
+
+export KERNEL_SRC	:= $(abs_srctree)
+export KERNEL_ROOT	:= $(abs_srctree)
+export TECHPACK_ROOT	:= $(abs_srctree)/techpack
+export BOARD_PLATFORM	:= pineapple
+export TARGET_BOARD_PLATFORM := pineapple
+export PROJECT_NAME	:= $(call unquote,$(CONFIG_TECHPACK_PROJECT_NAME))
+export TARGET_BUILD_VARIANT := $(call unquote,$(CONFIG_TECHPACK_BUILD_VARIANT))
+
+# Cross-techpack header search paths. These mirror the ddk_headers() targets
+# the Bazel build made each module depend on.
+_tp := $(TECHPACK_ROOT)
+export TP_INC_SMCINVOKE := -I$(_tp)/securemsm-kernel/include \
+	-I$(_tp)/securemsm-kernel/include/linux -I$(_tp)/securemsm-kernel/linux \
+	-I$(_tp)/securemsm-kernel/include/uapi/linux
+export TP_INC_SMMU_PROXY := -I$(_tp)/securemsm-kernel -I$(_tp)/securemsm-kernel/smmu-proxy
+export TP_INC_IPA := -I$(_tp)/dataipa/drivers/platform/msm/include \
+	-I$(_tp)/dataipa/drivers/platform/msm/include/linux \
+	-I$(_tp)/dataipa/drivers/platform/msm/include/uapi
+export TP_INC_RMNET_MEM := -I$(_tp)/datarmnet-ext/mem
+export TP_INC_RMNET_CORE := -I$(_tp)/datarmnet/core
+export TP_INC_DSP := -I$(_tp)/dsp-kernel/include/linux -I$(_tp)/dsp-kernel/include/uapi
+export TP_INC_SYNX := -I$(_tp)/synx-kernel/include/uapi/synx \
+	-I$(_tp)/synx-kernel/include/uapi/synx/media -I$(_tp)/synx-kernel/msm/synx
+export TP_INC_HW_FENCE := -I$(_tp)/mm-drivers/hw_fence/include
+export TP_INC_SYNC_FENCE := -I$(_tp)/mm-drivers/sync_fence/include
+export TP_INC_WLAN_PLATFORM := -I$(_tp)/wlan/platform/inc
+
+# Build order follows the module dependency chain (providers first), which
+# keeps modules.order close to the order the vendor build produced.
+obj-$(CONFIG_TECHPACK_MMRM)		+= mmrm-driver/
+obj-$(CONFIG_TECHPACK_SYNX)		+= synx-kernel/
+obj-$(CONFIG_TECHPACK_MM_DRIVERS)	+= mm-drivers/
+obj-$(CONFIG_TECHPACK_SECUREMSM)	+= securemsm-kernel/
+obj-$(CONFIG_TECHPACK_DSP)		+= dsp-kernel/
+obj-$(CONFIG_TECHPACK_MM_SYS)		+= mm-sys-kernel/
+obj-$(CONFIG_TECHPACK_DATA)		+= datarmnet-ext/ dataipa/ datarmnet/
+obj-$(CONFIG_TECHPACK_DISPLAY)		+= display-drivers/
+obj-$(CONFIG_TECHPACK_GRAPHICS)		+= graphics-kernel/
+obj-$(CONFIG_TECHPACK_VIDEO)		+= video-driver/
+obj-$(CONFIG_TECHPACK_CAMERA)		+= camera-kernel/
+obj-$(CONFIG_TECHPACK_AUDIO)		+= audio-kernel/
+obj-$(CONFIG_TECHPACK_EVA)		+= eva-kernel/
+obj-$(CONFIG_TECHPACK_SPU)		+= spu-kernel/
+obj-$(CONFIG_TECHPACK_BT)		+= bt-kernel/
+obj-$(CONFIG_TECHPACK_WLAN_PLATFORM)	+= wlan/
+obj-$(CONFIG_TECHPACK_TOUCH)		+= touch-drivers/
