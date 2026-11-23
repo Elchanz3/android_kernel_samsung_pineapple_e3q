@@ -6,3 +6,6 @@ source "drivers/samsung/bsp/Kconfig"
 config SEC_QC_NR_CPUS
 	int
 	default 8
+
+# Temporary: kernel log buffer for /proc/last_kmsg while bringing up pure-6.1
+source "drivers/samsung/debug/Kconfig"

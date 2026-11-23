@@ -1,0 +1,1 @@
+source "drivers/samsung/debug/log_buf/Kconfig"

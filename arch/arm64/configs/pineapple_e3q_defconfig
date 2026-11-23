@@ -8820,3 +8820,7 @@ CONFIG_SCHED_WALT=m
 # CONFIG_SCHED_WALT_DEBUG is not set
 # CONFIG_SCHED_CONSERVATIVE_BOOST_LPM_BIAS is not set
 # end of QTI WALT based scheduler features
+
+# Temporary bring-up aid: /proc/last_kmsg
+CONFIG_SEC_LOG_BUF=m
+CONFIG_SEC_LOG_BUF_USING_TP_CONSOLE=y
