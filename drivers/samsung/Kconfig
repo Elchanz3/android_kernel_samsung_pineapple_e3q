@@ -1,5 +1,13 @@
 source "drivers/samsung/bsp/Kconfig"
 
+# Not a debug option: it gates real power code in the s2dos05/s2dos07/s2mpb02
+# regulators (e.g. the panel ELVDD/ELVSS rail) and the display techpack.
+config SEC_PM
+	bool "Samsung PowerManagement Feature"
+	default n
+	help
+	  Samsung PowerManagement Feature.
+
 # The Samsung debug drivers are not built, but their headers (pulled in by
 # <linux/sec_debug.h> from the battery, muic and param drivers) still size
 # some types with this value.
