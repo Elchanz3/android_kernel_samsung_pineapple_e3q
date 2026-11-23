@@ -1140,6 +1140,27 @@ static struct ieee80211_iface_combination
 #endif /* !WLAN_FEATURE_NO_SAP_NAN_CONCURRENCY */
 #endif /* WLAN_FEATURE_NAN */
 };
+#if defined(FEATURE_WLAN_TDLS) && defined(CFG80211_TDLS_MGMT_LINK_ID) && \
+	!defined(TDLS_MGMT_VERSION5)
+/*
+ * The android14-6.1-lts cfg80211 has the upstream (6.5+) tdls_mgmt prototype,
+ * with link_id right after the peer address. Non-MLO TDLS ignores it.
+ */
+static int wlan_hdd_cfg80211_tdls_mgmt_link(struct wiphy *wiphy,
+					    struct net_device *dev,
+					    const u8 *peer, int link_id,
+					    u8 action_code, u8 dialog_token,
+					    u16 status_code, u32 peer_capability,
+					    bool initiator, const u8 *buf,
+					    size_t len)
+{
+	return wlan_hdd_cfg80211_tdls_mgmt(wiphy, dev, peer, action_code,
+					   dialog_token, status_code,
+					   peer_capability, initiator, buf,
+					   len);
+}
+#endif
+
 static struct cfg80211_ops wlan_hdd_cfg80211_ops;
 
 #ifdef WLAN_NL80211_TESTMODE
@@ -29400,7 +29421,11 @@ static struct cfg80211_ops wlan_hdd_cfg80211_ops = {
 	.update_owe_info = wlan_hdd_cfg80211_update_owe_info,
 #endif
 #ifdef FEATURE_WLAN_TDLS
+#ifdef CFG80211_TDLS_MGMT_LINK_ID
+	.tdls_mgmt = wlan_hdd_cfg80211_tdls_mgmt_link,
+#else
 	.tdls_mgmt = wlan_hdd_cfg80211_tdls_mgmt,
+#endif
 	.tdls_oper = wlan_hdd_cfg80211_tdls_oper,
 #endif
 #ifdef WLAN_FEATURE_GTK_OFFLOAD

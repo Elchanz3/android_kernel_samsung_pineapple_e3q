@@ -8,6 +8,10 @@
 #include "cam_sensor_i2c.h"
 #include "cam_sensor_i3c.h"
 #include <linux/pm_runtime.h>
+#if defined(CONFIG_SAMSUNG_CAMERA)
+/* used to come in through cam_clock_data_recovery.h, which needs SEC_ABC */
+#include "cam_sensor_dev.h"
+#endif
 #if defined(CONFIG_CAMERA_ADAPTIVE_MIPI) && defined(CONFIG_CAMERA_RF_MIPI)
 #include "cam_sensor_mipi.h"
 #endif

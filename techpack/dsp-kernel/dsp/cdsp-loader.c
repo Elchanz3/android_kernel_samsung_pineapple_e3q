@@ -14,7 +14,11 @@
 #include <linux/sysfs.h>
 #include <linux/remoteproc.h>
 
-#define DSP_SLEEP_DEBUG_ON
+/*
+ * Samsung CDSP sleep watchdog: needs cdsp_event_chain/set_dump_enabled from
+ * its qcom_stats/qcom_ramdump changes, which this kernel does not carry.
+ */
+/* #define DSP_SLEEP_DEBUG_ON */
 
 #if defined(DSP_SLEEP_DEBUG_ON)
 #include <linux/samsung/debug/sec_debug.h>

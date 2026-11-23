@@ -3745,6 +3745,8 @@ endif
 
 #normally, TDLS negative behavior is not needed
 ccflags-$(CONFIG_QCOM_TDLS) += -DFEATURE_WLAN_TDLS
+# android14-6.1-lts cfg80211: tdls_mgmt takes link_id after the peer (upstream 6.5 prototype)
+ccflags-$(CONFIG_QCOM_TDLS) += -DCFG80211_TDLS_MGMT_LINK_ID
 ccflags-$(CONFIG_QCOM_TDLS) += -DWLAN_FEATURE_TDLS_CONCURRENCIES
 
 ifeq (y,$(filter y,$(CONFIG_LITHIUM) $(CONFIG_BERYLLIUM)))

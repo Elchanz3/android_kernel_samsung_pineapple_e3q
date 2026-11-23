@@ -24,6 +24,7 @@
  */
 
 #include <linux/clk-provider.h>
+#include <linux/sched/clock.h>
 #include "ss_dsi_panel_common.h"
 #include "ss_panel_power.h"
 

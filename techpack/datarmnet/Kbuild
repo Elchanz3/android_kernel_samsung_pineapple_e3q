@@ -6,3 +6,7 @@ subdir-ccflags-y += -DRMNET_TRACE_INCLUDE_PATH=../../techpack/datarmnet/core
 subdir-ccflags-y += $(TP_INC_IPA) $(TP_INC_RMNET_MEM)
 
 obj-y += core/
+
+# Samsung's net_log() lived in its ipc_logging changes, which this kernel
+# does not carry: compile the calls out.
+subdir-ccflags-y += '-Dnet_log(...)=do { } while (0)'

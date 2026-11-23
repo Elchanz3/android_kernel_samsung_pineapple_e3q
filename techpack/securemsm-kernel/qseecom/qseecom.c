@@ -5352,10 +5352,19 @@ static int __qseecom_send_command(struct qseecom_handle *handle, void *send_buf,
 
 #if IS_ENABLED(CONFIG_QSEECOM)
 #if IS_ENABLED(CONFIG_QSEECOM_PROXY)
+static int __qseecom_process_listener_from_smcinvoke(uint32_t *result,
+		u64 *response_type, unsigned int *data);
+
+/*
+ * The 6.1 msm kernel's qseecom_proxy now exports
+ * qseecom_process_listener_from_smcinvoke() itself and forwards it here.
+ */
 const static struct qseecom_drv_ops qseecom_driver_ops = {
        .qseecom_send_command = __qseecom_send_command,
        .qseecom_start_app = __qseecom_start_app,
        .qseecom_shutdown_app = __qseecom_shutdown_app,
+       .qseecom_process_listener_from_smcinvoke =
+		__qseecom_process_listener_from_smcinvoke,
 };
 
 int get_qseecom_kernel_fun_ops(void)
@@ -5422,8 +5431,13 @@ int qseecom_set_bandwidth(struct qseecom_handle *handle, bool high)
 }
 EXPORT_SYMBOL(qseecom_set_bandwidth);
 
+#if IS_ENABLED(CONFIG_QSEECOM_PROXY)
+static int __qseecom_process_listener_from_smcinvoke(uint32_t *result,
+		u64 *response_type, unsigned int *data)
+#else
 int qseecom_process_listener_from_smcinvoke(uint32_t *result,
 		u64 *response_type, unsigned int *data)
+#endif
 {
 	struct qseecom_registered_app_list dummy_app_entry;
 	struct qseecom_dev_handle dummy_private_data = {0};
@@ -5467,7 +5481,9 @@ int qseecom_process_listener_from_smcinvoke(uint32_t *result,
 	*data = resp.data;
 	return ret;
 }
+#if !IS_ENABLED(CONFIG_QSEECOM_PROXY)
 EXPORT_SYMBOL(qseecom_process_listener_from_smcinvoke);
+#endif
 #endif
 static int qseecom_send_resp(void)
 {
