@@ -605,6 +605,8 @@ static ssize_t ssr_reset_show(struct device *dev,
 	}
 
 	adsp_unicast(&type, sizeof(int32_t), MSG_SSC_CORE, 0, MSG_TYPE_DUMPSTATE);
+	/* fssr needs Samsung's remoteproc fields (CONFIG_SEC_SENSORS_SSC) */
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
 	pr_info("[FACTORY] %s, fssr:%d, %d->%d\n", __func__, (int)adsp->fssr,
 		(int)adsp->prev_recovery_disabled,
 		(int)adsp->recovery_disabled);
@@ -612,6 +614,7 @@ static ssize_t ssr_reset_show(struct device *dev,
 		adsp->fssr = false;
 		adsp->recovery_disabled = adsp->prev_recovery_disabled;
 	}
+#endif
 reset_return:
 	return snprintf(buf, PAGE_SIZE, "%s\n", "Success");
 }
@@ -1595,9 +1598,11 @@ static ssize_t sns_crash_store(struct device *dev,
 			pr_info("[FACTORY] %s, adsp remoteproc null\n", __func__);
 			goto crash_return;
 		}		
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
 		pr_info("fssr:%d, %d->%d\n", (int)adsp->fssr,
 			(int)adsp->prev_recovery_disabled,
 			(int)adsp->recovery_disabled);
+#endif
 
 		if (mode == 8) {
 			adsp->recovery_disabled = true;

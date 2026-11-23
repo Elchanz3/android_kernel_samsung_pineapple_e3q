@@ -1,6 +1,6 @@
 config SEC_PM_THERMISTOR
     tristate "SEC Thermistor support"
-    depends on SEC_PM && IIO
+    depends on IIO
     default n
     help
       This driver supports SEC Thermistor sensor readinga nd its

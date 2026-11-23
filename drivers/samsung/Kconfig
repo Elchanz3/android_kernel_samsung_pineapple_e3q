@@ -1,1 +1,8 @@
 source "drivers/samsung/bsp/Kconfig"
+
+# The Samsung debug drivers are not built, but their headers (pulled in by
+# <linux/sec_debug.h> from the battery, muic and param drivers) still size
+# some types with this value.
+config SEC_QC_NR_CPUS
+	int
+	default 8

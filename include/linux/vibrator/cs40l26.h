@@ -12,6 +12,11 @@
 #define __CS40L26_H__
 
 #include <linux/input.h>
+
+/* Normally pulled in through <linux/sti/abc_common.h> (SEC_ABC, not built). */
+#ifndef __visible_for_testing
+#define __visible_for_testing static
+#endif
 #include <linux/regmap.h>
 #include <linux/mfd/core.h>
 #include <linux/module.h>
