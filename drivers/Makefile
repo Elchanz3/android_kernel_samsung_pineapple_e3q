@@ -201,6 +201,7 @@ obj-y += battery/charger/max77775_charger/ # ADDED BY LEGO AUTOMATICALLY: DO NOT
 obj-y += muic/common/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 obj-y += staging/android/switch/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 obj-y += uwb/uwb_logger/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+obj-y += sdp/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 obj-y += usb/common/vbus_notifier/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 obj-y += input/sec_input/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 obj-y += regulator/s2dos05/ # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
