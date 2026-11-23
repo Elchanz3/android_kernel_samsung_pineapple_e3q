@@ -18,6 +18,7 @@
 #include <linux/uaccess.h>
 #include <linux/capability.h>
 #include <linux/kernel_stat.h>
+#include <linux/ktime.h>
 #include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
@@ -59,6 +60,7 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
+#include <trace/hooks/sched.h>
 
 void _trace_android_rvh_mapping_shrinkable(bool *shrinkable)
 {
@@ -1344,7 +1346,17 @@ repeat:
 			if (signal_pending_state(state, current))
 				break;
 
-			io_schedule();
+			if (trace_android_vh_folio_wait_bit_profile_enabled()) {
+				u64 ts = ktime_get_ns();
+				unsigned int saved_flags = current->flags;
+
+				io_schedule();
+				trace_android_vh_folio_wait_bit_profile(
+					_RET_IP_, ktime_get_ns() - ts,
+					bit_nr, saved_flags);
+			} else {
+				io_schedule();
+			}
 			continue;
 		}
 
@@ -3150,7 +3162,7 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	/* Use the readahead code, even if readahead is disabled */
-	if (vm_flags & VM_HUGEPAGE) {
+	if ((vm_flags & VM_HUGEPAGE) && HPAGE_PMD_ORDER <= MAX_PAGECACHE_ORDER) {
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
 		ractl._index &= ~((unsigned long)HPAGE_PMD_NR - 1);
 		ra->size = HPAGE_PMD_NR;

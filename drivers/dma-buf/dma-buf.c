@@ -40,6 +40,8 @@
 #include <uapi/linux/dma-buf.h>
 #include <uapi/linux/magic.h>
 
+#include <trace/hooks/dmabuf.h>
+
 #include "dma-buf-sysfs-stats.h"
 
 DEFINE_STATIC_KEY_TRUE(dmabuf_accounting_key);
@@ -199,6 +201,7 @@ static void dma_buf_release(struct dentry *dentry)
 	dma_buf_stats_teardown(dmabuf);
 	dmabuf->ops->release(dmabuf);
 
+	trace_android_vh_dma_buf_release(dmabuf);
 	if (dmabuf->resv == (struct dma_resv *)&dmabuf[1])
 		dma_resv_fini(dmabuf->resv);
 
@@ -1449,6 +1452,21 @@ int dma_buf_fd(struct dma_buf *dmabuf, int flags)
 	return fd;
 }
 EXPORT_SYMBOL_NS_GPL(dma_buf_fd, DMA_BUF);
+
+/**
+ * dma_buf_fd_install - install a reserved fd for a dma-buf
+ * @dmabuf:	[in]	pointer to dma_buf
+ * @fd:		[in]	fd reserved with get_unused_fd_flags()
+ *
+ * Publishes a previously reserved fd into the caller's fd table.
+ * Must only be called after all fallible work (e.g. copy_to_user)
+ * has succeeded, as it cannot be undone safely once called.
+ */
+void dma_buf_fd_install(struct dma_buf *dmabuf, int fd)
+{
+	fd_install(fd, dmabuf->file);
+}
+EXPORT_SYMBOL_NS_GPL(dma_buf_fd_install, DMA_BUF);
 
 /**
  * dma_buf_get - returns the struct dma_buf related to an fd

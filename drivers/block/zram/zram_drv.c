@@ -721,6 +721,17 @@ static ssize_t writeback_store_apply(struct zram *zram, unsigned long index,
 		goto release_init_lock;
 	}
 
+	/* disksize is only stable under init_lock */
+	if (mode == PAGE_WRITEBACK) {
+		if (index >= (zram->disksize >> PAGE_SHIFT)) {
+			ret = -EINVAL;
+			goto release_init_lock;
+		}
+		nr_pages = 1;
+	} else {
+		nr_pages = zram->disksize >> PAGE_SHIFT;
+	}
+
 	page = alloc_page(GFP_KERNEL);
 	if (!page) {
 		ret = -ENOMEM;
@@ -1043,7 +1054,7 @@ static ssize_t writeback_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t len)
 {
 	struct zram *zram = dev_to_zram(dev);
-	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
+	unsigned long nr_pages = 0;
 	unsigned long index = 0;
 	ssize_t ret = len;
 	pid_t pid;
@@ -1058,8 +1069,7 @@ static ssize_t writeback_store(struct device *dev,
 		mode = IDLE_WRITEBACK | HUGE_WRITEBACK;
 	else {
 		if (!strncmp(buf, PAGE_WB_SIG, sizeof(PAGE_WB_SIG) - 1)) {
-			if (kstrtol(buf + sizeof(PAGE_WB_SIG) - 1, 10, &index) ||
-					index >= nr_pages)
+			if (kstrtol(buf + sizeof(PAGE_WB_SIG) - 1, 10, &index))
 				return -EINVAL;
 
 			nr_pages = 1;
@@ -1174,8 +1184,7 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 	char *kbuf;
 	ssize_t index, written = 0;
 	struct zram *zram = file->private_data;
-	unsigned long nr_pages = zram->disksize >> PAGE_SHIFT;
-	struct timespec64 ts;
+	unsigned long nr_pages;
 
 	kbuf = kvmalloc(count, GFP_KERNEL);
 	if (!kbuf)
@@ -1188,8 +1197,11 @@ static ssize_t read_block_state(struct file *file, char __user *buf,
 		return -EINVAL;
 	}
 
+	nr_pages = zram->disksize >> PAGE_SHIFT;
+
 	for (index = *ppos; index < nr_pages; index++) {
 		int copied;
+		struct timespec64 ts;
 
 		zram_slot_lock(zram, index);
 		if (!zram_allocated(zram, index))

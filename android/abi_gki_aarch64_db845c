@@ -941,6 +941,7 @@
 
 # required by cfg80211.ko
   bpf_trace_run10
+  bpf_trace_run11
   bpf_trace_run7
   debugfs_rename
   __dev_change_net_namespace
@@ -1933,6 +1934,7 @@
   driver_set_override
   platform_device_add
   platform_device_alloc
+  platform_device_del
   platform_device_put
 
 # required by slimbus.ko
