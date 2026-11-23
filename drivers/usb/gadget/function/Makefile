@@ -72,3 +72,10 @@ usb_f_rmnet_bam-y               := f_rmnet.o u_ctrl_qti.o u_bam_dmux.o
 obj-$(CONFIG_USB_F_RMNET_BAM)   += usb_f_rmnet_bam.o
 usb_f_mbim-y               	:= f_mbim.o
 obj-$(CONFIG_USB_F_MBIM_BAM)	+= usb_f_mbim.o
+usb_f_conn_gadget-y             := f_conn_gadget.o
+obj-$(CONFIG_USB_F_CONN_GADGET) += usb_f_conn_gadget.o
+usb_f_ss_mon_gadget-y             := f_ss_mon_gadget.o
+obj-$(CONFIG_USB_F_SS_MON_GADGET) += usb_f_ss_mon_gadget.o
+usb_f_ss_acm-y             := f_ss_acm.o
+obj-$(CONFIG_USB_F_SS_ACM) += usb_f_ss_acm.o
+

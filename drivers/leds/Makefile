@@ -117,3 +117,5 @@ obj-y					+= blink/
 
 # Simple LED drivers
 obj-y					+= simple/
+
+obj-$(CONFIG_LEDS_S2MPB02)		+= leds-s2mpb02.o

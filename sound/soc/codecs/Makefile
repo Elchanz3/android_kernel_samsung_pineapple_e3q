@@ -721,3 +721,13 @@ obj-$(CONFIG_SND_SOC_LPASS_TX_MACRO)	+= snd-soc-lpass-tx-macro.o
 
 # Mux
 obj-$(CONFIG_SND_SOC_SIMPLE_MUX)	+= snd-soc-simple-mux.o
+
+# Samsung e3q: Cirrus CS35L43 amps, amp feature driver and CS40L26 codec stub
+snd-soc-cirrus-amp-objs := cirrus-amp.o cirrus-bd.o cirrus-cal.o cirrus-pwr.o cirrus-cal-cspl.o cirrus-cal-cs35l43.o bigdata_cirrus_sysfs_cb.o
+snd-soc-cs35l43-i2c-objs := cs35l43-i2c.o cs35l43.o cs35l43-tables.o
+snd-soc-cs35l43-spi-objs := cs35l43-spi.o cs35l43.o cs35l43-tables.o
+snd-soc-cs40l26-objs := cs40l26-a2h.o
+obj-$(CONFIG_SND_SOC_CIRRUS_AMP) += snd-soc-cirrus-amp.o
+obj-$(CONFIG_SND_SOC_CS35L43_I2C)	+= snd-soc-cs35l43-i2c.o
+obj-$(CONFIG_SND_SOC_CS35L43_SPI)	+= snd-soc-cs35l43-spi.o
+obj-$(CONFIG_SND_SOC_CS40L26)	+= snd-soc-cs40l26.o
