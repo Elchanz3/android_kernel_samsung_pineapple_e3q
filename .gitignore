@@ -98,6 +98,7 @@ modules.order
 !.get_maintainer.ignore
 !.gitattributes
 !.gitignore
+!.kunitconfig
 !.mailmap
 !.rustfmt.toml
 
@@ -165,8 +166,6 @@ x509.genkey
 # generated defconfigs
 arch/*/configs/vendor/*_defconfig
 
-# vendor device tree directories
-arch/*/boot/dts/vendor
 
 # Documentation toolchain
 sphinx_*/
@@ -177,3 +176,19 @@ sphinx_*/
 # Android ABI build files
 abi_gki_protected_exports
 all_kmi_symbols
+
+#
+# build_pineapple.sh output, toolchains, stock images and extra trees
+#
+/out/
+/prebuilts/
+/toolchains/
+/sharkmanager/
+
+# Stock partition bases used by build_pineapple.sh (binaries on purpose)
+!/build/**
+
+# The display techpack regenerates these from msm/samsung/panel_data_file
+# when building inside the source dir (not with O=).
+/E3_*_PDF_DATA
+/ksu_modules
