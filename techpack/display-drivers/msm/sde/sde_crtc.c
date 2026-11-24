@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -1610,8 +1610,9 @@ static void _sde_crtc_program_lm_output_roi(struct drm_crtc *crtc)
 
 		lm_roi = &cstate->lm_roi[lm_idx];
 		hw_lm = sde_crtc->mixers[lm_idx].hw_lm;
-		if (!sde_crtc->mixers_swapped)
-			right_mixer = lm_idx % MAX_MIXERS_PER_LAYOUT;
+		right_mixer = lm_idx % MAX_MIXERS_PER_LAYOUT;
+		if (sde_crtc->mixers_swapped)
+			right_mixer = !right_mixer;
 
 		if (lm_roi->w != hw_lm->cfg.out_width ||
 				lm_roi->h != hw_lm->cfg.out_height ||
@@ -2672,6 +2673,31 @@ static void _sde_crtc_dest_scaler_setup(struct drm_crtc *crtc)
 	}
 }
 
+static void sde_crtc_disable_dest_scaler(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc;
+	struct sde_crtc_state *cstate;
+	struct sde_hw_mixer *hw_lm;
+	struct sde_hw_ctl *hw_ctl;
+	struct sde_hw_ds *hw_ds;
+	int lm_idx;
+
+	sde_crtc = to_sde_crtc(crtc);
+	cstate = to_sde_crtc_state(crtc->state);
+
+	for (lm_idx = 0; lm_idx < sde_crtc->num_mixers; lm_idx++) {
+		hw_lm  = sde_crtc->mixers[lm_idx].hw_lm;
+		hw_ctl = sde_crtc->mixers[lm_idx].hw_ctl;
+		hw_ds  = sde_crtc->mixers[lm_idx].hw_ds;
+		if (hw_ds && hw_ds->ops.disable_dest_scl)
+			hw_ds->ops.disable_dest_scl(hw_ds);
+
+		if (hw_lm && hw_ctl && hw_ctl->ops.update_bitmask_mixer)
+			hw_ctl->ops.update_bitmask_mixer(
+					hw_ctl, hw_lm->idx, 1);
+	}
+}
+
 static void _sde_crtc_put_frame_data_buffer(struct sde_frame_data_buffer *buf)
 {
 	if (!buf)
@@ -2954,14 +2980,16 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 		struct drm_crtc_state *cstate)
 {
 	struct drm_encoder *encoder;
+	struct sde_crtc *sde_crtc;
 
 	if (!crtc || !crtc->dev || !cstate) {
 		SDE_ERROR("invalid crtc\n");
 		return INTF_MODE_NONE;
 	}
 
+	sde_crtc = to_sde_crtc(crtc);
 	drm_for_each_encoder_mask(encoder, crtc->dev,
-			cstate->encoder_mask) {
+			sde_crtc->cached_encoder_mask) {
 		/* continue if copy encoder is encountered */
 		if (sde_crtc_state_in_clone_mode(encoder, cstate))
 			continue;
@@ -5029,6 +5057,8 @@ static int _sde_crtc_vblank_enable(
 {
 	struct drm_crtc *crtc;
 	struct drm_encoder *enc;
+	enum sde_intf_mode intf_mode;
+	bool wb_intf_mode = false;
 
 	if (!sde_crtc) {
 		SDE_ERROR("invalid crtc\n");
@@ -5039,6 +5069,9 @@ static int _sde_crtc_vblank_enable(
 	SDE_EVT32(DRMID(crtc), enable, sde_crtc->enabled,
 			crtc->state->encoder_mask,
 			sde_crtc->cached_encoder_mask);
+
+	intf_mode = sde_crtc_get_intf_mode(crtc, crtc->state);
+	wb_intf_mode = ((intf_mode == INTF_MODE_WB_BLOCK) || (intf_mode == INTF_MODE_WB_LINE));
 
 	if (enable) {
 		int ret;
@@ -5052,7 +5085,7 @@ static int _sde_crtc_vblank_enable(
 
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc))
+			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, sde_crtc_vblank_cb, (void *)crtc);
@@ -5061,7 +5094,7 @@ static int _sde_crtc_vblank_enable(
 	} else {
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc))
+			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, NULL, NULL);
@@ -5079,12 +5112,20 @@ static int _sde_crtc_vblank_enable(
 
 static void _sde_crtc_reserve_resource(struct drm_crtc *crtc, struct drm_connector *conn)
 {
+	struct sde_kms *kms;
+	struct drm_encoder *encoder;
 	u32 min_transfer_time = 0, lm_count = 1;
 	u64 mode_clock_hz = 0, updated_fps = 0, topology_id;
-	struct drm_encoder *encoder;
+	u32 inf_factor = 105, lm_width, num_bubbles = 0;
 
 	if (!crtc || !conn)
 		return;
+
+	kms = _sde_crtc_get_kms(crtc);
+	if (!kms || !kms->catalog) {
+		SDE_ERROR("invalid kms\n");
+		return;
+	}
 
 	encoder = conn->state->best_encoder;
 	if (!sde_encoder_is_built_in_display(encoder))
@@ -5099,17 +5140,31 @@ static void _sde_crtc_reserve_resource(struct drm_crtc *crtc, struct drm_connect
 		updated_fps = drm_mode_vrefresh(&crtc->mode);
 
 	topology_id = sde_connector_get_topology_name(conn);
-	if (TOPOLOGY_DUALPIPE_MODE(topology_id))
+	if (TOPOLOGY_DUALPIPE_MODE(topology_id)) {
 		lm_count = 2;
-	else if (TOPOLOGY_QUADPIPE_MODE(topology_id))
+		if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_A00))
+			num_bubbles = 40;
+	} else if (TOPOLOGY_QUADPIPE_MODE(topology_id)) {
 		lm_count = 4;
+		if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_A00))
+			num_bubbles = 56;
+	}
+
+	if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_900)
+			&& lm_count > 1)
+		num_bubbles = 30;
+
+	lm_width = (crtc->mode.hdisplay) / lm_count;
+	num_bubbles = mult_frac(num_bubbles, 100, lm_width);
+	inf_factor = max((100 + num_bubbles), inf_factor);
 
 	/* mode clock = [(h * v * fps * 1.05) / (num_lm)] */
-	mode_clock_hz = mult_frac(crtc->mode.htotal * crtc->mode.vtotal * updated_fps, 105, 100);
+	mode_clock_hz = mult_frac(crtc->mode.htotal * crtc->mode.vtotal * updated_fps,
+				inf_factor, 100);
 	mode_clock_hz = div_u64(mode_clock_hz, lm_count);
-	SDE_DEBUG("[%s] h=%d v=%d fps=%d lm=%d mode_clk=%u\n",
+	SDE_DEBUG("[%s] h=%d v=%d fps=%d lm=%d mode_clk=%u inf_factor=%u\n",
 			crtc->mode.name, crtc->mode.htotal, crtc->mode.vtotal,
-			updated_fps, lm_count, mode_clock_hz);
+			updated_fps, lm_count, mode_clock_hz, inf_factor);
 
 	sde_core_perf_crtc_reserve_res(crtc, mode_clock_hz);
 }
@@ -5236,6 +5291,9 @@ void sde_crtc_reset_sw_state(struct drm_crtc *crtc)
 	set_bit(SDE_CRTC_DIRTY_DIM_LAYERS, &sde_crtc->revalidate_mask);
 	if (cstate->num_ds_enabled)
 		set_bit(SDE_CRTC_DIRTY_DEST_SCALER, cstate->dirty);
+
+	/* wipe out cached CRTC ROI so PU is seen as dirty next update */
+	memset(&cstate->cached_user_roi_list, 0, sizeof(cstate->cached_user_roi_list));
 }
 
 static void sde_crtc_post_ipc(struct drm_crtc *crtc)
@@ -5438,9 +5496,14 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 			crtc->state->enable, sde_crtc->cached_encoder_mask);
 	sde_crtc->enabled = false;
 	sde_crtc->cached_encoder_mask = 0;
+	cstate->cached_cwb_enc_mask = 0;
 
 	/* Try to disable uidle */
 	sde_core_perf_crtc_update_uidle(crtc, false);
+
+	for (i = 0; i < SDE_SYS_CACHE_MAX; i++)
+		sde_crtc->new_perf.llcc_active[i] = 0;
+	sde_core_perf_crtc_update_llcc(crtc);
 
 	if (atomic_read(&sde_crtc->frame_pending)) {
 		SDE_ERROR("crtc%d frame_pending%d\n", crtc->base.id,
@@ -6651,6 +6714,8 @@ static void sde_crtc_install_perf_properties(struct sde_crtc *sde_crtc,
 static void sde_crtc_setup_capabilities_blob(struct sde_kms_info *info,
 		struct sde_mdss_cfg *catalog)
 {
+	enum sde_ddr_type ddr_type;
+
 	sde_kms_info_reset(info);
 
 	sde_kms_info_add_keyint(info, "hw_version", catalog->hw_rev);
@@ -6676,10 +6741,21 @@ static void sde_crtc_setup_capabilities_blob(struct sde_kms_info *info,
 				catalog->mdp[0].ubwc_swizzle);
 	}
 
-	if (of_fdt_get_ddrtype() == LP_DDR4_TYPE)
+	ddr_type = of_fdt_get_ddrtype();
+	switch (ddr_type) {
+	case LP_DDR4:
 		sde_kms_info_add_keystr(info, "DDR version", "DDR4");
-	else
+		break;
+	case LP_DDR5:
 		sde_kms_info_add_keystr(info, "DDR version", "DDR5");
+		break;
+	case LP_DDR5X:
+		sde_kms_info_add_keystr(info, "DDR version", "DDR5X");
+		break;
+	default:
+		SDE_INFO("ddr type : 0x%x not in list\n", ddr_type);
+		break;
+	}
 
 	if (sde_is_custom_client()) {
 		/* No support for SMART_DMA_V1 yet */
@@ -8784,6 +8860,9 @@ static void sde_cp_crtc_apply_noise(struct drm_crtc *crtc,
 void sde_crtc_disable_cp_features(struct drm_crtc *crtc)
 {
 	sde_cp_disable_features(crtc);
+
+	if (!crtc->state->active)
+		sde_crtc_disable_dest_scaler(crtc);
 }
 
 void _sde_crtc_vm_release_notify(struct drm_crtc *crtc)

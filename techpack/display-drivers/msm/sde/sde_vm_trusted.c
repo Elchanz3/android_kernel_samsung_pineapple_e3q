@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -33,22 +33,39 @@ int _sde_vm_validate_sgl(struct gh_sgl_desc *expected,
 {
 	u32 idx;
 
+	sort(assigned->sgl_entries, assigned->n_sgl_entries,
+			sizeof(assigned->sgl_entries[0]), __sgl_cmp, NULL);
+
 	/*
 	 * fragmented address spaces are not supported.
 	 * So the number of sgl entries is expected to be the same.
 	 */
-	if (expected->n_sgl_entries != assigned->n_sgl_entries)
-		return -E2BIG;
+	if (expected->n_sgl_entries != assigned->n_sgl_entries) {
+		SDE_ERROR("expected sgl entries = %d, assigned sgl entries = %d\n",
+				expected->n_sgl_entries, assigned->n_sgl_entries);
 
-	sort(assigned->sgl_entries, assigned->n_sgl_entries,
-			sizeof(assigned->sgl_entries[0]), __sgl_cmp, NULL);
+		for (idx = 0; idx < expected->n_sgl_entries; idx++) {
+			struct gh_sgl_entry *e = &expected->sgl_entries[idx];
+
+			SDE_ERROR("expected sgl entry: (0x%llx - %llx)\n",
+				   e->ipa_base, e->size);
+		}
+
+		for (idx = 0; idx < assigned->n_sgl_entries; idx++) {
+			struct gh_sgl_entry *a = &assigned->sgl_entries[idx];
+
+			SDE_ERROR("assigned sgl entry: (0x%llx - %llx)\n",
+				   a->ipa_base, a->size);
+		}
+		return -E2BIG;
+	}
 
 	for (idx = 0; idx < expected->n_sgl_entries; idx++) {
 		struct gh_sgl_entry *e = &expected->sgl_entries[idx];
 		struct gh_sgl_entry *a = &assigned->sgl_entries[idx];
 
 		if ((e->ipa_base != a->ipa_base) || (e->size != a->size)) {
-			SDE_DEBUG("sgl mismatch: (%llu - %llu) vs (%llu - %llu)\n",
+			SDE_ERROR("sgl mismatch: (%llu - %llu) vs (%llu - %llu)\n",
 				   e->ipa_base, e->size, a->ipa_base, a->size);
 			return -EINVAL;
 		}
@@ -291,7 +308,7 @@ static int _sde_vm_accept_mem(struct sde_vm *vm)
 		SDE_ERROR("failed to populate acl data, rc=%ld\n",
 			   PTR_ERR(acl_desc));
 		rc = PTR_ERR(acl_desc);
-		goto done;
+		return rc;
 	}
 
 	sgl_desc = gh_rm_mem_accept(sde_vm->base.io_mem_handle,
@@ -309,7 +326,7 @@ static int _sde_vm_accept_mem(struct sde_vm *vm)
 
 		/* ACCEPT didn't go through. So no need to call the RELEASE */
 		sde_vm->base.io_mem_handle = -1;
-		goto accept_fail;
+		goto acl_done;
 	}
 
 	rc = _sde_vm_validate_sgl(sde_vm->sgl_desc, sgl_desc);
@@ -317,16 +334,15 @@ static int _sde_vm_accept_mem(struct sde_vm *vm)
 		SDE_ERROR(
 			"failed in sgl validation for SDE_VM_MEM_LABEL label, rc = %d\n",
 			rc);
-		goto accept_fail;
+		goto sgl_done;
 	}
 
 	SDE_INFO("mem accept succeeded for SDE_VM_MEM_LABEL label\n");
 
-	return 0;
-
-accept_fail:
+sgl_done:
+	kvfree(sgl_desc);
+acl_done:
 	kfree(acl_desc);
-done:
 	return rc;
 }
 

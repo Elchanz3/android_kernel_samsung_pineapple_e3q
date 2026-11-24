@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -21,6 +21,8 @@
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
 #include "ss_dsi_panel_common.h"
 #endif
+
+#include "msm_drv.h"
 
 /*************************************************************
  * MACRO DEFINITION
@@ -49,6 +51,8 @@
 /* max mixer blend stages */
 #define DEFAULT_SDE_MIXER_BLENDSTAGES 7
 
+/* dummy block base address */
+#define DUMMY_SDE_BLOCK_BASE 0x0f0f
 /*
  * max bank bit for macro tile and ubwc format.
  * this value is left shifted and written to register
@@ -216,12 +220,14 @@ enum sde_prop {
 	DIM_LAYER,
 	SMART_DMA_REV,
 	IDLE_PC,
+	ENABLE_HIBERNATION,
 	WAKEUP_WITH_TOUCH,
 	DEST_SCALER,
 	SMART_PANEL_ALIGN_MODE,
 	MACROTILE_MODE,
 	UBWC_BW_CALC_VERSION,
 	PIPE_ORDER_VERSION,
+	DDR_TYPE,
 	SEC_SID_MASK,
 	BASE_LAYER,
 	TRUSTED_VM_ENV,
@@ -623,6 +629,8 @@ static struct sde_prop_type sde_prop[] = {
 	{DIM_LAYER, "qcom,sde-has-dim-layer", false, PROP_TYPE_BOOL},
 	{SMART_DMA_REV, "qcom,sde-smart-dma-rev", false, PROP_TYPE_STRING},
 	{IDLE_PC, "qcom,sde-has-idle-pc", false, PROP_TYPE_BOOL},
+	{ENABLE_HIBERNATION, "qcom,sde-enable-hibernation", false,
+			PROP_TYPE_BOOL},
 	{WAKEUP_WITH_TOUCH, "qcom,sde-wakeup-with-touch", false,
 			PROP_TYPE_BOOL},
 	{DEST_SCALER, "qcom,sde-has-dest-scaler", false, PROP_TYPE_BOOL},
@@ -633,6 +641,7 @@ static struct sde_prop_type sde_prop[] = {
 			PROP_TYPE_U32},
 	{PIPE_ORDER_VERSION, "qcom,sde-pipe-order-version", false,
 			PROP_TYPE_U32},
+	{DDR_TYPE, "qcom,sde-ddr-type", false, PROP_TYPE_U32_ARRAY},
 	{SEC_SID_MASK, "qcom,sde-secure-sid-mask", false, PROP_TYPE_U32_ARRAY},
 	{BASE_LAYER, "qcom,sde-mixer-stage-base-layer", false, PROP_TYPE_BOOL},
 	{TRUSTED_VM_ENV, "qcom,sde-trusted-vm-env", false, PROP_TYPE_BOOL},
@@ -2231,6 +2240,39 @@ u32 sde_hw_mixer_set_preference(struct sde_mdss_cfg *sde_cfg, u32 num_lm,
 	return lm_mask;
 }
 
+static void sde_mixer_helper_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_cfg,
+				      struct sde_lm_cfg *mixer, int index)
+{
+	const char *disp_pref = NULL;
+	const char *cwb_pref = NULL;
+	const char *dcwb_pref = NULL;
+
+	if (test_bit(SDE_FEATURE_SRC_SPLIT, sde_cfg->features))
+		set_bit(SDE_MIXER_SOURCESPLIT, &mixer->features);
+	if (test_bit(SDE_FEATURE_DIM_LAYER, sde_cfg->features))
+		set_bit(SDE_DIM_LAYER, &mixer->features);
+	if (test_bit(SDE_FEATURE_COMBINED_ALPHA, sde_cfg->features))
+		set_bit(SDE_MIXER_COMBINED_ALPHA, &mixer->features);
+
+	of_property_read_string_index(np,
+		mixer_prop[MIXER_DISP].prop_name, index, &disp_pref);
+	if (disp_pref && !strcmp(disp_pref, "primary"))
+		set_bit(SDE_DISP_PRIMARY_PREF, &mixer->features);
+
+	of_property_read_string_index(np,
+		mixer_prop[MIXER_CWB].prop_name, index, &cwb_pref);
+	if (cwb_pref && !strcmp(cwb_pref, "cwb"))
+		set_bit(SDE_DISP_CWB_PREF, &mixer->features);
+
+	if (BIT(mixer->id - LM_0) & sde_cfg->virtual_mixers_mask)
+		set_bit(SDE_MIXER_IS_VIRTUAL, &mixer->features);
+
+	of_property_read_string_index(np,
+		mixer_prop[MIXER_DCWB].prop_name, index, &dcwb_pref);
+	if (dcwb_pref && !strcmp(dcwb_pref, "dcwb"))
+		set_bit(SDE_DISP_DCWB_PREF, &mixer->features);
+}
+
 static int sde_mixer_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_cfg)
 {
 	int rc = 0, i, j;
@@ -2281,10 +2323,6 @@ static int sde_mixer_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_c
 
 	for (i = 0, mixer_count = 0, pp_idx = 0, dspp_idx = 0, ds_idx = 0,
 			merge_3d_idx = 0; i < off_count; i++) {
-		const char *disp_pref = NULL;
-		const char *cwb_pref = NULL;
-		const char *dcwb_pref = NULL;
-		u32 dummy_mixer_base = 0x0f0f;
 
 		mixer_base = PROP_VALUE_ACCESS(props->values, MIXER_OFF, i);
 		if (!mixer_base)
@@ -2321,32 +2359,14 @@ static int sde_mixer_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_c
 				PROP_VALUE_ACCESS(blend_props->values,
 						MIXER_BLEND_OP_OFF, j);
 
-		if (test_bit(SDE_FEATURE_SRC_SPLIT, sde_cfg->features))
-			set_bit(SDE_MIXER_SOURCESPLIT, &mixer->features);
-		if (test_bit(SDE_FEATURE_DIM_LAYER, sde_cfg->features))
-			set_bit(SDE_DIM_LAYER, &mixer->features);
-		if (test_bit(SDE_FEATURE_COMBINED_ALPHA, sde_cfg->features))
-			set_bit(SDE_MIXER_COMBINED_ALPHA, &mixer->features);
+		sde_mixer_helper_parse_dt(np, sde_cfg, mixer, i);
 
-		of_property_read_string_index(np,
-			mixer_prop[MIXER_DISP].prop_name, i, &disp_pref);
-		if (disp_pref && !strcmp(disp_pref, "primary"))
-			set_bit(SDE_DISP_PRIMARY_PREF, &mixer->features);
-
-		of_property_read_string_index(np,
-			mixer_prop[MIXER_CWB].prop_name, i, &cwb_pref);
-		if (cwb_pref && !strcmp(cwb_pref, "cwb"))
-			set_bit(SDE_DISP_CWB_PREF, &mixer->features);
-
-		of_property_read_string_index(np,
-			mixer_prop[MIXER_DCWB].prop_name, i, &dcwb_pref);
-		if (dcwb_pref && !strcmp(dcwb_pref, "dcwb")) {
-			set_bit(SDE_DISP_DCWB_PREF, &mixer->features);
-			if (mixer->base == dummy_mixer_base) {
-				mixer->base = 0x0;
-				mixer->len = 0;
-				mixer->dummy_mixer = true;
-			}
+		if ((mixer->features & BIT(SDE_MIXER_IS_VIRTUAL) ||
+				mixer->features & BIT(SDE_DISP_DCWB_PREF)) &&
+				(mixer->base == DUMMY_SDE_BLOCK_BASE)) {
+			mixer->base = 0x0;
+			mixer->len = 0;
+			mixer->dummy_mixer = true;
 		}
 
 		mixer->pingpong = pp_count > 0 ? pp_idx + PINGPONG_0
@@ -3783,29 +3803,29 @@ static int _sde_vbif_populate_qos_parsing(struct sde_mdss_cfg *sde_cfg,
 {
 	int i, j, prop_index = VBIF_QOS_RT_REMAP;
 	u32 entries;
+	u32 ddr_list_index;
 
 	for (i = VBIF_RT_CLIENT; ((i < VBIF_MAX_CLIENT) && (prop_index < VBIF_PROP_MAX));
 						i++, prop_index++) {
-		vbif->qos_tbl[i].count = prop_count[prop_index];
-		SDE_DEBUG("qos_tbl[%d].count=%u\n", i, vbif->qos_tbl[i].count);
-
 		entries = 2 * sde_cfg->vbif_qos_nlvl;
-		if (vbif->qos_tbl[i].count == entries) {
-			vbif->qos_tbl[i].priority_lvl = kcalloc(entries, sizeof(u32), GFP_KERNEL);
-			if (!vbif->qos_tbl[i].priority_lvl) {
-				vbif->qos_tbl[i].count = 0;
-				return -ENOMEM;
-			}
-		} else if (vbif->qos_tbl[i].count) {
+		vbif->qos_tbl[i].count = prop_count[prop_index];
+
+		ddr_list_index = (vbif->qos_tbl[i].count == entries) ?
+					0 : sde_cfg->ddr_list_index;
+
+		SDE_DEBUG("qos_tbl[%d].count=%u, ddr_list_index=%u\n",
+				i, vbif->qos_tbl[i].count, ddr_list_index);
+
+		vbif->qos_tbl[i].priority_lvl = kcalloc(entries, sizeof(u32), GFP_KERNEL);
+		if (!vbif->qos_tbl[i].priority_lvl) {
 			vbif->qos_tbl[i].count = 0;
-			vbif->qos_tbl[i].priority_lvl = NULL;
-			SDE_ERROR("invalid qos table for client:%d, prop:%d\n", i, prop_index);
-			continue;
+			return -ENOMEM;
 		}
 
-		for (j = 0; j < vbif->qos_tbl[i].count; j++) {
+		for (j = 0; j < entries; j++) {
 			vbif->qos_tbl[i].priority_lvl[j] =
-					PROP_VALUE_ACCESS(prop_value, prop_index, j);
+					PROP_VALUE_ACCESS(prop_value, prop_index,
+					entries * ddr_list_index + j);
 			SDE_DEBUG("client:%d, prop:%d, lvl[%d]=%u\n", i, prop_index, j,
 					vbif->qos_tbl[i].priority_lvl[j]);
 		}
@@ -4084,6 +4104,13 @@ static int sde_pp_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_cfg)
 			pp->merge_3d_id = PROP_VALUE_ACCESS(prop_value,
 					PP_MERGE_3D_ID, i) + 1;
 		}
+
+		if (pp->base == DUMMY_SDE_BLOCK_BASE) {
+			pp->base = 0x0;
+			pp->len = 0;
+			sblk->dither.base = 0x0;
+			sblk->dither.len = 0;
+		}
 	}
 
 end:
@@ -4168,6 +4195,16 @@ static void _sde_top_parse_dt_helper(struct sde_mdss_cfg *cfg,
 	if (!cfg->ipcc_protocol_id || !cfg->ipcc_client_phys_id)
 		cfg->hw_fence_rev = 0; /* disable hw fences*/
 
+	if (props->exists[DDR_TYPE]) {
+		for (i = 0; i < props->counts[DDR_TYPE]; i++) {
+			ddr_type = PROP_VALUE_ACCESS(props->values, DDR_TYPE, i);
+			if (ddr_type == of_fdt_get_ddrtype()) {
+				cfg->ddr_list_index = i;
+				break;
+			}
+		}
+	}
+
 	if (props->exists[SEC_SID_MASK]) {
 		cfg->sec_sid_mask_count = props->counts[SEC_SID_MASK];
 		for (i = 0; i < cfg->sec_sid_mask_count; i++)
@@ -4181,6 +4218,8 @@ static void _sde_top_parse_dt_helper(struct sde_mdss_cfg *cfg,
 		set_bit(SDE_FEATURE_DIM_LAYER, cfg->features);
 	if (PROP_VALUE_ACCESS(props->values, IDLE_PC, 0))
 		set_bit(SDE_FEATURE_IDLE_PC, cfg->features);
+	if (PROP_VALUE_ACCESS(props->values, ENABLE_HIBERNATION, 0))
+		set_bit(SDE_FEATURE_ENABLE_HIBERNATION, cfg->features);
 	if (PROP_VALUE_ACCESS(props->values, WAKEUP_WITH_TOUCH, 0))
 		set_bit(SDE_FEATURE_TOUCH_WAKEUP, cfg->features);
 	cfg->pipe_order_type = PROP_VALUE_ACCESS(props->values,
@@ -4789,6 +4828,11 @@ static int sde_parse_merge_3d_dt(struct device_node *np,
 		snprintf(merge_3d->name, SDE_HW_BLK_NAME_LEN, "merge_3d_%u",
 				merge_3d->id -  MERGE_3D_0);
 		merge_3d->len = PROP_VALUE_ACCESS(prop_value, HW_LEN, 0);
+
+		if (merge_3d->base == DUMMY_SDE_BLOCK_BASE) {
+			merge_3d->base = 0x0;
+			merge_3d->len = 0;
+		}
 	}
 
 end:
@@ -5045,6 +5089,22 @@ static void _sde_hw_setup_uidle(struct sde_uidle_cfg *uidle_cfg)
 		uidle_cfg->fal10_threshold = SDE_UIDLE_FAL10_THRESHOLD_60;
 		set_bit(SDE_UIDLE_WB_FAL_STATUS, &uidle_cfg->features);
 	}
+}
+
+static void _sde_get_hw_caps(struct drm_device *dev,
+			struct sde_mdss_cfg *sde_cfg)
+{
+	struct sde_kms *sde_kms;
+
+	if (!ddev_to_msm_kms(dev))
+		return;
+
+	sde_kms = to_sde_kms(ddev_to_msm_kms(dev));
+
+	if (IS_VOLCANO_TARGET(sde_cfg->hw_rev))
+		sde_cfg->capabilities = readl_relaxed(sde_kms->mmio + 0x68);
+	else
+		sde_cfg->capabilities = 0;
 }
 
 static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
@@ -5414,6 +5474,32 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->demura_supported[SSPP_DMA3][0] = 0;
 		sde_cfg->demura_supported[SSPP_DMA3][1] = 1;
 		sde_cfg->has_line_insertion = true;
+	} else if (IS_NEO_TARGET(hw_rev)) {
+		set_bit(SDE_FEATURE_DEDICATED_CWB, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_DITHER, sde_cfg->features);
+		set_bit(SDE_FEATURE_WB_UBWC, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_CROP, sde_cfg->features);
+		set_bit(SDE_FEATURE_QSYNC, sde_cfg->features);
+		sde_cfg->perf.min_prefill_lines = 40;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		set_bit(SDE_FEATURE_3D_MERGE_RESET, sde_cfg->features);
+		clear_bit(SDE_FEATURE_HDR, sde_cfg->features);
+		set_bit(SDE_FEATURE_INLINE_SKIP_THRESHOLD, sde_cfg->features);
+		set_bit(SDE_MDP_DHDR_MEMPOOL_4K, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_VIG_P010, sde_cfg->features);
+		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_2_0_1;
+		set_bit(SDE_FEATURE_VBIF_DISABLE_SHAREABLE, sde_cfg->features);
+		set_bit(SDE_FEATURE_DITHER_LUMA_MODE, sde_cfg->features);
+		sde_cfg->mdss_hw_block_size = 0x158;
+		set_bit(SDE_FEATURE_MULTIRECT_ERROR, sde_cfg->features);
+		set_bit(SDE_FEATURE_FP16, sde_cfg->features);
+		set_bit(SDE_MDP_PERIPH_TOP_0_REMOVED, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_HW_VSYNC_TS, sde_cfg->features);
+		set_bit(SDE_FEATURE_AVR_STEP, sde_cfg->features);
+		set_bit(SDE_FEATURE_UBWC_STATS, sde_cfg->features);
+		set_bit(SDE_FEATURE_VBIF_CLK_SPLIT, sde_cfg->features);
 	} else if (IS_PINEAPPLE_TARGET(hw_rev)) {
 		set_bit(SDE_FEATURE_DEDICATED_CWB, sde_cfg->features);
 		set_bit(SDE_FEATURE_DUAL_DEDICATED_CWB, sde_cfg->features);
@@ -5468,6 +5554,111 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->demura_supported[SSPP_DMA3][0] = BIT(DEMURA_0) | BIT(DEMURA_2);
 		sde_cfg->demura_supported[SSPP_DMA3][1] = BIT(DEMURA_1) | BIT(DEMURA_3);
 		sde_cfg->has_line_insertion = true;
+	} else if (IS_CLIFFS_TARGET(hw_rev)) {
+		set_bit(SDE_FEATURE_DEDICATED_CWB, sde_cfg->features);
+		set_bit(SDE_FEATURE_DUAL_DEDICATED_CWB, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_DITHER, sde_cfg->features);
+		set_bit(SDE_FEATURE_WB_UBWC, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_CROP, sde_cfg->features);
+		set_bit(SDE_FEATURE_QSYNC, sde_cfg->features);
+		set_bit(SDE_FEATURE_3D_MERGE_RESET, sde_cfg->features);
+		set_bit(SDE_FEATURE_HDR_PLUS, sde_cfg->features);
+		set_bit(SDE_FEATURE_INLINE_SKIP_THRESHOLD, sde_cfg->features);
+		set_bit(SDE_MDP_DHDR_MEMPOOL_4K, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_VIG_P010, sde_cfg->features);
+		set_bit(SDE_FEATURE_VBIF_DISABLE_SHAREABLE, sde_cfg->features);
+		set_bit(SDE_FEATURE_DITHER_LUMA_MODE, sde_cfg->features);
+		set_bit(SDE_FEATURE_MULTIRECT_ERROR, sde_cfg->features);
+		set_bit(SDE_FEATURE_FP16, sde_cfg->features);
+		set_bit(SDE_MDP_PERIPH_TOP_0_REMOVED, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_DEMURA, sde_cfg->features);
+		set_bit(SDE_FEATURE_UBWC_STATS, sde_cfg->features);
+		set_bit(SDE_FEATURE_HW_VSYNC_TS, sde_cfg->features);
+		set_bit(SDE_FEATURE_AVR_STEP, sde_cfg->features);
+		set_bit(SDE_FEATURE_VBIF_CLK_SPLIT, sde_cfg->features);
+		set_bit(SDE_FEATURE_TRUSTED_VM, sde_cfg->features);
+		set_bit(SDE_FEATURE_CTL_DONE, sde_cfg->features);
+		set_bit(SDE_SYS_CACHE_DISP, sde_cfg->sde_sys_cache_type_map);
+		set_bit(SDE_FEATURE_SYS_CACHE_NSE, sde_cfg->features);
+		set_bit(SDE_FEATURE_SYS_CACHE_STALING, sde_cfg->features);
+		set_bit(SDE_FEATURE_WB_ROTATION, sde_cfg->features);
+		set_bit(SDE_FEATURE_EPT, sde_cfg->features);
+		sde_cfg->allowed_dsc_reservation_switch = SDE_DP_DSC_RESERVATION_SWITCH;
+		sde_cfg->autorefresh_disable_seq = AUTOREFRESH_DISABLE_SEQ2;
+		/* if pingpong block supports it this should not be set on top block */
+		sde_cfg->ppb_sz_program = SDE_PPB_SIZE_THRU_TOP;
+		sde_cfg->perf.min_prefill_lines = 40;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->qos_target_time_ns = 11160;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_2_0_1;
+		sde_cfg->uidle_cfg.uidle_rev = SDE_UIDLE_VERSION_1_0_4;
+		sde_cfg->sid_rev = SDE_SID_VERSION_2_0_0;
+		sde_cfg->mdss_hw_block_size = 0x158;
+		sde_cfg->demura_supported[SSPP_DMA1][0] = BIT(DEMURA_0) | BIT(DEMURA_2);
+		sde_cfg->demura_supported[SSPP_DMA1][1] = BIT(DEMURA_1);
+		sde_cfg->demura_supported[SSPP_DMA3][0] = BIT(DEMURA_0) | BIT(DEMURA_2);
+		sde_cfg->demura_supported[SSPP_DMA3][1] = BIT(DEMURA_1);
+		sde_cfg->has_line_insertion = true;
+	} else if (IS_VOLCANO_TARGET(hw_rev)) {
+		set_bit(SDE_FEATURE_DEDICATED_CWB, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_DITHER, sde_cfg->features);
+		set_bit(SDE_FEATURE_CWB_CROP, sde_cfg->features);
+		set_bit(SDE_FEATURE_QSYNC, sde_cfg->features);
+		set_bit(SDE_FEATURE_3D_MERGE_RESET, sde_cfg->features);
+		set_bit(SDE_FEATURE_HDR_PLUS, sde_cfg->features);
+		set_bit(SDE_FEATURE_INLINE_SKIP_THRESHOLD, sde_cfg->features);
+		set_bit(SDE_MDP_DHDR_MEMPOOL_4K, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_VIG_P010, sde_cfg->features);
+		set_bit(SDE_FEATURE_VBIF_DISABLE_SHAREABLE, sde_cfg->features);
+		set_bit(SDE_FEATURE_DITHER_LUMA_MODE, sde_cfg->features);
+		set_bit(SDE_FEATURE_MULTIRECT_ERROR, sde_cfg->features);
+		set_bit(SDE_FEATURE_FP16, sde_cfg->features);
+		set_bit(SDE_MDP_PERIPH_TOP_0_REMOVED, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_DEMURA, sde_cfg->features);
+		set_bit(SDE_FEATURE_UBWC_STATS, sde_cfg->features);
+		set_bit(SDE_FEATURE_HW_VSYNC_TS, sde_cfg->features);
+		set_bit(SDE_FEATURE_AVR_STEP, sde_cfg->features);
+		set_bit(SDE_FEATURE_VBIF_CLK_SPLIT, sde_cfg->features);
+		set_bit(SDE_FEATURE_TRUSTED_VM, sde_cfg->features);
+		set_bit(SDE_FEATURE_CTL_DONE, sde_cfg->features);
+		set_bit(SDE_FEATURE_WB_ROTATION, sde_cfg->features);
+		set_bit(SDE_FEATURE_EPT, sde_cfg->features);
+		sde_cfg->allowed_dsc_reservation_switch = SDE_DP_DSC_RESERVATION_SWITCH;
+		sde_cfg->autorefresh_disable_seq = AUTOREFRESH_DISABLE_SEQ2;
+		/* if pingpong block supports it this should not be set on top block */
+		sde_cfg->ppb_sz_program = SDE_PPB_SIZE_THRU_TOP;
+		sde_cfg->perf.min_prefill_lines = 40;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->qos_target_time_ns = 18600;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_2_0_1;
+		sde_cfg->uidle_cfg.uidle_rev = SDE_UIDLE_VERSION_1_0_4;
+		sde_cfg->uidle_cfg.fal10_override = true;
+		sde_cfg->sid_rev = SDE_SID_VERSION_2_0_0;
+		sde_cfg->mdss_hw_block_size = 0x158;
+		sde_cfg->demura_supported[SSPP_DMA1][0] = BIT(DEMURA_0);
+		sde_cfg->has_line_insertion = true;
+		sde_cfg->virtual_mixers_mask = 0x2;
+	} else if (IS_PITTI_TARGET(hw_rev)) {
+		set_bit(SDE_FEATURE_QSYNC, sde_cfg->features);
+		sde_cfg->perf.min_prefill_lines = 40;
+		sde_cfg->has_reduced_ob_max = true;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		set_bit(SDE_FEATURE_INLINE_SKIP_THRESHOLD, sde_cfg->features);
+		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_2_0_1;
+		set_bit(SDE_FEATURE_VBIF_DISABLE_SHAREABLE, sde_cfg->features);
+		sde_cfg->mdss_hw_block_size = 0x158;
+		set_bit(SDE_FEATURE_MULTIRECT_ERROR, sde_cfg->features);
+		set_bit(SDE_MDP_PERIPH_TOP_0_REMOVED, &sde_cfg->mdp[0].features);
+		set_bit(SDE_FEATURE_HW_VSYNC_TS, sde_cfg->features);
+		set_bit(SDE_FEATURE_AVR_STEP, sde_cfg->features);
+		set_bit(SDE_FEATURE_UBWC_STATS, sde_cfg->features);
+		set_bit(SDE_FEATURE_EPT, sde_cfg->features);
 	} else {
 		SDE_ERROR("unsupported chipset id:%X\n", hw_rev);
 		sde_cfg->perf.min_prefill_lines = 0xffff;
@@ -5694,6 +5885,7 @@ static int sde_hw_ver_parse_dt(struct drm_device *dev, struct device_node *np,
 	else
 		cfg->hw_fence_rev = 0; /* disable hw-fences */
 
+	 _sde_get_hw_caps(dev, cfg);
 end:
 	kfree(prop_value);
 	return rc;

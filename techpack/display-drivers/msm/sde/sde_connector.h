@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -568,6 +568,7 @@ struct sde_misr_sign {
  * @qsync_mode: Cached Qsync mode, 0=disabled, 1=continuous mode
  * @qsync_updated: Qsync settings were updated
  * @ept_fps: ept fps is updated, 0 means ept_fps is disabled
+ * @capabilities: display capabilities of the hardware
  * @colorspace_updated: Colorspace property was updated
  * @last_cmd_tx_sts: status of the last command transfer
  * @hdr_capable: external hdr support present
@@ -644,6 +645,8 @@ struct sde_connector {
 	u32 qsync_mode;
 	bool qsync_updated;
 	u32 ept_fps;
+
+	u32 capabilities;
 
 	bool colorspace_updated;
 

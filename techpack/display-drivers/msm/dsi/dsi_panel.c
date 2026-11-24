@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/delay.h>
+#include <linux/firmware.h>
+#include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/pwm.h>
+#include <linux/string.h>
 #include <video/mipi_display.h>
 
 #include "dsi_panel.h"
 #include "dsi_ctrl_hw.h"
+#include "dsi_defs.h"
 #include "dsi_parser.h"
 #include "sde_dbg.h"
 #include "sde_dsc_helper.h"
@@ -216,7 +220,7 @@ static int dsi_panel_trigger_esd_attack_sub(int reset_gpio)
 		return -EINVAL;
 	}
 
-	gpio_set_value(reset_gpio, 0);
+	gpio_set_value_cansleep(reset_gpio, 0);
 
 	SDE_EVT32(SDE_EVTLOG_FUNC_CASE1);
 	DSI_INFO("GPIO pulled low to simulate ESD\n");
@@ -299,7 +303,7 @@ static int dsi_panel_reset(struct dsi_panel *panel)
 	}
 
 	for (i = 0; i < r_config->count; i++) {
-		gpio_set_value(r_config->reset_gpio,
+		gpio_set_value_cansleep(r_config->reset_gpio,
 			       r_config->sequence[i].level);
 
 
@@ -404,10 +408,10 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 
 error_disable_gpio:
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
-		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
+		gpio_set_value_cansleep(panel->reset_config.disp_en_gpio, 0);
 
 	if (gpio_is_valid(panel->bl_config.en_gpio))
-		gpio_set_value(panel->bl_config.en_gpio, 0);
+		gpio_set_value_cansleep(panel->bl_config.en_gpio, 0);
 
 	(void)dsi_panel_set_pinctrl_state(panel, false);
 
@@ -427,14 +431,14 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 #endif
 
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
-		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
+		gpio_set_value_cansleep(panel->reset_config.disp_en_gpio, 0);
 
 	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
 					!panel->reset_gpio_always_on)
-		gpio_set_value(panel->reset_config.reset_gpio, 0);
+		gpio_set_value_cansleep(panel->reset_config.reset_gpio, 0);
 
 	if (gpio_is_valid(panel->reset_config.lcd_mode_sel_gpio))
-		gpio_set_value(panel->reset_config.lcd_mode_sel_gpio, 0);
+		gpio_set_value_cansleep(panel->reset_config.lcd_mode_sel_gpio, 0);
 
 	if (gpio_is_valid(panel->panel_test_gpio)) {
 		rc = gpio_direction_input(panel->panel_test_gpio);
@@ -839,7 +843,7 @@ static u32 dsi_panel_get_brightness(struct dsi_backlight_config *bl)
 	switch (bl->type) {
 	case DSI_BACKLIGHT_WLED:
 		/* Try to query the backlight level from the backlight device */
-		if (bd->ops && bd->ops->get_brightness)
+		if (bd && bd->ops && bd->ops->get_brightness)
 			cur_bl_level = bd->ops->get_brightness(bd);
 		break;
 	case DSI_BACKLIGHT_DCS:
@@ -2065,6 +2069,7 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command",
 	"qcom,mdss-dsi-qsync-on-commands",
 	"qcom,mdss-dsi-qsync-off-commands",
+	"qcom,mdss-dsi-calibration-commands",
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -2093,6 +2098,7 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command-state",
 	"qcom,mdss-dsi-qsync-on-commands-state",
 	"qcom,mdss-dsi-qsync-off-commands-state",
+	"qcom,mdss-dsi-calibration-commands-state",
 };
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -2134,7 +2140,8 @@ int dsi_panel_create_cmd_packets(const char *data,
 		cmd[i].msg.type = data[0];
 		cmd[i].msg.channel = data[2];
 		cmd[i].msg.flags |= data[3];
-		cmd[i].ctrl = 0;
+		/* Use the two MSBs of data[1] to specify the DSI ctrl index */
+		cmd[i].ctrl = data[1] >> 6;
 		cmd[i].post_wait_ms = data[4];
 		cmd[i].msg.tx_len = ((data[5] << 8) | (data[6]));
 
@@ -2202,7 +2209,8 @@ int dsi_panel_alloc_cmd_packets(struct dsi_panel_cmd_set *cmd,
 	return 0;
 }
 
-static int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
+static int dsi_panel_parse_cmd_sets_sub(struct dsi_panel *panel,
+					struct dsi_panel_cmd_set *cmd,
 					enum dsi_cmd_set_type type,
 					struct dsi_parser_utils *utils)
 {
@@ -2212,8 +2220,16 @@ static int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
 	const char *state;
 	u32 packet_count = 0;
 
-	data = utils->get_property(utils->data, cmd_set_prop_map[type],
-			&length);
+	if ((type == DSI_CMD_SET_CALIBRATION_DATA) &&
+		panel->calib_data.data && panel->calib_data.len) {
+		// For calibration data, check if it exists as fw first.
+		DSI_INFO("%s using %s calibration data for %s\n", __func__,
+				panel->type, cmd_set_prop_map[type]);
+		data = panel->calib_data.data;
+		length = panel->calib_data.len;
+	} else {
+		data = utils->get_property(utils->data, cmd_set_prop_map[type], &length);
+	}
 	if (!data) {
 		DSI_DEBUG("%s commands not defined\n", cmd_set_prop_map[type]);
 		rc = -ENOTSUPP;
@@ -2231,7 +2247,7 @@ static int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
 		DSI_ERR("commands failed, rc=%d\n", rc);
 		goto error;
 	}
-	DSI_DEBUG("[%s] packet-count=%d, %d\n", cmd_set_prop_map[type],
+	DSI_DEBUG("[%s] packet-count=%d, length=%d\n", cmd_set_prop_map[type],
 		packet_count, length);
 
 	rc = dsi_panel_alloc_cmd_packets(cmd, packet_count);
@@ -2268,6 +2284,7 @@ error:
 }
 
 static int dsi_panel_parse_cmd_sets(
+		struct dsi_panel *panel,
 		struct dsi_display_mode_priv_info *priv_info,
 		struct dsi_parser_utils *utils)
 {
@@ -2292,7 +2309,7 @@ static int dsi_panel_parse_cmd_sets(
 					i, rc);
 			set->state = DSI_CMD_SET_STATE_LP;
 		} else {
-			rc = dsi_panel_parse_cmd_sets_sub(set, i, utils);
+			rc = dsi_panel_parse_cmd_sets_sub(panel, set, i, utils);
 			if (rc)
 				DSI_DEBUG("failed to parse set %d\n", i);
 		}
@@ -2402,6 +2419,9 @@ static int dsi_panel_parse_misc_features(struct dsi_panel *panel)
 
 	panel->reset_gpio_always_on = utils->read_bool(utils->data,
 			"qcom,platform-reset-gpio-always-on");
+
+	panel->calibration_enabled = utils->read_bool(utils->data,
+			"qcom,mdss-dsi-panel-calibration-enabled");
 
 	panel->spr_info.enable = false;
 	panel->spr_info.pack_type = MSM_DISPLAY_SPR_TYPE_MAX;
@@ -3346,6 +3366,7 @@ static int dsi_panel_parse_topology(
 		goto parse_fail;
 	}
 
+parse_done:
 	if (!(priv_info->dsc_enabled || priv_info->vdc_enabled) !=
 			!topology[top_sel].num_enc) {
 		DSI_ERR("topology and compression info mismatch dsc:%d vdc:%d num_enc:%d\n",
@@ -3364,7 +3385,6 @@ static int dsi_panel_parse_topology(
 		topology[top_sel].num_enc,
 		topology[top_sel].num_intf);
 
-parse_done:
 	memcpy(&priv_info->topology, &topology[top_sel],
 		sizeof(struct msm_display_topology));
 parse_fail:
@@ -3636,7 +3656,7 @@ int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel)
 	if (!esd_config)
 		return -EINVAL;
 
-	dsi_panel_parse_cmd_sets_sub(&esd_config->status_cmd,
+	dsi_panel_parse_cmd_sets_sub(panel, &esd_config->status_cmd,
 				DSI_CMD_SET_PANEL_STATUS, utils);
 	if (!esd_config->status_cmd.count) {
 		DSI_ERR("panel status command parsing failed\n");
@@ -3774,6 +3794,8 @@ static int dsi_panel_parse_esd_config(struct dsi_panel *panel)
 				rc = -EINVAL;
 				goto error;
 			}
+		} else if (!strcmp(string, "esd_sw_sim_success")) {
+			esd_config->status_mode = ESD_MODE_SW_SIM_SUCCESS;
 		} else {
 			DSI_ERR("No valid panel-status-check-mode string\n");
 			rc = -EINVAL;
@@ -3801,6 +3823,8 @@ static int dsi_panel_parse_esd_config(struct dsi_panel *panel)
 #endif
 	} else if (panel->esd_config.status_mode ==  ESD_MODE_PANEL_TE) {
 		esd_mode = "te_check";
+	} else if (panel->esd_config.status_mode ==  ESD_MODE_SW_SIM_SUCCESS) {
+		esd_mode = "sim_success";
 	}
 
 	DSI_DEBUG("ESD enabled with mode: %s\n", esd_mode);
@@ -3875,6 +3899,85 @@ static void dsi_panel_setup_vm_ops(struct dsi_panel *panel, bool trusted_vm_env)
 	}
 }
 
+static int dsi_panel_parse_calib_data(struct dsi_panel *panel,
+			char *raw_calib_data_head, size_t data_size)
+{
+	int rc;
+	char *raw_calib_data = raw_calib_data_head;
+
+	if (!raw_calib_data || !data_size)
+		return -EINVAL;
+
+	// Each byte is represented by 2 hex and a space or endline
+	panel->calib_data.len = 0;
+	panel->calib_data.data = kvzalloc(data_size / 3 + 1, GFP_KERNEL);
+	if (!panel->calib_data.data) {
+		DSI_ERR("failed to allocated memory for display %s calibration data\n",
+				panel->type);
+		return -ENOMEM;
+	}
+
+	while (raw_calib_data && strlen(raw_calib_data)) {
+		int val;
+		char *token;
+
+		// Skip the rest of this line if '#' is encountered.
+		if (*raw_calib_data == '#') {
+			raw_calib_data = strchr(raw_calib_data, '\n');
+			if (raw_calib_data)
+				raw_calib_data++; // Move to the next character after '\n'
+			continue;
+		}
+
+		token = strsep(&raw_calib_data, "\n");
+		rc = kstrtoint(token, 16, &val);
+		if (rc) {
+			DSI_ERR("Error converting %s: %d, aborting calibration data\n",
+					rc, token);
+			kvfree(panel->calib_data.data);
+			panel->calib_data.data = NULL;
+			panel->calib_data.len = 0;
+			return rc;
+		}
+		panel->calib_data.data[panel->calib_data.len++] = (char)(val & 0xFF);
+	}
+	return 0;
+}
+
+static int dsi_panel_load_calib_data(struct dsi_panel *panel,
+			struct dsi_parser_utils *utils)
+{
+	const struct firmware *fw;
+	int ret;
+	char *raw_calib_data;
+	size_t fw_size;
+
+	if (!strcmp(panel->type, "primary"))
+		ret = firmware_request_nowarn(&fw, "dsi_calib_data", panel->parent);
+	else if (!strcmp(panel->type, "secondary"))
+		ret = firmware_request_nowarn(&fw, "dsi_calib_data_sec", panel->parent);
+	else
+		ret = -ENOENT;
+	if (ret)
+		return ret;
+
+	DSI_INFO("found calibration data for %s display, size: %llu\n",
+				panel->type, fw->size);
+	fw_size = fw->size;
+
+	raw_calib_data = kvzalloc(fw->size, GFP_KERNEL);
+	if (!raw_calib_data) {
+		DSI_ERR("failed to allocated memory for %s display calib data\n", panel->type);
+		return -ENOMEM;
+	}
+	memcpy(raw_calib_data, fw->data, fw->size);
+
+	ret = dsi_panel_parse_calib_data(panel, raw_calib_data, fw_size);
+	kvfree(raw_calib_data);
+	release_firmware(fw);
+	return ret;
+}
+
 struct dsi_panel *dsi_panel_get(struct device *parent,
 				struct device_node *of_node,
 				struct device_node *parser_node,
@@ -3926,6 +4029,16 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 		DSI_ERR("failed to parse host configuration, rc=%d\n",
 				rc);
 		goto error;
+	}
+
+	// We must get the calib data before parsing panel mode.
+	if (panel->calibration_enabled) {
+		rc = dsi_panel_load_calib_data(panel, utils);
+		if (rc)
+			DSI_WARN("not using calibration data for: %s display: %d\n",
+					panel->type, rc);
+		else
+			DSI_INFO("calibration data loaded for: %s display\n", panel->type);
 	}
 
 	rc = dsi_panel_parse_panel_mode(panel);
@@ -4243,16 +4356,8 @@ int dsi_panel_get_mode_count(struct dsi_panel *panel)
 	num_dfps_rates = !panel->dfps_caps.dfps_support ? 1 :
 					panel->dfps_caps.dfps_list_len;
 
-	/*
-	 * Inflate num_of_modes by fps in dfps.
-	 * Single command mode for video mode panels supporting
-	 * panel operating mode switch.
-	 */
+	/* Inflate num_of_modes by fps in dfps. */
 	num_video_modes = num_video_modes * num_dfps_rates;
-
-	if ((panel->panel_mode == DSI_OP_VIDEO_MODE) &&
-			(panel->panel_mode_switch_enabled))
-		num_cmd_modes  = 1;
 
 	panel->num_display_modes = num_video_modes + num_cmd_modes;
 
@@ -4544,7 +4649,7 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 			goto parse_fail;
 		}
 
-		rc = dsi_panel_parse_cmd_sets(prv_info, utils);
+		rc = dsi_panel_parse_cmd_sets(panel, prv_info, utils);
 		if (rc) {
 			DSI_ERR("failed to parse command sets, rc=%d\n", rc);
 			goto parse_fail;
@@ -4844,6 +4949,15 @@ int dsi_panel_prepare(struct dsi_panel *panel)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_PRE_ON cmds, rc=%d\n",
 		       panel->name, rc);
 		goto error;
+	}
+
+	if (panel->calibration_enabled) {
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CALIBRATION_DATA);
+		if (rc) {
+			DSI_ERR("[%s] failed to send DSI_CMD_SET_CALIBRATION_DATA cmds, rc=%d\n",
+				panel->name, rc);
+			goto error;
+		}
 	}
 
 error:
@@ -5280,7 +5394,7 @@ int dsi_panel_pre_disable(struct dsi_panel *panel)
 	mutex_lock(&panel->panel_lock);
 
 	if (gpio_is_valid(panel->bl_config.en_gpio))
-		gpio_set_value(panel->bl_config.en_gpio, 0);
+		gpio_set_value_cansleep(panel->bl_config.en_gpio, 0);
 
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
 	ss_panel_off_pre(panel->panel_private);

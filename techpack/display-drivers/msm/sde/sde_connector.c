@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -20,6 +20,7 @@
 #include "sde_crtc.h"
 #include "sde_rm.h"
 #include "sde_vm.h"
+#include "sde_hw_catalog.h"
 #include <drm/drm_probe_helper.h>
 #include <linux/version.h>
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
@@ -989,6 +990,7 @@ static int _sde_connector_update_dirty_properties(
 	struct sde_connector *c_conn;
 	struct sde_connector_state *c_state;
 	int idx;
+	u32 b_lvl;
 
 	if (!connector) {
 		SDE_ERROR("invalid argument\n");
@@ -1013,9 +1015,9 @@ static int _sde_connector_update_dirty_properties(
 			_sde_connector_update_hdr_metadata(c_conn, c_state);
 			break;
 		case CONNECTOR_PROP_BRIGHTNESS:
-			c_conn->bl_device->props.brightness = sde_connector_get_property(
-						connector->state, CONNECTOR_PROP_BRIGHTNESS);
-			backlight_update_status(c_conn->bl_device);
+			b_lvl = sde_connector_get_property(connector->state,
+						CONNECTOR_PROP_BRIGHTNESS);
+			backlight_device_set_brightness(c_conn->bl_device, b_lvl);
 			break;
 		default:
 			/* nothing to do for most properties */
@@ -1252,7 +1254,7 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	 * So delay backlight update to these panels until the
 	 * first frame commit is received from the HW.
 	 */
-	if (display->panel->bl_config.bl_update ==
+	if (!display->poms_pending && display->panel->bl_config.bl_update ==
 				BL_UPDATE_DELAY_UNTIL_FIRST_FRAME)
 		sde_encoder_wait_for_event(c_conn->encoder,
 				MSM_ENC_TX_COMPLETE);
@@ -3539,6 +3541,8 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 	c_conn->base.polled = connector_poll;
 	c_conn->base.interlace_allowed = 0;
 	c_conn->base.doublescan_allowed = 0;
+
+	c_conn->capabilities = sde_kms->catalog->capabilities;
 
 	snprintf(c_conn->name,
 			SDE_CONNECTOR_NAME_SIZE,

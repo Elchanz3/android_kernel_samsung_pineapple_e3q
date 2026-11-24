@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -1842,8 +1842,11 @@ static void _sde_cp_crtc_commit_feature(struct sde_cp_node *prop_node,
 	hw_cfg.skip_blend_plane = sde_crtc->skip_blend_plane;
 	hw_cfg.skip_blend_plane_h = sde_crtc->skip_blend_plane_h;
 	hw_cfg.skip_blend_plane_w = sde_crtc->skip_blend_plane_w;
+	hw_cfg.is_crtc_enabled = sde_crtc->enabled;
 
 	hw_cfg.num_ds_enabled = sde_crtc_state->num_ds_enabled;
+	hw_cfg.overfetch_lines_on_top = sde_crtc_state->user_roi_list.spr_roi[0].y1 -
+				sde_crtc_state->user_roi_list.roi[0].y1;
 
 	SDE_EVT32(prop_node->feature, hw_cfg.panel_width, hw_cfg.panel_height);
 
@@ -2120,6 +2123,7 @@ int sde_cp_crtc_check_properties(struct drm_crtc *crtc,
 {
 	struct sde_crtc *sde_crtc = NULL;
 	struct sde_crtc_state *sde_crtc_state = NULL;
+	struct drm_display_mode *old_mode, *new_mode;
 	int i, ret = 0;
 
 	if (!crtc || !crtc->dev || !state) {
@@ -2140,8 +2144,11 @@ int sde_cp_crtc_check_properties(struct drm_crtc *crtc,
 		return -EINVAL;
 	}
 
-	/* force revalidation of some properties when there is a mode switch */
-	if (state->mode_changed)
+	/* force revalidation of some properties when there is a resolution switch */
+	old_mode = &crtc->state->adjusted_mode;
+	new_mode = &state->adjusted_mode;
+	if ((old_mode->hdisplay != new_mode->hdisplay) ||
+		(old_mode->vdisplay != new_mode->vdisplay))
 		sde_cp_crtc_res_change(crtc);
 
 	mutex_lock(&sde_crtc->crtc_cp_lock);

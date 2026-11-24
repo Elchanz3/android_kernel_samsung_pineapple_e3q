@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -10,6 +10,10 @@
 #include <linux/clk.h>
 #include <linux/of_irq.h>
 #include <video/mipi_display.h>
+
+#ifdef CONFIG_UIO
+#include <linux/uio_driver.h>
+#endif
 
 #include "msm_drv.h"
 #include "msm_kms.h"
@@ -488,7 +492,7 @@ static void dsi_ctrl_post_cmd_transfer_work(struct work_struct *work)
 	dsi_ctrl->post_tx_queued = false;
 }
 
-static void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl)
+void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl)
 {
 	/*
 	 * If a command is triggered right after another command,
@@ -1139,11 +1143,6 @@ static int dsi_ctrl_update_link_freqs(struct dsi_ctrl *dsi_ctrl,
 	dsi_ctrl->clk_freq.pix_clk_rate = pclk_rate;
 	dsi_ctrl->clk_freq.esc_clk_rate = config->esc_clk_rate_hz;
 
-	rc = dsi_clk_set_link_frequencies(clk_handle, dsi_ctrl->clk_freq,
-					dsi_ctrl->cell_index);
-	if (rc)
-		DSI_CTRL_ERR(dsi_ctrl, "Failed to update link frequencies\n");
-
 	return rc;
 }
 
@@ -1630,11 +1629,11 @@ static int dsi_message_tx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_de
 
 		cmdbuf = (u8 *)(dsi_ctrl->vaddr);
 
-		msm_gem_sync(dsi_ctrl->tx_cmd_buf);
 		for (cnt = 0; cnt < length; cnt++)
 			cmdbuf[dsi_ctrl->cmd_len + cnt] = buffer[cnt];
 
 		dsi_ctrl->cmd_len += length;
+		msm_gem_sync(dsi_ctrl->tx_cmd_buf);
 
 		if (*flags & DSI_CTRL_CMD_LAST_COMMAND) {
 			cmd_mem.length = dsi_ctrl->cmd_len;
@@ -2126,6 +2125,61 @@ static int dsi_ctrl_dts_parse(struct dsi_ctrl *dsi_ctrl,
 	return 0;
 }
 
+#ifdef CONFIG_UIO
+static void uio_init(struct platform_device *pdev)
+{
+	struct uio_info *uio_reg_info = NULL;
+	struct resource *clnt_res = NULL;
+	struct dsi_ctrl *dsi_ctrl;
+	int ret = 0;
+	u32 mem_size = 0;
+	phys_addr_t mem_physical = 0;
+
+	dsi_ctrl = (struct dsi_ctrl *)platform_get_drvdata(pdev);
+
+	clnt_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "disp_conf");
+	if (!clnt_res) {
+		DSI_CTRL_DEBUG(dsi_ctrl, "resource not found\n");
+		return;
+	}
+
+	mem_size = resource_size(clnt_res);
+	if (mem_size == 0) {
+		DSI_CTRL_DEBUG(dsi_ctrl, "resource memory size is zero\n");
+		goto exit;
+	}
+
+	uio_reg_info = devm_kzalloc(&pdev->dev, sizeof(struct uio_info),
+			GFP_KERNEL);
+	if (!uio_reg_info)
+		goto exit;
+
+	mem_physical = clnt_res->start;
+
+	/* Setup device */
+	uio_reg_info->name = clnt_res->name;
+	uio_reg_info->version = "1.0";
+	uio_reg_info->mem[0].addr = mem_physical;
+	uio_reg_info->mem[0].size = mem_size;
+	uio_reg_info->mem[0].memtype = UIO_MEM_PHYS;
+
+	ret = uio_register_device(&pdev->dev, uio_reg_info);
+	if (ret) {
+		DSI_CTRL_DEBUG(dsi_ctrl, "uio register failed. ret:%d\n", ret);
+		goto exit;
+	}
+
+	DSI_CTRL_DEBUG(dsi_ctrl, "Device file created for dsi_ctrl config.\n");
+	return;
+exit:
+	DSI_CTRL_DEBUG(dsi_ctrl, "Unable to get dsi_ctrl config.\n");
+}
+#else	/* CONFIG_UIO */
+static void uio_init(struct platform_device *pdev)
+{
+}
+#endif	/* CONFIG_UIO */
+
 static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 {
 	struct dsi_ctrl *dsi_ctrl;
@@ -2209,6 +2263,9 @@ static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 
 	dsi_ctrl->pdev = pdev;
 	platform_set_drvdata(pdev, dsi_ctrl);
+
+	uio_init(pdev);
+
 	DSI_CTRL_INFO(dsi_ctrl, "Probe successful\n");
 
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
@@ -2785,6 +2842,7 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	struct dsi_event_cb_info cb_info;
 	struct dsi_display *display;
 	bool skip_irq_enable = false;
+	bool is_spurious_interrupt = false;
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG) && IS_ENABLED(CONFIG_SEC_DEBUG)
 	struct samsung_display_driver_data *vdd = ss_get_vdd(dsi_ctrl->hw.display_index);
 #endif
@@ -2799,6 +2857,10 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	if (dsi_ctrl->hw.ops.clear_error_status)
 		dsi_ctrl->hw.ops.clear_error_status(&dsi_ctrl->hw,
 					error);
+
+	/* check for spurious interrupts */
+	if (dsi_ctrl_check_for_spurious_error_interrupts(dsi_ctrl))
+		is_spurious_interrupt = true;
 
 	/* DTLN PHY error */
 	if (error & 0x3000E00)
@@ -2839,12 +2901,12 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 		/* no need to report FIFO overflow if already masked */
 		if (cb_info.event_cb && !(mask & 0xf0000)) {
 			cb_info.event_idx = DSI_FIFO_OVERFLOW;
+			display = cb_info.event_usr_ptr;
+			display->is_spurious_interrupt = is_spurious_interrupt;
 			(void)cb_info.event_cb(cb_info.event_usr_ptr,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
-			display = cb_info.event_usr_ptr;
-			dsi_display_report_dead(display);
 			skip_irq_enable = true;
 		}
 	}
@@ -2859,12 +2921,12 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 #endif
 		if (cb_info.event_cb) {
 			cb_info.event_idx = DSI_FIFO_UNDERFLOW;
+			display = cb_info.event_usr_ptr;
+			display->is_spurious_interrupt = is_spurious_interrupt;
 			(void)cb_info.event_cb(cb_info.event_usr_ptr,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
-			display = cb_info.event_usr_ptr;
-			dsi_display_report_dead(display);
 			skip_irq_enable = true;
 		}
 	}
@@ -2884,8 +2946,7 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	 * case and prevent us from re enabling interrupts until a full ESD
 	 * recovery is completed.
 	 */
-	if (dsi_ctrl_check_for_spurious_error_interrupts(dsi_ctrl) &&
-				dsi_ctrl->esd_check_underway) {
+	if (is_spurious_interrupt && dsi_ctrl->esd_check_underway) {
 		dsi_ctrl->hw.ops.soft_reset(&dsi_ctrl->hw);
 		return;
 	}

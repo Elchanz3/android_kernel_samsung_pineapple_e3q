@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -215,6 +215,11 @@ struct dsi_panel_ops {
 	int (*trigger_esd_attack)(struct dsi_panel *panel);
 };
 
+struct dsi_panel_calib_data {
+	char *data;
+	size_t len;
+};
+
 struct dsi_panel {
 	const char *name;
 	const char *type;
@@ -257,6 +262,7 @@ struct dsi_panel {
 	bool ulps_suspend_enabled;
 	bool allow_phy_power_off;
 	bool reset_gpio_always_on;
+	bool calibration_enabled;
 	atomic_t esd_recovery_pending;
 
 	bool panel_initialized;
@@ -278,6 +284,7 @@ struct dsi_panel {
 	enum dsi_panel_physical_type panel_type;
 
 	struct dsi_panel_ops panel_ops;
+	struct dsi_panel_calib_data calib_data;
 #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
 	void *panel_private;
 	struct device_node *self_display_of_node;
