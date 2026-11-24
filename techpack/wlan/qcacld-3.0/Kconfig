@@ -8,26 +8,6 @@ config QCA_CLD_WLAN
 
 if QCA_CLD_WLAN != n
 
-config WLAN_FEATURE_NO_STA_SAP_CONCURRENCY
-	bool "Enable WLAN_FEATURE_NO_STA_SAP_CONCURRENCY"
-	default n
-
-config WLAN_FEATURE_NO_STA_NAN_CONCURRENCY
-	bool "Enable WLAN_FEATURE_NO_STA_NAN_CONCURRENCY"
-	default n
-
-config WLAN_FEATURE_NO_SAP_NAN_CONCURRENCY
-	bool "Enable WLAN_FEATURE_NO_SAP_NAN_CONCURRENCY"
-	default n
-
-config WLAN_FEATURE_NO_P2P_CONCURRENCY
-	bool "Enable WLAN_FEATURE_NO_P2P_CONCURRENCY"
-	default n
-
-config WLAN_FEATURE_STA_SAP_P2P_CONCURRENCY
-	bool "Enable WLAN_FEATURE_STA_SAP_P2P_CONCURRENCY"
-	default n
-
 config 160MHZ_SUPPORT
 	bool "Enable 160MHZ_SUPPORT"
 	default n
@@ -276,10 +256,6 @@ config DP_RX_REFILL_CPU_PERF_AFFINE_MASK
 
 config DP_RX_SPECIAL_FRAME_NEED
 	bool "Enable DP_RX_SPECIAL_FRAME_NEED"
-	default n
-
-config DP_RX_MSDU_DONE_FAIL_HISTORY
-	bool "Enable DP_RX_MSDU_DONE_FAIL_HISTORY"
 	default n
 
 config DP_TRACE
@@ -1492,10 +1468,6 @@ config WLAN_FEATURE_WMI_DIAG_OVER_CE7
 	bool "Enable WLAN_FEATURE_WMI_DIAG_OVER_CE7"
 	default n
 
-config WLAN_FEATURE_MARK_FIRST_WAKEUP_PACKET
-	bool "Enable WLAN_FEATURE_MARK_FIRST_WAKEUP_PACKET"
-	default n
-
 config WLAN_FREQ_LIST
 	bool "Enable WLAN_FREQ_LIST"
 	default n
@@ -2527,7 +2499,8 @@ config WLAN_UMAC_MLO_MAX_DEV
         int "Enable WLAN_UMAC_MLO_MAX_DEV"
         default 3
 endif
+endif # QCA_CLD_WLAN
+
 config WLAN_SAMSUNG_FEATURE
 	bool "enable WLAN_SAMSUNG_FEATURE"
 	default n
-endif # QCA_CLD_WLAN
