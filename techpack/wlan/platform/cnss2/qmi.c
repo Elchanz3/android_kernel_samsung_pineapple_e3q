@@ -812,7 +812,7 @@ static char *cnss_bdf_type_to_str(enum cnss_bdf_type bdf_type)
 #ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
 extern int ant_from_macloader;
 
-void cnss_add_ss_naming_rule(struct cnss_plat_data *plat_priv,
+static void cnss_add_ss_naming_rule(struct cnss_plat_data *plat_priv,
 				char *filename)
 {
 	char ant[3];

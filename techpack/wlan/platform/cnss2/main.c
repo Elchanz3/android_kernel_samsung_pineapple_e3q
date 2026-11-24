@@ -2592,7 +2592,7 @@ static int cnss_set_cx_voltage_corner_sdam(struct cnss_plat_data *plat_priv,
 	return 0;
 }
 
-u8 *cnss_read_debug_register(struct cnss_plat_data *plat_priv)
+static u8 *cnss_read_debug_register(struct cnss_plat_data *plat_priv)
 {
 	u8 *buf;
 	size_t len;
@@ -2745,7 +2745,7 @@ static int cnss_set_cx_voltage_corner_sdam(struct cnss_plat_data *plat_priv,
 	return 0;
 }
 
-u8 *cnss_read_debug_register(struct cnss_plat_data *plat_priv)
+static u8 *cnss_read_debug_register(struct cnss_plat_data *plat_priv)
 {
 	cnss_pr_info("Entering negative cnss_read_debug_register function\n");
 	return NULL;

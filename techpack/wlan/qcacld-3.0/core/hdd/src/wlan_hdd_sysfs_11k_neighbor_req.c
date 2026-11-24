@@ -26,6 +26,7 @@
 #include "osif_vdev_sync.h"
 #include "wlan_dsc_test.h"
 #include "wlan_hdd_sysfs.h"
+#include "wlan_hdd_sysfs_11k_neighbor_req.h"
 #include "wlan_module_ids.h"
 #include "wma.h"
 static ssize_t __hdd_sysfs_11k_neighbor_req_store(struct net_device *net_dev,
