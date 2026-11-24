@@ -9,7 +9,9 @@
 #include <linux/remoteproc.h>
 struct notifier_block;
 struct rproc;
-
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+struct device_node;
+#endif
 /**
  * enum qcom_ssr_notify_type - Startup/Shutdown events related to a remoteproc
  * processor.
@@ -87,6 +89,10 @@ static inline int qcom_unregister_ssr_notifier(void *notify,
 {
 	return 0;
 }
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+int adsp_init_subsensor_regulator(struct rproc *rproc, struct device_node *sub_sns_reg_np);
 #endif
 
 #endif
