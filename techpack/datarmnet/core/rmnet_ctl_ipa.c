@@ -8,7 +8,6 @@
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/ipa.h>
-#include <linux/ipc_logging.h>
 #include "rmnet_ctl.h"
 #include "rmnet_ctl_client.h"
 
@@ -81,7 +80,7 @@ static void rmnet_ctl_ipa_ready(void *user_data)
 			&ctl_ipa_dev);
 
 	if (rc)
-		net_log("%s: %d\n", __func__, rc);
+		pr_err("%s: %d\n", __func__, rc);
 	else
 		rmnet_ctl_ipa_registered = true;
 }
@@ -91,12 +90,10 @@ static int __init rmnet_ctl_init(void)
 	int rc;
 
 	rc = ipa_register_ipa_ready_cb(rmnet_ctl_ipa_ready, NULL);
-	if (rc == -EEXIST) {
+	if (rc == -EEXIST)
 		rmnet_ctl_ipa_ready(NULL);
-	}
-	else if (rc) {
-		net_log("%s: rmnet CTL INIT failed %d\n", __func__, rc);
-	}
+	else if (rc)
+		pr_err("%s: %d\n", __func__, rc);
 
 	return 0;
 }
@@ -106,7 +103,6 @@ static void __exit rmnet_ctl_exit(void)
 	if (rmnet_ctl_ipa_registered) {
 		ipa_unregister_rmnet_ctl_cb();
 		rmnet_ctl_ipa_registered = false;
-		net_log("%s: rmnet CTL exited \n", __func__);
 	}
 }
 

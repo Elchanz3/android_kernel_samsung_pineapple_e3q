@@ -6,7 +6,6 @@
 
 #include <net/pkt_sched.h>
 #include <linux/module.h>
-#include <linux/ipc_logging.h>
 #include "rmnet_qmap.h"
 #include "dfc_defs.h"
 #include "rmnet_qmi.h"
@@ -524,8 +523,12 @@ int dfc_qmap_client_init(void *port, int index, struct svc_info *psvc,
 	qmi->dfc_clients[index] = (void *)data;
 	rcu_assign_pointer(qmap_dfc_data, data);
 
-	if ((rc = rmnet_qmap_init(port)) < 0 ) {
-		net_log("%s(%d) QMAP INIT FAILED:%d\n", __func__, __LINE__, rc);
+	if ((rc = rmnet_qmap_init(port)) < 0) {
+		RCU_INIT_POINTER(qmap_dfc_data, NULL);
+		synchronize_rcu();
+
+		kfree(data);
+		return -EFAULT;
 	}
 
 	trace_dfc_client_state_up(data->index, data->svc.instance,
@@ -550,7 +553,7 @@ void dfc_qmap_client_exit(void *dfc_data)
 	struct dfc_qmi_data *data = (struct dfc_qmi_data *)dfc_data;
 
 	if (!data) {
-		net_log("%s() data is null\n", __func__);
+		pr_err("%s() data is null\n", __func__);
 		return;
 	}
 

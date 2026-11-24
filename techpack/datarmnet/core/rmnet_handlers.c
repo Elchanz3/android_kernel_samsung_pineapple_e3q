@@ -1,5 +1,5 @@
 /* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,6 @@
 #include <linux/inet.h>
 #include <net/sock.h>
 #include <linux/tracepoint.h>
-#include <linux/ipc_logging.h>
 #include "rmnet_private.h"
 #include "rmnet_config.h"
 #include "rmnet_vnd.h"
@@ -32,9 +31,9 @@
 #include "rmnet_ll.h"
 #include "rmnet_module.h"
 
+
 #include "rmnet_qmi.h"
 #include "qmi_rmnet.h"
-#include "rmnet_qmap.h"
 
 #define RMNET_IP_VERSION_4 0x40
 #define RMNET_IP_VERSION_6 0x60
@@ -195,66 +194,8 @@ static void rmnet_deliver_skb_list(struct sk_buff_head *head,
 	}
 }
 
-static void rmnet_print_packet(const struct sk_buff *skb, char *dir)
-{
-	struct qmap_cmd_hdr *cmd;
-	char buffer[200];
-	unsigned int len, printlen;
-	int i, buffloc = 0;
-
-	printlen = 48;
-
-	if (skb->len > 0)
-		len = skb->len;
-	else
-		len = ((unsigned int)(uintptr_t)skb->end) -
-		      ((unsigned int)(uintptr_t)skb->data);
-
-	cmd = (struct qmap_cmd_hdr *)skb->data;
-	net_log("%s() QMAP cmd %d %s-ed type:%d len:%d",
-					 __func__, cmd->cmd_name, dir,
-					 cmd->cmd_type, len);
-	memset(buffer, 0, sizeof(buffer));
-	for (i = 0; (i < printlen) && (i < len); i++) {
-		if ((i % 16) == 0) {
-			net_log("[%s] - PKT%s\n", dir, buffer);
-			memset(buffer, 0, sizeof(buffer));
-			buffloc = 0;
-			buffloc += snprintf(&buffer[buffloc],
-					    sizeof(buffer) - buffloc, "%04X:",
-					    i);
-		}
-
-		buffloc += snprintf(&buffer[buffloc], sizeof(buffer) - buffloc,
-					" %02x", skb->data[i]);
-	}
-	net_log("[%s] - PKT%s\n", dir, buffer);
-}
-
-static int
-rmnet_check_dfc_qmap_packet(struct sk_buff *skb)
-{
-	struct rmnet_map_control_command *cmd;
-	unsigned char command_name;
-
-	cmd = rmnet_map_get_cmd_start(skb);
-	command_name = cmd->command_name;
-
-	switch (command_name) {
-		case QMAP_DFC_CONFIG:
-		case QMAP_DFC_IND:
-		case QMAP_DFC_QUERY:
-		case QMAP_DFC_END_MARKER:
-		case QMAP_DFC_POWERSAVE:
-			rmnet_print_packet(skb, "RX");
-			return 1;
-		default:
-			return 0;
-	}
-	return 1;
-}
-
 /* MAP handler */
+
 static void
 __rmnet_map_ingress_handler(struct sk_buff *skb,
 			    struct rmnet_port *port)
@@ -268,6 +209,9 @@ __rmnet_map_ingress_handler(struct sk_buff *skb,
 	/* We don't need the spinlock since only we touch this */
 	__skb_queue_head_init(&list);
 
+	if (skb->len < sizeof(*qmap))
+		goto free_skb;
+
 	qmap = (struct rmnet_map_header *)rmnet_map_data_ptr(skb);
 	if (qmap->cd_bit) {
 		qmi_rmnet_set_dl_msg_active(port);
@@ -279,14 +223,15 @@ __rmnet_map_ingress_handler(struct sk_buff *skb,
 		if (port->data_format & RMNET_FLAGS_INGRESS_MAP_COMMANDS)
 			return rmnet_map_command(skb, port);
 
-		if (rmnet_check_dfc_qmap_packet(skb))
-			BUG_ON(1);
-
 		goto free_skb;
 	}
 
 	mux_id = qmap->mux_id;
 	pad = qmap->pad_len;
+
+	if (pad > ntohs(qmap->pkt_len))
+		goto free_skb;
+
 	len = ntohs(qmap->pkt_len) - pad;
 
 	if (mux_id >= RMNET_MAX_LOGICAL_EP)
@@ -305,6 +250,14 @@ __rmnet_map_ingress_handler(struct sk_buff *skb,
 		if (rmnet_map_process_next_hdr_packet(skb, &list, len))
 			goto free_skb;
 	} else {
+		u32 needed = (u32)len + pad;
+
+		if (port->data_format & RMNET_FLAGS_INGRESS_MAP_CKSUMV4)
+			needed += sizeof(struct rmnet_map_dl_csum_trailer);
+
+		if (skb->len < sizeof(*qmap) + needed)
+			goto free_skb;
+
 		/* We only have the main QMAP header to worry about */
 		pskb_pull(skb, sizeof(*qmap));
 
@@ -339,7 +292,8 @@ static void
 rmnet_map_ingress_handler(struct sk_buff *skb,
 			  struct rmnet_port *port)
 {
-	struct sk_buff *skbn;
+	int is_chained_skb = 0;
+	struct sk_buff *skbn, *head_skb;
 	int (*rmnet_perf_core_deaggregate)(struct sk_buff *skb,
 					   struct rmnet_port *port);
 
@@ -383,10 +337,13 @@ no_perf:
 	/* Deaggregation and freeing of HW originating
 	 * buffers is done within here
 	 */
+	head_skb = skb;
 	while (skb) {
 		struct sk_buff *skb_frag = skb_shinfo(skb)->frag_list;
+		struct sk_buff *skb_next = skb->next;
 
 		skb_shinfo(skb)->frag_list = NULL;
+		skb->next = NULL;
 		while ((skbn = rmnet_map_deaggregate(skb, port)) != NULL) {
 			__rmnet_map_ingress_handler(skbn, port);
 
@@ -396,7 +353,20 @@ no_perf:
 
 		consume_skb(skb);
 next_skb:
-		skb = skb_frag;
+		if (head_skb == skb) {
+			skb = skb_frag;
+			if (skb_frag) {
+				is_chained_skb = 1;
+				port->stats.chained_packets_recvd++;
+			}
+		} else  {
+			skb = skb_next;
+			/* No longer expected to use older skb chain format */
+			WARN_ON(skb_frag != NULL);
+		}
+
+		if (is_chained_skb)
+			port->stats.packets_chained++;
 	}
 }
 
@@ -507,7 +477,11 @@ rx_handler_result_t rmnet_rx_handler(struct sk_buff **pskb)
 	dev = skb->dev;
 	port = rmnet_get_port(dev);
 	if (unlikely(!port)) {
+#if (KERNEL_VERSION(6, 0, 0) < LINUX_VERSION_CODE)
 		dev_core_stats_rx_nohandler_inc(skb->dev);
+#else
+		atomic_long_inc(&skb->dev->rx_nohandler);
+#endif
 		kfree_skb(skb);
 		goto done;
 	}

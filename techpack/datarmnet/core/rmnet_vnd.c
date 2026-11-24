@@ -1,5 +1,5 @@
 /* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -575,6 +575,9 @@ static const char rmnet_port_gstrings_stats[][ETH_GSTRING_LEN] = {
 	"DL chaining frags [12-15]",
 	"DL chaining frags = 16",
 	"PB Byte Marker Count",
+	"PB Byte Marker Seq",
+	"Chained packets received",
+	"Packets chained",
 };
 
 static const char rmnet_ll_gstrings_stats[][ETH_GSTRING_LEN] = {
@@ -748,7 +751,7 @@ int rmnet_vnd_newlink(u8 id, struct net_device *rmnet_dev,
 
 	priv->real_dev = real_dev;
 
-	rmnet_dev->gso_max_size = 64000;
+	rmnet_dev->gso_max_size = 65535;
 
 	rc = register_netdevice(rmnet_dev);
 	if (!rc) {

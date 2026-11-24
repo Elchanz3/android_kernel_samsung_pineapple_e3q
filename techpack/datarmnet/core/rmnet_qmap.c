@@ -12,7 +12,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/ipc_logging.h>
 #include "dfc.h"
 #include "rmnet_qmi.h"
 #include "rmnet_ctl.h"
@@ -41,49 +40,13 @@ int rmnet_qmap_send(struct sk_buff *skb, u8 ch, bool flush)
 	}
 
 	if (rmnet_ctl->send(rmnet_ctl_handle, skb)) {
-		net_log("Failed to send to rmnet ctl\n");
+		pr_err("Failed to send to rmnet ctl\n");
 		return -ECOMM;
 	}
 
 	return 0;
 }
 EXPORT_SYMBOL(rmnet_qmap_send);
-
-static void rmnet_print_packet(const struct sk_buff *skb, char *dir)
-{
-	struct qmap_cmd_hdr *cmd;
-	char buffer[200];
-	unsigned int len, printlen;
-	int i, buffloc = 0;
-
-	printlen = 48;
-
-	if (skb->len > 0)
-		len = skb->len;
-	else
-		len = ((unsigned int)(uintptr_t)skb->end) -
-		      ((unsigned int)(uintptr_t)skb->data);
-
-	cmd = (struct qmap_cmd_hdr *)skb->data;
-	net_log("%s() QMAP cmd %d %s-ed type:%d len:%d",
-					 __func__, cmd->cmd_name, dir,
-					 cmd->cmd_type, len);
-	memset(buffer, 0, sizeof(buffer));
-	for (i = 0; (i < printlen) && (i < len); i++) {
-		if ((i % 16) == 0) {
-			net_log("[%s] - PKT%s\n", dir, buffer);
-			memset(buffer, 0, sizeof(buffer));
-			buffloc = 0;
-			buffloc += snprintf(&buffer[buffloc],
-					    sizeof(buffer) - buffloc, "%04X:",
-					    i);
-		}
-
-		buffloc += snprintf(&buffer[buffloc], sizeof(buffer) - buffloc,
-					" %02x", skb->data[i]);
-	}
-	net_log("[%s] - PKT%s\n", dir, buffer);
-}
 
 static void rmnet_qmap_cmd_handler(struct sk_buff *skb)
 {
@@ -110,7 +73,6 @@ static void rmnet_qmap_cmd_handler(struct sk_buff *skb)
 	case QMAP_DFC_QUERY:
 	case QMAP_DFC_END_MARKER:
 	case QMAP_DFC_POWERSAVE:
-		rmnet_print_packet(skb, "RX");
 		rc = dfc_qmap_cmd_handler(skb);
 		break;
 
@@ -136,7 +98,6 @@ static void rmnet_qmap_cmd_handler(struct sk_buff *skb)
 			rmnet_qmap_send(skb, RMNET_CH_DEFAULT, false);
 		} else {
 			cmd->cmd_type = rc;
-			rmnet_print_packet(skb, "TX");
 			rmnet_qmap_send(skb, RMNET_CH_CTL, false);
 		}
 		rcu_read_unlock();
@@ -175,7 +136,7 @@ int rmnet_qmap_init(void *port)
 
 	rmnet_ctl = rmnet_ctl_if();
 	if (!rmnet_ctl) {
-		net_log("rmnet_ctl module not loaded\n");
+		pr_err("rmnet_ctl module not loaded\n");
 		return -EFAULT;
 	}
 
@@ -183,7 +144,7 @@ int rmnet_qmap_init(void *port)
 		rmnet_ctl_handle = rmnet_ctl->reg(&cb);
 
 	if (!rmnet_ctl_handle) {
-		net_log("Failed to register with rmnet ctl\n");
+		pr_err("Failed to register with rmnet ctl\n");
 		return -EFAULT;
 	}
 
@@ -192,12 +153,8 @@ int rmnet_qmap_init(void *port)
 
 void rmnet_qmap_exit(void)
 {
-	int rc = 0;
-
-	if (rmnet_ctl && rmnet_ctl->dereg) {
-		rc = rmnet_ctl->dereg(rmnet_ctl_handle);
-		net_log("%s() deregistered  with rmnet ctl: %d\n", __func__, rc);
-	}
+	if (rmnet_ctl && rmnet_ctl->dereg)
+		rmnet_ctl->dereg(rmnet_ctl_handle);
 
 	rmnet_ctl_handle = NULL;
 	real_data_dev = NULL;

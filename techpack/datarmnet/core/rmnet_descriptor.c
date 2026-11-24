@@ -1,5 +1,5 @@
 /* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,7 +19,6 @@
 #include <linux/inet.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
-#include <linux/ipc_logging.h>
 #include "rmnet_config.h"
 #include "rmnet_descriptor.h"
 #include "rmnet_handlers.h"
@@ -28,7 +27,6 @@
 #include "rmnet_qmi.h"
 #include "rmnet_trace.h"
 #include "qmi_rmnet.h"
-#include "rmnet_qmap.h"
 
 #define RMNET_FRAG_DESCRIPTOR_POOL_SIZE 64
 #define RMNET_DL_IND_HDR_SIZE (sizeof(struct rmnet_map_dl_ind_hdr) + \
@@ -575,9 +573,6 @@ void rmnet_frag_command(struct rmnet_frag_descriptor *frag_desc,
 		break;
 
 	default:
-		net_log("%s() n:%d type:%d tr:%d\n",
-				__func__, cmd->command_name, cmd->cmd_type,
-				cmd->transaction_id);
 		rc = RMNET_MAP_COMMAND_UNSUPPORTED;
 		break;
 	}
@@ -614,9 +609,6 @@ int rmnet_frag_flow_command(struct rmnet_frag_descriptor *frag_desc,
 		rmnet_frag_process_pb_ind(frag_desc, cmd, port, pkt_len);
 		break;
 	default:
-		net_log("%s() n:%d type:%d Tr:%d\n",
-				__func__, cmd->command_name, cmd->cmd_type,
-				cmd->transaction_id);
 		return 1;
 	}
 
@@ -1301,6 +1293,8 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 	u16 pkt_len;
 	u8 pkt, total_pkt = 0;
 	u8 nlo;
+	u32 total_data_len = 0;
+	u32 hlen;
 	bool gro = coal_desc->dev->features & NETIF_F_GRO_HW;
 	bool zero_csum = false;
 
@@ -1337,6 +1331,12 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 		coal_desc->ip_proto = 4;
 		coal_desc->ip_len = iph->ihl * 4;
 		coal_desc->trans_proto = iph->protocol;
+
+		if (coal_desc->ip_len < sizeof(struct iphdr) ||
+		    coal_desc->len < coal_desc->ip_len) {
+			priv->stats.coal.coal_ip_invalid++;
+			return;
+		}
 
 		/* Don't allow coalescing of any packets with IP options */
 		if (iph->ihl != 5)
@@ -1401,6 +1401,13 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 			return;
 
 		coal_desc->trans_len = th->doff * 4;
+
+		if (coal_desc->trans_len < sizeof(struct tcphdr) ||
+		    coal_desc->len < coal_desc->ip_len + coal_desc->trans_len) {
+			priv->stats.coal.coal_trans_invalid++;
+			return;
+		}
+
 		priv->stats.coal.coal_tcp++;
 		priv->stats.coal.coal_tcp_bytes += coal_desc->len;
 	} else if (coal_desc->trans_proto == IPPROTO_UDP) {
@@ -1429,12 +1436,21 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 			page_size(skb_frag_page(&frag->frag));
 
 	if (rmnet_map_v5_csum_buggy(&coal_hdr) && !zero_csum) {
+		u16 buggy_pkt_len = ntohs(coal_hdr.nl_pairs[0].pkt_len);
+		u32 buggy_hlen = coal_desc->ip_len + coal_desc->trans_len;
+
+		if (buggy_hlen > coal_desc->len ||
+		    buggy_pkt_len <= buggy_hlen ||
+		    buggy_pkt_len > coal_desc->len) {
+			priv->stats.coal.coal_hdr_pkt_err++;
+			return;
+		}
+
 		/* Mark the checksum as valid if it checks out */
 		if (rmnet_frag_validate_csum(coal_desc))
 			coal_desc->csum_valid = true;
 
-		coal_desc->gso_size = ntohs(coal_hdr.nl_pairs[0].pkt_len);
-		coal_desc->gso_size -= coal_desc->ip_len + coal_desc->trans_len;
+		coal_desc->gso_size = buggy_pkt_len - buggy_hlen;
 		coal_desc->gso_segs = coal_hdr.nl_pairs[0].num_packets;
 		list_add_tail(&coal_desc->list, list);
 		return;
@@ -1445,18 +1461,60 @@ rmnet_frag_segment_coal_data(struct rmnet_frag_descriptor *coal_desc,
 	 * descriptor unchanged.
 	 */
 	if (gro && coal_hdr.num_nlos == 1 && coal_hdr.csum_valid) {
+		u16 gro_pkt_len = ntohs(coal_hdr.nl_pairs[0].pkt_len);
+		u32 gro_hlen = coal_desc->ip_len + coal_desc->trans_len;
+
+		if (gro_pkt_len <= gro_hlen ||
+		    gro_hlen + (u32)(gro_pkt_len - gro_hlen) *
+		    coal_hdr.nl_pairs[0].num_packets > coal_desc->len) {
+			priv->stats.coal.coal_hdr_pkt_err++;
+			return;
+		}
+
 		coal_desc->csum_valid = true;
-		coal_desc->gso_size = ntohs(coal_hdr.nl_pairs[0].pkt_len);
-		coal_desc->gso_size -= coal_desc->ip_len + coal_desc->trans_len;
+		coal_desc->gso_size = gro_pkt_len - gro_hlen;
 		coal_desc->gso_segs = coal_hdr.nl_pairs[0].num_packets;
 		list_add_tail(&coal_desc->list, list);
 		return;
 	}
 
+	/* Validate every NLO before delivering any packet. Checking and
+	 * delivering in the same pass lets earlier NLOs queue their
+	 * descriptors onto list before a later NLO's failure is detected, so
+	 * packets already handed toward the stack cannot be recalled.
+	 * Bound-check all NLOs first; only deliver once the whole frame is
+	 * known-safe.
+	 */
+	hlen = coal_desc->ip_len + coal_desc->trans_len;
+	for (nlo = 0; nlo < coal_hdr.num_nlos; nlo++) {
+		u8 num_packets = coal_hdr.nl_pairs[nlo].num_packets;
+
+		if (!num_packets)
+			continue;
+
+		pkt_len = ntohs(coal_hdr.nl_pairs[nlo].pkt_len);
+		if (pkt_len <= hlen) {
+			priv->stats.coal.coal_hdr_pkt_err++;
+			return;
+		}
+		pkt_len -= hlen;
+
+		/* hlen (the shared IP + transport header) appears once in
+		 * the frame, not once per packet. Track real cumulative
+		 * payload bytes claimed so far and make sure they fit
+		 * within the bytes actually present in coal_desc, which is
+		 * what the fast paths above rely on being true.
+		 */
+		total_data_len += (u32)pkt_len * num_packets;
+		if (hlen + total_data_len > coal_desc->len) {
+			priv->stats.coal.coal_hdr_pkt_err++;
+			return;
+		}
+	}
+
 	/* Segment the coalesced descriptor into new packets */
 	for (nlo = 0; nlo < coal_hdr.num_nlos; nlo++) {
-		pkt_len = ntohs(coal_hdr.nl_pairs[nlo].pkt_len);
-		pkt_len -= coal_desc->ip_len + coal_desc->trans_len;
+		pkt_len = ntohs(coal_hdr.nl_pairs[nlo].pkt_len) - hlen;
 		coal_desc->gso_size = pkt_len;
 		for (pkt = 0; pkt < coal_hdr.nl_pairs[nlo].num_packets;
 		     pkt++, total_pkt++, nlo_err_mask >>= 1) {
@@ -1835,33 +1893,6 @@ int rmnet_frag_process_next_hdr_packet(struct rmnet_frag_descriptor *frag_desc,
 rmnet_perf_desc_hook_t rmnet_perf_desc_entry __rcu __read_mostly;
 EXPORT_SYMBOL(rmnet_perf_desc_entry);
 
-static int
-rmnet_check_frag_dfc_qmap_packets(struct rmnet_frag_descriptor *frag_desc)
-{
-	struct rmnet_map_control_command_header *cmd, __cmd;
-
-	cmd = rmnet_frag_header_ptr(frag_desc, sizeof(struct rmnet_map_header),
-				    sizeof(*cmd), &__cmd);
-	if (!cmd)
-		return 0;
-
-	switch (cmd->command_name) {
-		case QMAP_DFC_CONFIG:
-		case QMAP_DFC_IND:
-		case QMAP_DFC_QUERY:
-		case QMAP_DFC_END_MARKER:
-		case QMAP_DFC_POWERSAVE:
-			net_log("%s(%d) n:%d t:%d trans:%d\n",
-					__func__, __LINE__,
-					cmd->command_name, cmd->cmd_type,
-					cmd->transaction_id);
-			return 1;
-		default:
-			return 0;
-	}
-	return 1;
-}
-
 static void
 __rmnet_frag_ingress_handler(struct rmnet_frag_descriptor *frag_desc,
 			     struct rmnet_port *port)
@@ -1892,9 +1923,6 @@ __rmnet_frag_ingress_handler(struct rmnet_frag_descriptor *frag_desc,
 
 		if (port->data_format & RMNET_FLAGS_INGRESS_MAP_COMMANDS)
 			rmnet_frag_command(frag_desc, qmap, port);
-
-		if (rmnet_check_frag_dfc_qmap_packets(frag_desc))
-			BUG_ON(1);
 
 		goto recycle;
 	}
