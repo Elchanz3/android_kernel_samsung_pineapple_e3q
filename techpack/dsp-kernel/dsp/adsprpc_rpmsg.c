@@ -61,6 +61,8 @@ static inline int get_cid_from_rpdev(struct rpmsg_device *rpdev)
 		cid = SDSP_DOMAIN_ID;
 	else if (!strcmp(label, "mdsp"))
 		cid = MDSP_DOMAIN_ID;
+	else if (!strcmp(label, "cdsp1"))
+		cid = CDSP1_DOMAIN_ID;
 
 	return cid;
 }
@@ -241,7 +243,9 @@ static struct rpmsg_driver fastrpc_rpmsg_client = {
 void fastrpc_rproc_trace_events(const char *name, const char *event,
 				const char *subevent)
 {
+#if IS_ENABLED(CONFIG_RPROC_QCOM_COMMON)
 	trace_rproc_qcom_event(name, event, subevent);
+#endif
 }
 
 inline void fastrpc_transport_session_init(int cid, char *subsys)

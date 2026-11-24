@@ -83,9 +83,9 @@
 #define MDSP_DOMAIN_ID	(1)
 #define SDSP_DOMAIN_ID	(2)
 #define CDSP_DOMAIN_ID	(3)
-#define MAX_DOMAIN_ID	CDSP_DOMAIN_ID
+#define CDSP1_DOMAIN_ID (4)
 
-#define NUM_CHANNELS	4	/* adsp, mdsp, slpi, cdsp*/
+#define NUM_CHANNELS	5	/* adsp, mdsp, slpi, cdsp, cdsp1*/
 #define NUM_SESSIONS	14	/* max 11 compute, 3 cpz */
 
 /* Default maximum sessions allowed per process */
@@ -109,6 +109,10 @@
 
 #define REMOTE_SCALARS_MAKE(method, in, out) \
 		REMOTE_SCALARS_MAKEX(0, method, in, out, 0, 0)
+
+/* Remote Method id table */
+#define FASTRPC_RMID_INIT_ATTACH		(0)
+#define FASTRPC_RMID_INIT_CREATE_WITH_NAME	(12)
 
 #ifdef VERIFY_PRINT_ERROR
 #define VERIFY_EPRINTF(format, ...) pr_err(format, ##__VA_ARGS__)
@@ -314,6 +318,7 @@ enum fastrpc_control_type {
 enum fastrpc_dsp_capability {
 	ASYNC_FASTRPC_CAP = 9,
 	DMA_HANDLE_REVERSE_RPC_CAP = 129,
+	DAEMON_NAME_SUPPORT = 134,   /* support passing daemon name to DSP */
 };
 
 struct smq_null_invoke {
@@ -626,6 +631,7 @@ struct smq_invoke_ctx {
 	uint64_t xo_time_in_us_created; /* XO Timestamp (in us) of ctx creation */
 	uint64_t xo_time_in_us_interrupted; /* XO Timestamp (in us) of interrupted ctx */
 	uint64_t xo_time_in_us_restored; /* XO Timestamp (in us) of restored ctx */
+	struct timespec64 invoke_start_time;  /* submission timestamp for async perf */
 	int tx_index; /* index of current ctx in channel gmsg_log array */
 	bool is_job_sent_to_remote_ss; /* Flag to check if job is sent to remote sub system */
 };
@@ -852,6 +858,7 @@ struct fastrpc_file {
 	struct fastrpc_ctx_lst clst;
 	struct fastrpc_session_ctx *sctx;
 	struct fastrpc_buf *init_mem;
+	struct kref refcount;
 
 	/* No. of persistent headers */
 	unsigned int num_pers_hdrs;
@@ -904,10 +911,6 @@ struct fastrpc_file {
 	uint32_t ws_timeout;
 	bool untrusted_process;
 	struct fastrpc_device *device;
-	/* Process kill will wait on work when ram dump collection in progress */
-	struct completion work;
-	/* Flag to indicate ram dump collection status*/
-	bool is_ramdump_pend;
 	/* Process kill will wait on bus driver invoke thread to complete its process */
 	struct completion dma_invoke;
 	/* Flag to indicate invoke pending */

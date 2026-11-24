@@ -14,24 +14,6 @@
 #include <linux/sysfs.h>
 #include <linux/remoteproc.h>
 
-/*
- * Samsung CDSP sleep watchdog: needs cdsp_event_chain/set_dump_enabled from
- * its qcom_stats/qcom_ramdump changes, which this kernel does not carry.
- */
-/* #define DSP_SLEEP_DEBUG_ON */
-
-#if defined(DSP_SLEEP_DEBUG_ON)
-#include <linux/samsung/debug/sec_debug.h>
-#include <linux/workqueue.h>
-#include <linux/notifier.h>
-
-static void cdsp_restart(struct work_struct *work);
-static DECLARE_WORK(cdsp_ssr, cdsp_restart);
-extern struct blocking_notifier_head cdsp_event_chain;
-extern bool dump_enabled(void);
-extern void set_dump_enabled(int val);
-#endif
-
 #define BOOT_CMD 1
 #define IMAGE_UNLOAD_CMD 0
 
@@ -178,43 +160,6 @@ static void cdsp_loader_unload(struct platform_device *pdev)
 	}
 }
 
-#if defined(DSP_SLEEP_DEBUG_ON)
-static void cdsp_restart(struct work_struct *work)
-{
-	struct cdsp_loader_private *priv = NULL;
-	int prev_dump_collection = 0;
-
-	if (!IS_ERR_OR_NULL(cdsp_private)) {
-		pr_err("%s start", __func__);
-		priv = platform_get_drvdata(cdsp_private);
-
-		if (!priv)
-			return;
-
-		prev_dump_collection = dump_enabled();
-		set_dump_enabled(0);
-
-		pr_err("%s: going to call rpoc_shutdown for cdsp\n", __func__);
-		rproc_shutdown(priv->pil_h);
-
-		msleep(800);
-
-		pr_err("%s: going to call rproc_boot for cdsp\n", __func__);
-		rproc_boot(priv->pil_h);
-
-		set_dump_enabled(prev_dump_collection);
-		pr_err("%s end", __func__);
-	}
-}
-
-static int cdsp_worker(struct notifier_block *unused,
-					unsigned long event, void *ptr)
-{
-	schedule_work(&cdsp_ssr);
-	return 0;
-}
-#endif
-
 static int cdsp_loader_init_sysfs(struct platform_device *pdev)
 {
 	int ret = -EINVAL;
@@ -343,30 +288,14 @@ static struct platform_driver cdsp_loader_driver = {
 	.remove = cdsp_loader_remove,
 };
 
-#if defined(DSP_SLEEP_DEBUG_ON)
-struct notifier_block cdsp_event = {
-	.notifier_call = cdsp_worker,
-};
-#endif
-
 static int __init cdsp_loader_init(void)
 {
-#if defined(DSP_SLEEP_DEBUG_ON)
-	int ret = 0;
-	ret = blocking_notifier_chain_register(&cdsp_event_chain, &cdsp_event);
-	if (ret)
-		printk(KERN_ERR "Failed to register to notification\n");
-#endif
-
 	return platform_driver_register(&cdsp_loader_driver);
 }
 module_init(cdsp_loader_init);
 
 static void __exit cdsp_loader_exit(void)
 {
-#if defined(DSP_SLEEP_DEBUG_ON)
-	blocking_notifier_chain_unregister(&cdsp_event_chain, &cdsp_event);
-#endif
 	platform_driver_unregister(&cdsp_loader_driver);
 }
 module_exit(cdsp_loader_exit);
