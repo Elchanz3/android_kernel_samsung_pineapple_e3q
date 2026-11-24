@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021, 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021, 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -196,7 +196,8 @@ void btfm_get_sampling_rate(uint32_t *sampling_rate)
 
 	if (usecase_codec == LC3_VOICE ||
 	    usecase_codec == APTX_AD_SPEECH ||
-	    usecase_codec == LC3 || usecase_codec == APTX_AD_R4) {
+	    usecase_codec == LC3 || usecase_codec == APTX_AD_R4 ||
+	    usecase_codec == RVP) {
 		*sampling_rate = 96000;
 	}
 
@@ -397,16 +398,17 @@ static int btfm_slim_dai_get_channel_map(void *dai,
 	return 0;
 }
 
-int btfm_slim_dai_get_configs (void * dai,
-				struct master_hwep_configurations *hwep_config,
-				uint8_t id)
+int btfm_slim_dai_get_configs(void *dai, void *config, uint8_t id)
 {
 	struct hwep_data *hwep_info = (struct hwep_data *)dai;
 	struct btfmslim *btfmslim = dev_get_drvdata(hwep_info->dev);
+	struct master_hwep_configurations *hwep_config;
 	struct btfmslim_ch *ch = NULL;
 	int i = 0;
 
 	BTFMSLIM_DBG("");
+
+	hwep_config = (struct master_hwep_configurations *) config;
 	hwep_config->stream_id = id;
 	hwep_config->device_id = btfmslim->device_id;
 	hwep_config->sample_rate = btfmslim->sample_rate;
@@ -436,6 +438,7 @@ int btfm_slim_dai_get_configs (void * dai,
 
 	return 1;
 }
+
 static struct hwep_dai_ops  btfmslim_hw_dai_ops = {
 	.hwep_startup = btfm_slim_dai_startup,
 	.hwep_shutdown = btfm_slim_dai_shutdown,
@@ -512,14 +515,13 @@ int btfm_slim_register_hw_ep(struct btfmslim *btfm_slim)
 
 	/* Copy EP device parameters as intercations will be on the same device */
 	hwep_info->dev = dev;
-	strlcpy(hwep_info->driver_name, BTFMSLIM_DEV_NAME, DEVICE_NAME_MAX_LEN);
+	strscpy(hwep_info->driver_name, BTFMSLIM_DEV_NAME, DEVICE_NAME_MAX_LEN);
 	hwep_info->drv = &btfmslim_hw_driver;
 	hwep_info->dai_drv = btfmslim_dai_driver;
 	hwep_info->num_dai = ARRAY_SIZE(btfmslim_dai_driver);
 	hwep_info->num_dai = 2;
 	hwep_info->num_mixer_ctrl = ARRAY_SIZE(status_controls);
 	hwep_info->mixer_ctrl = status_controls;
-	set_bit(BTADV_AUDIO_MASTER_CONFIG, &hwep_info->flags);
 	/* Register to hardware endpoint */
 	ret = btfmcodec_register_hw_ep(hwep_info);
 	if (ret) {

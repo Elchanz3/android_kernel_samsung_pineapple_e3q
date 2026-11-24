@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __LINUX_BTFM_CODEC_H
@@ -33,6 +33,7 @@ static uint8_t log_lvl = BTM_BTFMCODEC_DEFAULT_LOG_LVL;
 				    }
 
 #define DEVICE_NAME_MAX_LEN	64
+#define BTM_CP_UPDATE           0xbfaf
 
 typedef enum btfmcodec_states {
 	/*Default state of kernel proxy driver */
@@ -54,6 +55,8 @@ enum btfm_pkt_type {
 	BTM_PKT_TYPE_BEARER_SWITCH_IND,
 	BTM_PKT_TYPE_HWEP_SHUTDOWN,
 	BTM_PKT_TYPE_HWEP_CONFIG,
+	BTM_PKT_TYPE_DMA_CONFIG_RSP,
+	BTM_PKT_TYPE_USECASE_START_RSP,
 	BTM_PKT_TYPE_MAX,
 };
 
@@ -70,10 +73,12 @@ struct btfmcodec_char_device {
 	struct cdev cdev;
 	refcount_t active_clients;
 	struct mutex lock;
+	struct mutex trans_lock;
 	int reuse_minor;
 	char dev_name[DEVICE_NAME_MAX_LEN];
 	struct workqueue_struct *workqueue;
 	struct sk_buff_head rxq;
+	struct sk_buff_head trans_rxq;
 	struct work_struct rx_work;
 	struct work_struct wq_hwep_shutdown;
 	struct work_struct wq_prepare_bearer;
@@ -98,7 +103,9 @@ struct btfmcodec_data {
 	struct hwep_data *hwep_info;
 	struct list_head config_head;
 	struct adsp_notifier notifier;
+	struct mutex hwep_drv_lock;
 };
 
 struct btfmcodec_data *btfm_get_btfmcodec(void);
+bool isCpSupported(void);
 #endif /*__LINUX_BTFM_CODEC_H */

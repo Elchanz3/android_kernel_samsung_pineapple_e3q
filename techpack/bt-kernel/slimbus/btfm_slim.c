@@ -19,6 +19,7 @@
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/tlv.h>
+#include <linux/version.h>
 #include "btpower.h"
 #include "btfm_slim.h"
 #include "btfm_slim_slave.h"
@@ -251,7 +252,10 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim, struct btfmslim_ch *ch,
 		chipset_ver == QCA_HAMILTON_SOC_ID_0200 ||
 		chipset_ver == QCA_APACHE_SOC_ID_0100 ||
 		chipset_ver == QCA_APACHE_SOC_ID_0110 ||
-		chipset_ver == QCA_APACHE_SOC_ID_0121)) {
+		chipset_ver == QCA_APACHE_SOC_ID_0121 ||
+		chipset_ver == QCA_MOSELLE_SOC_ID_0100 ||
+		chipset_ver == QCA_MOSELLE_SOC_ID_0110 ||
+		chipset_ver == QCA_MOSELLE_SOC_ID_0120)) {
 		BTFMSLIM_INFO("SB reset needed after all ports disabled, sleeping");
 		msleep(DELAY_FOR_PORT_OPEN_MS);
 	}
@@ -670,8 +674,11 @@ static int btfm_slim_probe(struct slim_device *slim)
 		ret = -1;
 		goto register_err;
 	}
-
-	btfm_slim_class = class_create(THIS_MODULE, "btfmslim-dev");
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 128)
+	btfm_slim_class = class_create(THIS_MODULE,"btfmslim-dev");
+#else
+        btfm_slim_class = class_create("btfmslim-dev");
+#endif
 	if (IS_ERR(btfm_slim_class)) {
 		BTFMSLIM_ERR("%s: coudn't create class\n", __func__);
 		ret = -1;

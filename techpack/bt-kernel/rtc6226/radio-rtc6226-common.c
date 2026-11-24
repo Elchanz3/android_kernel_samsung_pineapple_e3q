@@ -106,7 +106,7 @@
  *                Improves RDS reception significantly
  * 2018-02-01	LG Electronics, Inc.
  * 2018-08-19   Richwave Technology Co.Ltd
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 /* kernel includes */
@@ -2074,7 +2074,7 @@ static int rtc6226_vidioc_g_audio(struct file *file, void *priv,
 {
 	/* driver constants */
 	audio->index = 0;
-	strlcpy(audio->name, "Radio", sizeof(audio->name));
+	strscpy(audio->name, "Radio", sizeof(audio->name));
 	audio->capability = V4L2_AUDCAP_STEREO;
 	audio->mode = 0;
 
@@ -2103,7 +2103,7 @@ static int rtc6226_vidioc_g_tuner(struct file *file, void *priv,
 		goto done;
 
 	/* driver constants */
-	strlcpy(tuner->name, "FM", sizeof(tuner->name));
+	strscpy(tuner->name, "FM", sizeof(tuner->name));
 	tuner->type = V4L2_TUNER_RADIO;
 	tuner->capability = V4L2_TUNER_CAP_LOW | V4L2_TUNER_CAP_STEREO |
 		V4L2_TUNER_CAP_RDS | V4L2_TUNER_CAP_RDS_BLOCK_IO;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __LINUX_BTFM_CODEC_BTADV_INTERFACE_H
@@ -19,4 +19,5 @@ void btfmcodec_wq_prepare_bearer(struct work_struct *);
 void btfmcodec_wq_hwep_shutdown(struct work_struct *);
 void btfmcodec_initiate_hwep_shutdown(struct btfmcodec_char_device *btfmcodec_dev);
 btfmcodec_state btfmcodec_get_current_transport(struct btfmcodec_state_machine *state);
+btfmcodec_state btfmcodec_get_prev_transport(struct btfmcodec_state_machine *state);
 #endif /* __LINUX_BTFM_CODEC_BTADV_INTERFACE_H */

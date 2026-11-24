@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/version.h>
 #include "btfm_codec.h"
 #include "btfm_codec_pkt.h"
 
@@ -23,6 +24,7 @@ static dev_t dev_major;
 struct btfmcodec_data *btfmcodec;
 struct device_driver driver = {.name = "btfmcodec-driver", .owner = THIS_MODULE};
 struct btfmcodec_char_device *btfmcodec_dev;
+bool is_cp_supported = true;
 
 #define cdev_to_btfmchardev(_cdev) container_of(_cdev, struct btfmcodec_char_device, cdev)
 #define MIN_PKT_LEN  0x9
@@ -110,6 +112,7 @@ static int btfmcodec_dev_release(struct inode *inode, struct file *file)
 		spin_unlock_irqrestore(&btfmcodec_dev->tx_queue_lock, flags);
 		/* we need to have separte rx lock for below buff */
 		skb_queue_purge(&btfmcodec_dev->rxq);
+		skb_queue_purge(&btfmcodec_dev->trans_rxq);
 	}
 
 	/* Notify waiting clients that client is closed or killed */
@@ -118,12 +121,16 @@ static int btfmcodec_dev_release(struct inode *inode, struct file *file)
 		wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
 	}
 
-	cancel_work_sync(&btfmcodec_dev->wq_hwep_shutdown);
-	cancel_work_sync(&btfmcodec_dev->wq_hwep_configure);
-	cancel_work_sync(&btfmcodec_dev->wq_prepare_bearer);
+	if (btfmcodec_dev->wq_hwep_shutdown.func)
+		cancel_work_sync(&btfmcodec_dev->wq_hwep_shutdown);
+	if (btfmcodec_dev->wq_hwep_configure.func)
+		cancel_work_sync(&btfmcodec_dev->wq_hwep_configure);
+	if (btfmcodec_dev->wq_prepare_bearer.func)
+		cancel_work_sync(&btfmcodec_dev->wq_prepare_bearer);
 
 	btfmcodec->states.current_state = IDLE;
 	btfmcodec->states.next_state = IDLE;
+
 	return 0;
 }
 
@@ -140,6 +147,7 @@ static void btfmcodec_dev_rxwork(struct work_struct *work)
 	uint32_t len;
 	uint8_t status;
 	int idx;
+	uint8_t *bearer_switch_ind;
 
 	BTFMCODEC_DBG("start");
 	while ((skb = skb_dequeue(&btfmcodec_dev->rxq))) {
@@ -152,17 +160,13 @@ static void btfmcodec_dev_rxwork(struct work_struct *work)
 			idx = BTM_PKT_TYPE_PREPARE_REQ;
 			BTFMCODEC_DBG("BTM_BTFMCODEC_PREPARE_AUDIO_BEARER_SWITCH_REQ");
 			if (len == BTM_PREPARE_AUDIO_BEARER_SWITCH_REQ_LEN) {
-				/* there are chances where bearer indication is not recevied,
-				 * So inform waiting thread to unblock itself and move to
-				 * previous state.
-				 */
-				if (btfmcodec_dev->status[BTM_PKT_TYPE_BEARER_SWITCH_IND] == BTM_WAITING_RSP) {
-				  BTFMCODEC_DBG("Notifying waiting beare indications");
-				  btfmcodec_dev->status[BTM_PKT_TYPE_BEARER_SWITCH_IND] = BTM_FAIL_RESP_RECV;
-				  wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[BTM_PKT_TYPE_BEARER_SWITCH_IND]);
-				}
-				btfmcodec_dev->status[idx] = skb->data[0];
-				queue_work(btfmcodec_dev->workqueue, &btfmcodec_dev->wq_prepare_bearer);
+				/* Reset bearer switch ind flag */
+				bearer_switch_ind =
+					&btfmcodec_dev->status[BTM_PKT_TYPE_BEARER_SWITCH_IND];
+				*bearer_switch_ind = BTM_WAITING_RSP;
+				btfmcodec_enqueue_transport(btfmcodec_dev, skb->data[0]);
+				queue_work(btfmcodec_dev->workqueue,
+					&btfmcodec_dev->wq_prepare_bearer);
 			} else {
 				BTFMCODEC_ERR("wrong packet format with len:%d", len);
 			}
@@ -183,6 +187,22 @@ static void btfmcodec_dev_rxwork(struct work_struct *work)
 				status);
 			wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
 			break;
+		case BTM_BTFMCODEC_CODEC_CONFIG_DMA_RSP:
+			idx = BTM_PKT_TYPE_DMA_CONFIG_RSP;
+			if (len == BTM_CODEC_CONFIG_DMA_RSP_LEN) {
+				status = skb->data[1];
+				if (status == MSG_SUCCESS)
+					btfmcodec_dev->status[idx] = BTM_RSP_RECV;
+				else
+					btfmcodec_dev->status[idx] = BTM_FAIL_RESP_RECV;
+			} else {
+				BTFMCODEC_ERR("wrong packet format with len:%d", len);
+				btfmcodec_dev->status[idx] = BTM_FAIL_RESP_RECV;
+			}
+			BTFMCODEC_INFO("Rx BTM_BTFMCODEC_CODEC_CONFIG_DMA_RSP status:%d",
+				status);
+			wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
+			break;
 		case BTM_BTFMCODEC_CTRL_MASTER_SHUTDOWN_RSP:
 			idx = BTM_PKT_TYPE_MASTER_SHUTDOWN_RSP;
 			if (len == BTM_MASTER_CONFIG_RSP_LEN) {
@@ -198,6 +218,9 @@ static void btfmcodec_dev_rxwork(struct work_struct *work)
 			BTFMCODEC_INFO("Rx BTM_BTFMCODEC_CTRL_MASTER_SHUTDOWN_RSP status:%d",
 				status);
 			wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
+			BTFMCODEC_INFO("%s: waiting to cancel prepare bearer wq", __func__);
+			cancel_work_sync(&btfmcodec_dev->wq_prepare_bearer);
+			BTFMCODEC_INFO("%s: prepare bearer wq canceled", __func__);
 			break;
 		case BTM_BTFMCODEC_BEARER_SWITCH_IND:
 			idx = BTM_PKT_TYPE_BEARER_SWITCH_IND;
@@ -223,6 +246,22 @@ static void btfmcodec_dev_rxwork(struct work_struct *work)
 			}
 			BTFMCODEC_INFO("Rx BTM_BTFMCODEC_CTRL_LOG_LVL_IND status:%d",
 					log_lvl);
+			wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
+			break;
+		case BTM_BTFMCODEC_USECASE_START_RSP:
+			idx = BTM_PKT_TYPE_USECASE_START_RSP;
+			if (len == BTM_USECASE_START_RSP_LEN) {
+				status = skb->data[0];
+				if (status == MSG_SUCCESS)
+					btfmcodec_dev->status[idx] = BTM_RSP_RECV;
+				else
+					btfmcodec_dev->status[idx] = BTM_FAIL_RESP_RECV;
+			} else {
+				BTFMCODEC_ERR("wrong packet format with len:%d", len);
+				btfmcodec_dev->status[idx] = BTM_FAIL_RESP_RECV;
+			}
+			BTFMCODEC_INFO("Rx BTM_BTFMCODEC_USECASE_START_RSP status:%d",
+				status);
 			wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[idx]);
 			break;
 		default:
@@ -329,6 +368,44 @@ int btfmcodec_dev_enqueue_pkt(struct btfmcodec_char_device *btfmcodec_dev, void 
 	spin_unlock_irqrestore(&btfmcodec_dev->tx_queue_lock, flags);
 	BTFMCODEC_DBG("end");
 	return 0;
+}
+
+int btfmcodec_enqueue_transport(struct btfmcodec_char_device *btfmcodec_dev,
+				uint8_t transport)
+{
+	struct sk_buff *skb;
+
+	mutex_lock(&btfmcodec_dev->trans_lock);
+	skb = alloc_skb(1, GFP_ATOMIC);
+	if (!skb) {
+		BTFMCODEC_ERR("failed to allocate memory");
+		mutex_unlock(&btfmcodec_dev->trans_lock);
+		return -ENOMEM;
+	}
+
+	skb_put_data(skb, &transport, 1);
+	skb_queue_tail(&btfmcodec_dev->trans_rxq, skb);
+	mutex_unlock(&btfmcodec_dev->trans_lock);
+	wake_up_interruptible(&btfmcodec_dev->rsp_wait_q[BTM_PKT_TYPE_BEARER_SWITCH_IND]);
+	return 0;
+}
+
+int btfmcodec_dequeue_transport(struct btfmcodec_char_device *btfmcodec_dev)
+{
+	uint8_t transport = 0xFF;
+	struct sk_buff *skb;
+
+	mutex_lock(&btfmcodec_dev->trans_lock);
+	skb = skb_dequeue(&btfmcodec_dev->trans_rxq);
+	if (!skb) {
+		mutex_unlock(&btfmcodec_dev->trans_lock);
+		return transport;
+	}
+	transport = skb->data[0];
+	skb_pull(skb, 1);
+	kfree_skb(skb);
+	mutex_unlock(&btfmcodec_dev->trans_lock);
+	return transport;
 }
 
 /*
@@ -442,6 +519,56 @@ static ssize_t btfmcodec_dev_read(struct file *file,
 
 	return use;
 }
+
+bool isCpSupported(void)
+{
+	return is_cp_supported;
+}
+
+static long btfmcodec_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct btfmcodec_data *btfmcodec = file->private_data;
+	struct hwep_data *hwep_info;
+
+	BTFMCODEC_INFO("%s: command %04x", __func__, cmd);
+
+	mutex_lock(&btfmcodec->hwep_drv_lock);
+	hwep_info = btfmcodec->hwep_info;
+	if (!hwep_info) {
+		BTFMCODEC_WARN("%s: HWEP is not registered with btfmcodec", __func__);
+		BTFMCODEC_WARN("%s: caching required info", __func__);
+		is_cp_supported = ((int)arg == 1) ? true : false;
+		mutex_unlock(&btfmcodec->hwep_drv_lock);
+		return 0;
+	}
+
+	mutex_unlock(&btfmcodec->hwep_drv_lock);
+	switch (cmd) {
+	case BTM_CP_UPDATE: {
+		if ((int)arg == 1) {
+			if (!strcmp(hwep_info->driver_name, "btfmslim"))
+				set_bit(BTADV_AUDIO_MASTER_CONFIG, &hwep_info->flags);
+			else if (!strcmp(hwep_info->driver_name, "btfmswr_slave"))
+				set_bit(BTADV_CONFIGURE_DMA, &hwep_info->flags);
+			BTFMCODEC_INFO("%s: This target support CP hwep %s",
+					__func__, hwep_info->driver_name);
+		} else {
+			clear_bit(BTADV_AUDIO_MASTER_CONFIG, &hwep_info->flags);
+			clear_bit(BTADV_CONFIGURE_DMA, &hwep_info->flags);
+			BTFMCODEC_INFO("%s: This target support doesn't CP", __func__);
+		}
+
+	BTFMCODEC_INFO("%s: mastr %d dma codec %d", __func__,
+			(int)test_bit(BTADV_AUDIO_MASTER_CONFIG, &hwep_info->flags),
+			(int)test_bit(BTADV_CONFIGURE_DMA, &hwep_info->flags));
+		break;
+	} default: {
+		BTFMCODEC_ERR("%s unhandled cmd %04x", __func__, cmd);
+	}
+	}
+
+	return 0;
+}
 static const struct file_operations btfmcodec_fops = {
 	.owner = THIS_MODULE,
 	.open = btfmcodec_dev_open,
@@ -450,8 +577,8 @@ static const struct file_operations btfmcodec_fops = {
 	.poll = btfmcodec_dev_poll,
 	.read = btfmcodec_dev_read,
 	/* For Now add no hookups for below callbacks */
-	.unlocked_ioctl = NULL,
-	.compat_ioctl = NULL,
+	.unlocked_ioctl = btfmcodec_ioctl,
+	.compat_ioctl = btfmcodec_ioctl,
 };
 
 static ssize_t btfmcodec_attributes_store(struct device *dev,
@@ -503,6 +630,7 @@ static int __init btfmcodec_init(void)
 		return -ENOMEM;
 	}
 
+	mutex_init(&btfmcodec->hwep_drv_lock);
 	states = &btfmcodec->states;
 	states->current_state = IDLE;
 	states->next_state = IDLE;
@@ -524,7 +652,11 @@ static int __init btfmcodec_init(void)
 	}
 
 	BTFMCODEC_INFO("creating btfm codec class");
-	dev_class = class_create(THIS_MODULE, "btfmcodec");
+  #if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 128)
+	dev_class =class_create(THIS_MODULE,"btfmcodec");
+  #else
+        dev_class =class_create("btfmcodec");
+  #endif
 	if (IS_ERR(dev_class)) {
 		ret = PTR_ERR(dev_class);
 		BTFMCODEC_ERR("class_create failed ret:%d\n", ret);
@@ -544,7 +676,8 @@ static int __init btfmcodec_init(void)
 	btfmcodec->btfmcodec_dev = btfmcodec_dev;
 	refcount_set(&btfmcodec_dev->active_clients, 1);
 	mutex_init(&btfmcodec_dev->lock);
-	strlcpy(btfmcodec_dev->dev_name, "btfmcodec_dev", DEVICE_NAME_MAX_LEN);
+	mutex_init(&btfmcodec_dev->trans_lock);
+	strscpy(btfmcodec_dev->dev_name, "btfmcodec_dev", DEVICE_NAME_MAX_LEN);
 	device_initialize(dev);
 	dev->class = dev_class;
 	dev->devt = MKDEV(MAJOR(dev_major), btfmcodec_dev->reuse_minor);
@@ -579,6 +712,7 @@ static int __init btfmcodec_init(void)
 		btfmcodec_dev->dev_name, dev_major, btfmcodec_dev->reuse_minor);
 
 	skb_queue_head_init(&btfmcodec_dev->rxq);
+	skb_queue_head_init(&btfmcodec_dev->trans_rxq);
 	mutex_init(&btfmcodec_dev->lock);
 	INIT_WORK(&btfmcodec_dev->rx_work, btfmcodec_dev_rxwork);
 	init_waitqueue_head(&btfmcodec_dev->readq);
