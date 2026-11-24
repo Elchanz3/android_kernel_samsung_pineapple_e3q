@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/string.h>
@@ -211,8 +211,9 @@ void cam_common_util_thread_switch_delay_detect(char *wq_name, const char *state
 	if (diff > threshold) {
 		scheduled_ts  = ktime_to_timespec64(scheduled_time);
 		cur_ts = ktime_to_timespec64(cur_time);
-		CAM_WARN_RATE_LIMIT_CUSTOM(CAM_UTIL, 1, 1,
-			"%s cb: %ps delay in %s detected %ld:%06ld cur %ld:%06ld diff %ld: threshold %d",
+		CAM_WARN_RATE_LIMIT_CUSTOM(CAM_UTIL, 5, 1,
+			"%s cb: %ps delay in %s detected %ld:%06ld cur %ld:%06ld\n"
+			"diff %ld: threshold %d",
 			wq_name, cb, state, scheduled_ts.tv_sec,
 			scheduled_ts.tv_nsec/NSEC_PER_USEC,
 			cur_ts.tv_sec, cur_ts.tv_nsec/NSEC_PER_USEC,
@@ -360,9 +361,14 @@ int cam_common_user_dump_helper(
 	void*(*func_ptr)(void *dump_struct, uint8_t *addr_ptr);
 
 	dump_args = (struct cam_common_hw_dump_args *)cmd_args;
+
+	if (!dump_args) {
+		CAM_ERR(CAM_UTIL, "dump_args is NULL!");
+		return -EINVAL;
+	}
 	if (!dump_args->cpu_addr || !dump_args->buf_len) {
 		CAM_ERR(CAM_UTIL,
-			"Invalid params %pK %zu",
+			"Invalid params: cpu_addr=%pk, buf_len=%zu",
 			(void *)dump_args->cpu_addr,
 			dump_args->buf_len);
 		return -EINVAL;
@@ -372,6 +378,15 @@ int cam_common_user_dump_helper(
 			"Dump offset overshoot offset %zu buf_len %zu",
 			dump_args->offset, dump_args->buf_len);
 		return -ENOSPC;
+	}
+	if (dump_args->offset + size + sizeof(struct cam_common_hw_dump_header)
+		> dump_args->buf_len) {
+		CAM_ERR(CAM_UTIL,
+			"Insufficient buffer space: offset %zu, required %zu, buf_len %zu",
+			dump_args->offset,
+			size + sizeof(struct cam_common_hw_dump_header),
+			dump_args->buf_len);
+		return -EINVAL;
 	}
 
 	dst = (uint8_t *)dump_args->cpu_addr + dump_args->offset;
@@ -386,11 +401,17 @@ int cam_common_user_dump_helper(
 	addr = (uint8_t *)(dst + sizeof(struct cam_common_hw_dump_header));
 	start = addr;
 
+	if (!func || !dump_struct) {
+		CAM_ERR(CAM_UTIL, "function ptr / dump struct is NULL");
+		return -EINVAL;
+	}
 	func_ptr = func;
 	returned_ptr = func_ptr(dump_struct, addr);
 
-	if (IS_ERR(returned_ptr))
+	if (IS_ERR(returned_ptr) || !returned_ptr) {
+		CAM_ERR(CAM_UTIL, "function call failed!");
 		return PTR_ERR(returned_ptr);
+	}
 
 	addr = (uint8_t *)returned_ptr;
 	hdr->size = addr - start;
@@ -451,7 +472,9 @@ void cam_common_release_evt_params(int32_t dev_hdl)
 static inline int cam_common_evt_inject_get_hw_id(uint8_t *hw_id, char *token)
 {
 	if (strcmp(token, CAM_COMMON_IFE_NODE) == 0)
-		*hw_id = CAM_COMMON_EVT_INJECT_HW_ISP;
+		*hw_id = CAM_COMMON_EVT_INJECT_HW_IFE;
+	else if (strcmp(token, CAM_COMMON_TFE_NODE) == 0)
+		*hw_id = CAM_COMMON_EVT_INJECT_HW_TFE;
 	else if (strcmp(token, CAM_COMMON_ICP_NODE) == 0)
 		*hw_id = CAM_COMMON_EVT_INJECT_HW_ICP;
 	else if (strcmp(token, CAM_COMMON_JPEG_NODE) == 0)
@@ -791,8 +814,11 @@ static int cam_common_evt_inject_get(char *buffer,
 		evt_params = &inject_params->evt_params;
 
 		switch (inject_params->hw_id) {
-		case CAM_COMMON_EVT_INJECT_HW_ISP:
+		case CAM_COMMON_EVT_INJECT_HW_IFE:
 			strscpy(hw_name, CAM_COMMON_IFE_NODE, sizeof(hw_name));
+			break;
+		case CAM_COMMON_EVT_INJECT_HW_TFE:
+			strscpy(hw_name, CAM_COMMON_TFE_NODE, sizeof(hw_name));
 			break;
 		case CAM_COMMON_EVT_INJECT_HW_ICP:
 			strscpy(hw_name, CAM_COMMON_ICP_NODE, sizeof(hw_name));
@@ -885,3 +911,36 @@ static const struct kernel_param_ops cam_common_evt_inject = {
 };
 
 module_param_cb(cam_event_inject, &cam_common_evt_inject, NULL, 0644);
+
+int cam_common_mem_kdup(void **dst,
+	void *src, size_t size)
+{
+	gfp_t flag = GFP_KERNEL;
+
+	if (!src || !dst || !size) {
+		CAM_ERR(CAM_UTIL, "Invalid params src: %pK dst: %pK size: %u",
+			src, dst, size);
+		return -EINVAL;
+	}
+
+	if (!in_task())
+		flag = GFP_ATOMIC;
+
+	*dst = kvzalloc(size, flag);
+	if (!*dst) {
+		CAM_ERR(CAM_UTIL, "Failed to allocate memory with size: %u", size);
+		return -ENOMEM;
+	}
+
+	memcpy(*dst, src, size);
+	CAM_DBG(CAM_UTIL, "Allocate and copy memory with size: %u", size);
+
+	return 0;
+}
+EXPORT_SYMBOL(cam_common_mem_kdup);
+
+void cam_common_mem_free(void *memory)
+{
+	kvfree(memory);
+}
+EXPORT_SYMBOL(cam_common_mem_free);

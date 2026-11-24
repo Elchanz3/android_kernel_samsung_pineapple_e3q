@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_sync_dma_fence.h"
@@ -283,10 +283,12 @@ int cam_dma_fence_get_put_ref(
 
 	dma_fence = row->fence;
 
-	if (get_or_put)
+	if (get_or_put) {
 		dma_fence_get(dma_fence);
-	else
-		dma_fence_put(dma_fence);
+	} else if (kref_put(&dma_fence->refcount, dma_fence_release)) {
+		row->fence = NULL;
+		row->state = CAM_DMA_FENCE_STATE_INVALID;
+	}
 
 	spin_unlock_bh(&g_cam_dma_fence_dev->row_spinlocks[dma_fence_row_idx]);
 
@@ -337,6 +339,7 @@ struct dma_fence *cam_dma_fence_get_fence_from_fd(
 	int32_t fd, int32_t *dma_fence_row_idx)
 {
 	struct dma_fence *dma_fence = NULL;
+	struct cam_dma_fence_row *row;
 
 	dma_fence = __cam_dma_fence_find_fence_in_table(fd, dma_fence_row_idx);
 	if (IS_ERR_OR_NULL(dma_fence)) {
@@ -346,7 +349,21 @@ struct dma_fence *cam_dma_fence_get_fence_from_fd(
 		return cam_dma_fence_get_fence_from_sync_file(fd, dma_fence_row_idx);
 	}
 
+	spin_lock_bh(&g_cam_dma_fence_dev->row_spinlocks[*dma_fence_row_idx]);
+	row = &g_cam_dma_fence_dev->rows[*dma_fence_row_idx];
+
+	if ((row->state == CAM_DMA_FENCE_STATE_INVALID) ||
+		(row->fd != fd) ||
+		(row->fence != dma_fence)) {
+		CAM_ERR(CAM_DMA_FENCE,
+			"dma fence at idx: %d is in invalid state: %d",
+			dma_fence_row_idx, row->state);
+		spin_unlock_bh(&g_cam_dma_fence_dev->row_spinlocks[*dma_fence_row_idx]);
+		return ERR_PTR(-EINVAL);
+	}
+
 	dma_fence_get(dma_fence);
+	spin_unlock_bh(&g_cam_dma_fence_dev->row_spinlocks[*dma_fence_row_idx]);
 
 	CAM_DBG(CAM_DMA_FENCE, "dma fence found for fd: %d with seqno: %llu ref_cnt: %u",
 		fd, dma_fence->seqno, kref_read(&dma_fence->refcount));
@@ -672,6 +689,13 @@ static int __cam_dma_fence_release(int32_t dma_row_idx)
 	dma_fence = row->fence;
 
 	if (row->state == CAM_DMA_FENCE_STATE_INVALID) {
+		if (test_bit(dma_row_idx, g_cam_dma_fence_dev->bitmap)) {
+			memset(row, 0, sizeof(struct cam_dma_fence_row));
+			clear_bit(dma_row_idx, g_cam_dma_fence_dev->bitmap);
+			spin_unlock_bh(&g_cam_dma_fence_dev->row_spinlocks[dma_row_idx]);
+			return 0;
+		}
+
 		CAM_ERR(CAM_DMA_FENCE, "Invalid row index: %u, state: %u",
 			dma_row_idx, row->state);
 		rc = -EINVAL;
@@ -786,7 +810,7 @@ void cam_dma_fence_close(void)
 				if (test_bit(CAM_GENERIC_FENCE_TYPE_DMA_FENCE,
 					&cam_sync_monitor_mask))
 					cam_generic_fence_update_monitor_array(i,
-						&g_cam_dma_fence_dev->dev_lock,
+						NULL,
 						g_cam_dma_fence_dev->monitor_data,
 						CAM_FENCE_OP_UNREGISTER_CB);
 				dma_fence_remove_callback(row->fence, &row->fence_cb);
@@ -797,12 +821,15 @@ void cam_dma_fence_close(void)
 				if (test_bit(CAM_GENERIC_FENCE_TYPE_DMA_FENCE,
 					&cam_sync_monitor_mask))
 					cam_generic_fence_update_monitor_array(i,
-						&g_cam_dma_fence_dev->dev_lock,
+						NULL,
 						g_cam_dma_fence_dev->monitor_data,
 						CAM_FENCE_OP_SIGNAL);
 				__cam_dma_fence_signal_fence(row->fence, -EADV);
 			}
 			dma_fence_put(row->fence);
+			memset(row, 0, sizeof(struct cam_dma_fence_row));
+			clear_bit(i, g_cam_dma_fence_dev->bitmap);
+		} else if (test_bit(i, g_cam_dma_fence_dev->bitmap)) {
 			memset(row, 0, sizeof(struct cam_dma_fence_row));
 			clear_bit(i, g_cam_dma_fence_dev->bitmap);
 		}

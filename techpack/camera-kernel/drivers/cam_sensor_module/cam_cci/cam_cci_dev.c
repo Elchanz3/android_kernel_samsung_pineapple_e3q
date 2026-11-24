@@ -27,8 +27,8 @@ struct cci_irq_data {
 static struct v4l2_subdev *g_cci_subdev[MAX_CCI] = { 0 };
 static struct dentry *debugfs_root;
 static struct cci_irq_data cci_irq_queue[QUEUE_SIZE] = { 0 };
-static int32_t head = 0;
-static int32_t tail = 0;
+static int32_t head;
+static int32_t tail;
 
 #if defined(CONFIG_CAMERA_SYSFS_V2)
 struct device *is_dev = NULL;
@@ -214,7 +214,7 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 		spin_lock_irqsave(&cci_dev->lock_status, flags);
 		trace_cam_cci_burst(cci_dev->soc_info.index, 1, 0,
 			"th_irq honoured irq1",	irq_status1);
-		CAM_INFO(CAM_CCI, "CCI%d_M1_Q0: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
+		CAM_DBG(CAM_CCI, "CCI%d_M1_Q0: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
 			cci_dev->soc_info.index, irq_status1,
 			cci_master_info->th_irq_ref_cnt[QUEUE_0]);
 		if (cci_master_info->th_irq_ref_cnt[QUEUE_0] == 1) {
@@ -248,7 +248,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 		spin_lock_irqsave(&cci_dev->lock_status, flags);
 		trace_cam_cci_burst(cci_dev->soc_info.index, 1, 1,
 			"th_irq honoured irq1",	irq_status1);
-		CAM_INFO(CAM_CCI, "CCI%d_M1_Q1: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
+		CAM_DBG(CAM_CCI,
+			"CCI%d_M1_Q1: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
 			cci_dev->soc_info.index, irq_status1,
 			cci_master_info->th_irq_ref_cnt[QUEUE_1]);
 		if (cci_master_info->th_irq_ref_cnt[QUEUE_1] == 1) {
@@ -282,7 +283,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 		spin_lock_irqsave(&cci_dev->lock_status, flags);
 		trace_cam_cci_burst(cci_dev->soc_info.index, 0, 0,
 			"th_irq honoured irq1",	irq_status1);
-		CAM_INFO(CAM_CCI, "CCI%d_M0_Q0: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
+		CAM_DBG(CAM_CCI,
+			"CCI%d_M0_Q0: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
 			cci_dev->soc_info.index, irq_status1,
 			cci_master_info->th_irq_ref_cnt[QUEUE_0]);
 		if (cci_master_info->th_irq_ref_cnt[QUEUE_0] == 1) {
@@ -316,7 +318,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 		spin_lock_irqsave(&cci_dev->lock_status, flags);
 		trace_cam_cci_burst(cci_dev->soc_info.index, 0, 1,
 			"th_irq honoured irq1",	irq_status1);
-		CAM_INFO(CAM_CCI, "CCI%d_M0_Q1: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
+		CAM_DBG(CAM_CCI,
+			"CCI%d_M0_Q1: th_irq honoured irq1: 0x%x th_irq_ref_cnt: %d",
 			cci_dev->soc_info.index, irq_status1,
 			cci_master_info->th_irq_ref_cnt[QUEUE_1]);
 		if (cci_master_info->th_irq_ref_cnt[QUEUE_1] == 1) {
@@ -579,12 +582,14 @@ irqreturn_t cam_cci_threaded_irq(int irq_num, void *data)
 	CAM_INFO(CAM_CCI, "CCI%d: nice: %d rt-Priority: %d cci_dev: %p",
 		soc_info->index, task_nice(current), task->rt_priority, cci_dev);
 	spin_lock_irqsave(&cci_dev->lock_status, flags);
-	if(tail != head) {
+	if (tail != head) {
 		cci_data = cci_irq_queue[tail];
 		tail = increment_index(tail);
-		/* "head" and "tail" variables are shared across
+		/*
+		 * "head" and "tail" variables are shared across
 		 * Top half and Bottom Half routines, Hence place a
-		 * lock while accessing these variables.*/
+		 * lock while accessing these variables.
+		 */
 		spin_unlock_irqrestore(&cci_dev->lock_status, flags);
 		cam_cci_data_queue_burst_apply(cci_dev,
 			cci_data.master, cci_data.queue, triggerHalfQueue);
@@ -597,10 +602,22 @@ irqreturn_t cam_cci_threaded_irq(int irq_num, void *data)
 static int cam_cci_irq_routine(struct v4l2_subdev *sd, u32 status,
 	bool *handled)
 {
-	struct cci_device *cci_dev = v4l2_get_subdevdata(sd);
+	struct cci_device *cci_dev = NULL;
 	irqreturn_t ret;
-	struct cam_hw_soc_info *soc_info =
-		&cci_dev->soc_info;
+	struct cam_hw_soc_info *soc_info = NULL;
+
+	if (!sd) {
+		CAM_ERR(CAM_CCI, "Error No data in subdev");
+		return -EINVAL;
+	}
+
+	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
+
+	soc_info = &cci_dev->soc_info;
 
 	ret = cam_cci_irq(soc_info->irq_num[0], cci_dev);
 	if (ret == IRQ_NONE)
@@ -756,8 +773,9 @@ static int cam_cci_component_bind(struct device *dev,
 		CAM_WARN(CAM_CCI, "debugfs creation failed");
 		rc = 0;
 	}
-	CAM_ERR(CAM_CCI, "CCI Component bound successfully: %s",
-			pdev->name);
+	head = 0;
+	tail = 0;
+	CAM_DBG(CAM_CCI, "Component bound successfully");
 	return rc;
 
 cci_unregister_subdev:
@@ -774,8 +792,23 @@ static void cam_cci_component_unbind(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 
 	struct v4l2_subdev *subdev = platform_get_drvdata(pdev);
-	struct cci_device *cci_dev =
-		v4l2_get_subdevdata(subdev);
+	struct cci_device *cci_dev = NULL;
+
+	if (!subdev) {
+		CAM_ERR(CAM_CCI, "Error No data in subdev");
+		return;
+	}
+
+	cci_dev = v4l2_get_subdevdata(subdev);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "Error No data in cci_dev");
+		return;
+	}
+
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return;
+	}
 
 	cam_cpas_unregister_client(cci_dev->cpas_handle);
 	debugfs_root = NULL;

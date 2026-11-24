@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ratelimit.h>
@@ -1013,8 +1013,9 @@ static int cam_sfe_bus_acquire_bus_rd(void *bus_priv, void *acquire_args,
 	rsrc_node->res_id = bus_rd_acquire_args->res_id;
 	rsrc_data = rsrc_node->res_priv;
 
-	CAM_DBG(CAM_SFE, "SFE:%d acquire RD type:0x%x res_id 0x%x",
-		rsrc_data->common_data->core_index, acq_args->rsrc_type, rsrc_node->res_id);
+	CAM_DBG(CAM_SFE, "SFE:%d acquire RD type:0x%x res_id 0x%x unpacker_fmt %d",
+		rsrc_data->common_data->core_index, acq_args->rsrc_type, rsrc_node->res_id,
+		bus_rd_acquire_args->unpacker_fmt);
 
 	rsrc_data->num_rm = num_rm;
 	rsrc_node->tasklet_info = acq_args->tasklet;

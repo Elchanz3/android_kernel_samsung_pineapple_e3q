@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2019, 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _HFI_DEFS_H_
@@ -213,6 +213,7 @@
 #define HFI_PROP_SYS_ICP_RAMDUMP_MODE      (HFI_PROPERTY_ICP_COMMON_START + 0xb)
 #define HFI_PROP_SYS_OFE_PC                (HFI_PROPERTY_ICP_COMMON_START + 0xc)
 #define HFI_PROP_SYS_MEM_REGIONS           (HFI_PROPERTY_ICP_COMMON_START + 0xe)
+#define HFI_PROP_SYS_ICP_FEATURE_SUPPORTED (HFI_PROPERTY_ICP_COMMON_START + 0xf)
 
 /* Capabilities reported at sys init */
 #define HFI_CAPS_PLACEHOLDER_1         (HFI_COMMON_BASE + 0x1)
@@ -272,7 +273,7 @@
 #define HFI_DEBUG_CFG_WFI        0x01000000
 #define HFI_DEBUG_CFG_ARM9WD     0x10000000
 
-#define HFI_DEV_VERSION_MAX      0x6
+#define HFI_DEV_VERSION_MAX      0x4
 
 #define ICP_PWR_CLP_BPS          0x00000001
 #define ICP_PWR_CLP_IPE0         0x00010000
@@ -651,6 +652,27 @@ struct hfi_msg_event_notify {
 	uint32_t event_data1;
 	uint32_t event_data2;
 	uint32_t ext_event_data[1];
+} __packed;
+
+/** The Camera ICP FW Features structure definition
+ * is_feature_mask_enabled  : Overall platform feature enable bit
+ * feature_mask             : ICP FW feature mask
+ * feature_mask_validity    : feature mask validity
+ * is_4K_enabled            : 4K30 feature enable bit
+ * _4K_feature_validity     : 4K feature validity
+ * is_sHDR_enabled          : sHDR feature enable bit
+ * sHDR_feature_validity    : sHDR feature validity
+ * max_fps_4K_supported     : 4kFPS feature data
+ */
+struct hfi_sys_camera_icp_fw_features {
+	uint32_t is_feature_mask_enabled;
+	uint32_t feature_mask;
+	uint32_t feature_mask_validity;
+	uint32_t is_4K_enabled;
+	uint32_t _4K_feature_validity;
+	uint32_t is_sHDR_enabled;
+	uint32_t sHDR_feature_validity;
+	uint32_t max_fps_4K_supported;
 } __packed;
 /**
  * end of sys message packet types

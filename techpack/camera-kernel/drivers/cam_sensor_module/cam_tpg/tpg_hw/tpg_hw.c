@@ -1071,15 +1071,17 @@ int tpg_hw_copy_settings_config(
 	struct tpg_settings_config_t *settings)
 {
 	struct tpg_reg_settings *reg_settings;
+	uint32_t num_settings_array;
 
 	if (!hw || !settings) {
 		CAM_ERR(CAM_TPG, "invalid parameter");
 		return -EINVAL;
 	}
 
+	num_settings_array = settings->settings_array_size;
 	hw->register_settings =
 		kzalloc(sizeof(struct tpg_reg_settings) *
-		settings->settings_array_size, GFP_KERNEL);
+		num_settings_array, GFP_KERNEL);
 
 	if (hw->register_settings == NULL) {
 		CAM_ERR(CAM_TPG, "unable to allocate memory");
@@ -1101,7 +1103,7 @@ int tpg_hw_copy_settings_config(
 		sizeof(struct tpg_settings_config_t));
 	memcpy(hw->register_settings,
 		reg_settings,
-		sizeof(struct tpg_reg_settings) * settings->settings_array_size);
+		sizeof(struct tpg_reg_settings) * num_settings_array);
 	mutex_unlock(&hw->mutex);
 
 	return 0;
@@ -1345,6 +1347,7 @@ struct tpg_hw_request *tpg_hw_create_request(
 	}
 
 	num_vc_channels = hw->hw_info->max_vc_channels;
+
 	/* Allocate request */
 	req = kzalloc(sizeof(struct tpg_hw_request),
 			GFP_KERNEL);

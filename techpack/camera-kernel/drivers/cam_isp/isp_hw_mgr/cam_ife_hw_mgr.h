@@ -64,7 +64,7 @@ enum cam_ife_ctx_master_type {
  * @rx_capture_debug_set:      If rx capture debug is set by user
  * @disable_isp_drv:           Disable ISP DRV config
  * @enable_presil_reg_dump:    Enable per req regdump in presil
- *
+ * @enable_cdm_cmd_check:      Enable invalid command check in cmd_buf
  */
 struct cam_ife_hw_mgr_debug {
 	struct dentry  *dentry;
@@ -87,11 +87,26 @@ struct cam_ife_hw_mgr_debug {
 	bool           rx_capture_debug_set;
 	bool           disable_isp_drv;
 	bool           enable_presil_reg_dump;
+	bool           enable_cdm_cmd_check;
 #if defined(CONFIG_SAMSUNG_DEBUG_SENSOR_TIMING)
 	uint32_t       csid_dbg_fps;
 	uint32_t       vfe_dbg_fps;
 	uint32_t       dbg_mode_switch;
 #endif
+};
+
+/**
+ * struct cam_cmd_buf_desc_addr_len
+ *
+ * brief:                       structure to store cpu addr and size of
+ *                              reg dump descriptors
+ * @cpu_addr:                   cpu addr of buffer
+ * @size:                       size of the buffer
+ */
+
+struct cam_cmd_buf_desc_addr_len {
+	uintptr_t cpu_addr;
+	size_t    buf_size;
 };
 
 /**
@@ -208,6 +223,7 @@ struct cam_ife_hw_mgr_ctx_scratch_buf_info {
  *                       for the cache type
  * @rdi_pd_context:      Flag to specify the context has
  *                       only rdi and PD resource without PIX port.
+ * @skip_reg_dump_buf_put: Set if put_cpu_buf for reg dump buf is already called
  *
  */
 struct cam_ife_hw_mgr_ctx_flags {
@@ -230,6 +246,7 @@ struct cam_ife_hw_mgr_ctx_flags {
 	bool   rdi_lcr_en;
 	bool   sys_cache_usage[CAM_LLCC_MAX];
 	bool   rdi_pd_context;
+	bool   skip_reg_dump_buf_put;
 };
 
 /**
@@ -315,6 +332,8 @@ struct cam_isp_comp_record_query {
  * @config_done_complete    indicator for configuration complete
  * @reg_dump_buf_desc:      cmd buffer descriptors for reg dump
  * @num_reg_dump_buf:       Count of descriptors in reg_dump_buf_desc
+ * @reg_dump_cmd_buf_addr_len	store cpu addr and size of
+ *                          reg dump descriptors for flush/error cases
  * @applied_req_id:         Last request id to be applied
  * @ctx_type                Type of IFE ctx [CUSTOM/SFE etc.]
  * @ctx_config              ife ctx config  [bit field]
@@ -383,6 +402,8 @@ struct cam_ife_hw_mgr_ctx {
 	struct cam_cmd_buf_desc                    reg_dump_buf_desc[
 						CAM_REG_DUMP_MAX_BUF_ENTRIES];
 	uint32_t                                   num_reg_dump_buf;
+	struct cam_cmd_buf_desc_addr_len           reg_dump_cmd_buf_addr_len[
+						CAM_REG_DUMP_MAX_BUF_ENTRIES];
 	uint64_t                                   applied_req_id;
 	enum cam_ife_ctx_master_type               ctx_type;
 	uint32_t                                   ctx_config;
