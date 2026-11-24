@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2022, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <dt-bindings/clock/qcom,gcc-cliffs.h>
-#include <dt-bindings/clock/qcom,videocc-cliffs.h>
+#include <dt-bindings/clock/qcom,videocc-pineapple.h>
 
 #include <linux/soc/qcom/llcc-qcom.h>
 #include <soc/qcom/of_common.h>
@@ -316,11 +316,11 @@ static struct msm_platform_core_capability core_data_cliffs_v0[] = {
 	{MAX_NUM_4K_SESSIONS, 4},
 	{MAX_NUM_8K_SESSIONS, 1},
 	{MAX_SECURE_SESSION_COUNT, 3},
-	{MAX_RT_MBPF, 138240}, /* ((8192x4320)/256) */
-	{MAX_MBPF, 173056}, /* (8192x4320)/256 + (4096*2176)/256*/
-	/* max_load 4096x2176@120fps which is greater than 8192x4320@30fps */
+	{MAX_RT_MBPF, 129600}, /* ((7680*4320)/256)) */
+	{MAX_MBPF, 139264}, /* (4 * ((4096*2176)/256)) */
+	/* max_load 1920x1080@480fps which is greater than 7680x4320@30fps */
 	/* Concurrency: UHD@30 decode + uhd@30 encode */
-	{MAX_MBPS, 4177920},
+	{MAX_MBPS, 3916800},
 	{MAX_IMAGE_MBPF, 1048576}, /* (16384x16384)/256 */
 	{MAX_MBPF_HQ, 8160}, /* ((1920x1088)/256) */
 	{MAX_MBPS_HQ, 244800}, /* ((1920x1088)/256)@30fps */
@@ -352,7 +352,7 @@ static struct msm_platform_core_capability core_data_cliffs_v0[] = {
 static struct msm_platform_core_capability core_data_cliffs_v1[] = {
 	/* {type, value} */
 	{ENC_CODECS, H264 | HEVC | HEIC},
-	{DEC_CODECS, H264 | HEVC | VP9 | AV1 | HEIC},
+	{DEC_CODECS, H264 | HEVC | VP9 | HEIC},
 	{MAX_SESSION_COUNT, 16},
 	{MAX_NUM_720P_SESSIONS, 16},
 	{MAX_NUM_1080P_SESSIONS, 8},
@@ -401,9 +401,9 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		0, INT_MAX, 1, DRIVER_VERSION,
 		V4L2_CID_MPEG_VIDC_DRIVER_VERSION},
 
-	{FRAME_WIDTH, DEC, CODECS_ALL_V0, 96, 8192, 1, 1920},
+	{FRAME_WIDTH, DEC, CODECS_ALL_V0, 96, 7680, 1, 1920},
 
-	{FRAME_WIDTH, DEC, VP9, 96, 4096, 1, 1920},
+	{FRAME_WIDTH, DEC, VP9 | AV1, 96, 4096, 1, 1920},
 
 	{FRAME_WIDTH, ENC, CODECS_ALL_V0, 128, 4096, 1, 1920},
 
@@ -421,9 +421,9 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 
 	{SECURE_FRAME_WIDTH, ENC, HEVC, 96, 4096, 1, 1920},
 
-	{FRAME_HEIGHT, DEC, CODECS_ALL_V0, 96, 8192, 1, 1080},
+	{FRAME_HEIGHT, DEC, CODECS_ALL_V0, 96, 7680, 1, 1080},
 
-	{FRAME_HEIGHT, DEC, VP9, 96, 4096, 1, 1080},
+	{FRAME_HEIGHT, DEC, VP9 | AV1, 96, 4096, 1, 1080},
 
 	{FRAME_HEIGHT, ENC, CODECS_ALL_V0, 128, 4096, 1, 1080},
 
@@ -491,11 +491,11 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 	/* ((16384x16384)/256) */
 	{MBPF, ENC, HEIC, 36, 1048576, 1, 1048576},
 
-	/* (8192 * 4320) / 256 */
-	{MBPF, DEC, CODECS_ALL_V0, 36, 138240, 1, 138240},
+	/* (4 * ((4096 * 2176)/256) */
+	{MBPF, DEC, CODECS_ALL_V0, 36, 139264, 1, 139264},
 
-	/* (4096 * 2176) / 256 */
-	{MBPF, DEC, VP9, 36, 34816, 1, 34816},
+	/* (4096 * 2160) / 256 */
+	{MBPF, DEC, VP9 | AV1, 36, 34560, 1, 34560},
 
 	/* ((8192x8192)/256) */
 	{MBPF, DEC, HEIC, 64, 262144,  1, 262144 },
@@ -807,10 +807,10 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		160000000, 1, 160000000},
 
 	{CAVLC_MAX_BITRATE, ENC, H264, 0,
-		220000000, 1, 220000000},
+		160000000, 1, 160000000},
 
 	{ALLINTRA_MAX_BITRATE, ENC, H264 | HEVC, 0,
-		245000000, 1, 245000000},
+		160000000, 1, 160000000},
 
 	{LOWLATENCY_MAX_BITRATE, ENC, H264 | HEVC, 0,
 		70000000, 1, 70000000},
@@ -1339,7 +1339,7 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 
 	{LEVEL, ENC, H264,
 		V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
-		V4L2_MPEG_VIDEO_H264_LEVEL_6_0,
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
@@ -1356,16 +1356,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_6_0),
-		V4L2_MPEG_VIDEO_H264_LEVEL_5_0,
+		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2),
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		V4L2_CID_MPEG_VIDEO_H264_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, ENC, HEVC | HEIC,
 		V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2,
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
@@ -1374,9 +1373,8 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2),
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5,
+		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1),
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDEO_HEVC_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
@@ -1428,7 +1426,7 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 
 	{LEVEL, DEC, VP9,
 		V4L2_MPEG_VIDEO_VP9_LEVEL_1_0,
-		V4L2_MPEG_VIDEO_VP9_LEVEL_5_2,
+		V4L2_MPEG_VIDEO_VP9_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_0) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_1) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_2_0) |
@@ -1438,16 +1436,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_0) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_1) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_0) |
-		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_2),
-		V4L2_MPEG_VIDEO_VP9_LEVEL_5_2,
+		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_1),
+		V4L2_MPEG_VIDEO_VP9_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDEO_VP9_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, DEC, AV1,
 		V4L2_MPEG_VIDC_AV1_LEVEL_2_0,
-		V4L2_MPEG_VIDC_AV1_LEVEL_5_3,
+		V4L2_MPEG_VIDC_AV1_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_2_0) |
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_2_1) |
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_2_2) |
@@ -1461,10 +1458,8 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v0[] = {
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_4_2) |
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_4_3) |
 		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_5_0) |
-		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_5_2) |
-		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_5_3),
-		V4L2_MPEG_VIDC_AV1_LEVEL_5_3,
+		BIT(V4L2_MPEG_VIDC_AV1_LEVEL_5_1),
+		V4L2_MPEG_VIDC_AV1_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDC_AV1_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
@@ -3078,10 +3073,10 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		160000000, 1, 160000000},
 
 	{CAVLC_MAX_BITRATE, ENC, H264, 0,
-		220000000, 1, 220000000},
+		160000000, 1, 160000000},
 
 	{ALLINTRA_MAX_BITRATE, ENC, H264 | HEVC, 0,
-		245000000, 1, 245000000},
+		160000000, 1, 160000000},
 
 	{LOWLATENCY_MAX_BITRATE, ENC, H264 | HEVC, 0,
 		70000000, 1, 70000000},
@@ -3595,7 +3590,7 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 
 	{LEVEL, ENC, H264,
 		V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
-		V4L2_MPEG_VIDEO_H264_LEVEL_6_0,
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
@@ -3612,16 +3607,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_6_0),
-		V4L2_MPEG_VIDEO_H264_LEVEL_5_0,
+		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2),
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		V4L2_CID_MPEG_VIDEO_H264_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, ENC, HEVC | HEIC,
 		V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2,
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
@@ -3630,16 +3624,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2),
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5,
+		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1),
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDEO_HEVC_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, DEC, H264,
 		V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
-		V4L2_MPEG_VIDEO_H264_LEVEL_6_0,
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
@@ -3656,16 +3649,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_0) |
 		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2) |
-		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_6_0),
-		V4L2_MPEG_VIDEO_H264_LEVEL_6_0,
+		BIT(V4L2_MPEG_VIDEO_H264_LEVEL_5_2),
+		V4L2_MPEG_VIDEO_H264_LEVEL_5_2,
 		V4L2_CID_MPEG_VIDEO_H264_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, DEC, HEVC | HEIC,
 		V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2,
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
@@ -3674,16 +3666,15 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1) |
 		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2),
-		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2,
+		BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1),
+		V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDEO_HEVC_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
 
 	{LEVEL, DEC, VP9,
 		V4L2_MPEG_VIDEO_VP9_LEVEL_1_0,
-		V4L2_MPEG_VIDEO_VP9_LEVEL_5_2,
+		V4L2_MPEG_VIDEO_VP9_LEVEL_5_1,
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_0) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_1) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_2_0) |
@@ -3693,9 +3684,8 @@ static struct msm_platform_inst_capability instance_cap_data_cliffs_v1[] = {
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_0) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_1) |
 		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_0) |
-		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_1) |
-		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_2),
-		V4L2_MPEG_VIDEO_VP9_LEVEL_5_2,
+		BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_5_1),
+		V4L2_MPEG_VIDEO_VP9_LEVEL_5_1,
 		V4L2_CID_MPEG_VIDEO_VP9_LEVEL,
 		HFI_PROP_LEVEL,
 		CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU},
@@ -4919,6 +4909,7 @@ static const struct clk_rst_table cliffs_clk_reset_table[] = {
 	{ "video_axi_reset",        0  },
 	{ "video_xo_reset",         1  },
 	{ "video_mvs0c_reset",      0  },
+	{ "video_mvs0_reset",       0  },
 };
 
 /* name, llcc_id */
@@ -4941,13 +4932,21 @@ const struct context_bank_table cliffs_context_bank_table[] = {
 };
 
 /* freq */
-static struct freq_table cliffs_freq_table[] = {
+static struct freq_table cliffs_freq_table_sku0[] = {
 	{533333333}, {444000000}, {366000000}, {338000000}, {240000000}, {192000000}
+};
+
+static struct freq_table cliffs_freq_table_sku1[] = {
+	{366000000}, {338000000}, {240000000}, {192000000}
 };
 
 /* register, value, mask */
 static const struct reg_preset_table cliffs_reg_preset_table[] = {
-	{ 0xB0088, 0x0, 0x11},
+	{ 0xB0088, 0x0,        0x11      },
+	{ 0x10830, 0x33332222, 0xFFFFFFFF},
+	{ 0x10834, 0x44444444, 0xFFFFFFFF},
+	{ 0x10838, 0x00001022, 0xFFFFFFFF},
+	{ 0xA013C, 0x99,       0xFFFFFFFF},
 };
 
 /* name, phys_addr, size, device_addr, device region type */
@@ -5071,9 +5070,16 @@ static const u32 cliffs_vdec_output_properties_av1[] = {
 	HFI_PROP_FENCE,
 };
 
+static const u32 cliffs_msm_vidc_ssr_type[] = {
+	HFI_SSR_TYPE_SW_ERR_FATAL,
+	HFI_SSR_TYPE_SW_DIV_BY_ZERO,
+	HFI_SSR_TYPE_CPU_WDOG_IRQ,
+	HFI_SSR_TYPE_NOC_ERROR,
+};
+
 static struct msm_vidc_efuse_data efuse_data_cliffs[] = {
-	EFUSE_ENTRY(0x221C8118, 4, 0x1000, 0xB, SKU_VERSION),
-	EFUSE_ENTRY(0x221C812C, 4, 0x40, 0x6, SKU_VERSION),
+	/* IRIS_DISABLE_AV1, SKU VERSION: 1 */
+	EFUSE_ENTRY(0x221C8118, 4, 0x2000, 0xD, SKU_VERSION),
 };
 
 static const struct msm_vidc_platform_data cliffs_data_v0 = {
@@ -5094,15 +5100,15 @@ static const struct msm_vidc_platform_data cliffs_data_v0 = {
 	.context_bank_tbl_size = ARRAY_SIZE(cliffs_context_bank_table),
 
 	/* platform specific resources */
-	.freq_tbl = cliffs_freq_table,
-	.freq_tbl_size = ARRAY_SIZE(cliffs_freq_table),
+	.freq_tbl = cliffs_freq_table_sku0,
+	.freq_tbl_size = ARRAY_SIZE(cliffs_freq_table_sku0),
 	.reg_prst_tbl = cliffs_reg_preset_table,
 	.reg_prst_tbl_size = ARRAY_SIZE(cliffs_reg_preset_table),
 	.dev_reg_tbl = cliffs_device_region_table,
 	.dev_reg_tbl_size = ARRAY_SIZE(cliffs_device_region_table),
 	.fwname = "vpu30_2v",
 	.pas_id = 9,
-	.supports_mmrm = 1,
+	.supports_mmrm = 0,
 	.vpu_ver = VPU_VERSION_IRIS33_2P,
 
 	/* caps related resorces */
@@ -5144,6 +5150,9 @@ static const struct msm_vidc_platform_data cliffs_data_v0 = {
 	.dec_output_prop_size_vp9 = ARRAY_SIZE(cliffs_vdec_output_properties_vp9),
 	.dec_output_prop_size_av1 = ARRAY_SIZE(cliffs_vdec_output_properties_av1),
 
+	.msm_vidc_ssr_type = cliffs_msm_vidc_ssr_type,
+	.msm_vidc_ssr_type_size = ARRAY_SIZE(cliffs_msm_vidc_ssr_type),
+
 	/* Fuse specific resources */
 	.efuse_data = efuse_data_cliffs,
 	.efuse_data_size = ARRAY_SIZE(efuse_data_cliffs),
@@ -5168,15 +5177,15 @@ static const struct msm_vidc_platform_data cliffs_data_v1 = {
 	.context_bank_tbl_size = ARRAY_SIZE(cliffs_context_bank_table),
 
 	/* platform specific resources */
-	.freq_tbl = cliffs_freq_table,
-	.freq_tbl_size = ARRAY_SIZE(cliffs_freq_table),
+	.freq_tbl = cliffs_freq_table_sku1,
+	.freq_tbl_size = ARRAY_SIZE(cliffs_freq_table_sku1),
 	.reg_prst_tbl = cliffs_reg_preset_table,
 	.reg_prst_tbl_size = ARRAY_SIZE(cliffs_reg_preset_table),
 	.dev_reg_tbl = cliffs_device_region_table,
 	.dev_reg_tbl_size = ARRAY_SIZE(cliffs_device_region_table),
 	.fwname = "vpu30_2v",
 	.pas_id = 9,
-	.supports_mmrm = 1,
+	.supports_mmrm = 0,
 
 	/* caps related resorces */
 	.core_data = core_data_cliffs_v1,
@@ -5211,6 +5220,9 @@ static const struct msm_vidc_platform_data cliffs_data_v1 = {
 	.dec_output_prop_size_avc = ARRAY_SIZE(cliffs_vdec_output_properties_avc),
 	.dec_output_prop_size_hevc = ARRAY_SIZE(cliffs_vdec_output_properties_hevc),
 	.dec_output_prop_size_vp9 = ARRAY_SIZE(cliffs_vdec_output_properties_vp9),
+
+	.msm_vidc_ssr_type = cliffs_msm_vidc_ssr_type,
+	.msm_vidc_ssr_type_size = ARRAY_SIZE(cliffs_msm_vidc_ssr_type),
 
 	/* Fuse specific resources */
 	.efuse_data = efuse_data_cliffs,

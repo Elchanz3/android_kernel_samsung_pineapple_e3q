@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2022, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <dt-bindings/clock/qcom,gcc-pineapple.h>
@@ -290,7 +290,7 @@ static struct msm_platform_core_capability core_data_pineapple[] = {
 	{MAX_NUM_4K_SESSIONS, 8},
 	{MAX_NUM_8K_SESSIONS, 2},
 	{MAX_SECURE_SESSION_COUNT, 3},
-	{MAX_RT_MBPF, 259200}, /* ((7680x4320)/256) * 2)*/
+	{MAX_RT_MBPF, 259200},	/* ((7680x4320)/256) * 2)*/
 	{MAX_MBPF, 278528}, /* ((8192x4352)/256) * 2 */
 	{MAX_MBPS, 7833600},
 	/* max_load
@@ -2716,6 +2716,7 @@ static const struct clk_rst_table pineapple_clk_reset_table[] = {
 	{ "video_axi_reset",        0  },
 	{ "video_xo_reset",         1  },
 	{ "video_mvs0c_reset",      0  },
+	{ "video_mvs0_reset",       0  },
 };
 
 /* name, llcc_id */
@@ -2879,6 +2880,13 @@ static const u32 pineapple_vdec_output_properties_av1[] = {
 	HFI_PROP_FENCE,
 };
 
+static const u32 pineapple_msm_vidc_ssr_type[] = {
+	HFI_SSR_TYPE_SW_ERR_FATAL,
+	HFI_SSR_TYPE_SW_DIV_BY_ZERO,
+	HFI_SSR_TYPE_CPU_WDOG_IRQ,
+	HFI_SSR_TYPE_NOC_ERROR,
+};
+
 static const struct msm_vidc_platform_data pineapple_data = {
 	/* resources dependent on other module */
 	.bw_tbl = pineapple_bw_table,
@@ -2946,6 +2954,10 @@ static const struct msm_vidc_platform_data pineapple_data = {
 	.dec_output_prop_size_hevc = ARRAY_SIZE(pineapple_vdec_output_properties_hevc),
 	.dec_output_prop_size_vp9 = ARRAY_SIZE(pineapple_vdec_output_properties_vp9),
 	.dec_output_prop_size_av1 = ARRAY_SIZE(pineapple_vdec_output_properties_av1),
+
+	.msm_vidc_ssr_type = pineapple_msm_vidc_ssr_type,
+	.msm_vidc_ssr_type_size = ARRAY_SIZE(pineapple_msm_vidc_ssr_type),
+
 };
 
 int msm_vidc_pineapple_check_ddr_type(void)

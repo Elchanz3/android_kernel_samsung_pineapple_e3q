@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iommu.h>
@@ -927,12 +927,6 @@ int venus_hfi_trigger_ssr(struct msm_vidc_core *core, u32 type,
 {
 	int rc = 0;
 	u32 payload[2];
-
-	// WA for CR: 3584248
-	if (type != HFI_SSR_TYPE_SW_ERR_FATAL) {
-		d_vpr_h("SSR Type 0x1 is only allowed for pineapple\n");
-		return rc;
-	}
 
 	/*
 	 * call resume before preparing ssr hfi packet in core->packet

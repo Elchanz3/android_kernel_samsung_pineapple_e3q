@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _MSM_VIDC_PLATFORM_H_
@@ -36,6 +36,14 @@
 	.mask = m,                       \
 	.shift = sh,                     \
 	.purpose = p                     \
+}
+
+#define LICENSE_DATA(sa, s, lv_sh, sku_sh) \
+{	                                       \
+	.start_address = sa,                   \
+	.header_size = s,                      \
+	.license_validity_shift = lv_sh,       \
+	.sku_id_shift = sku_sh,                \
 }
 
 extern u32 vpe_csc_custom_matrix_coeff[MAX_MATRIX_COEFFS];
@@ -185,6 +193,13 @@ struct msm_vidc_efuse_data {
 	enum efuse_purpose purpose;
 };
 
+struct msm_vidc_license_data {
+	u32 start_address;
+	u32 header_size;
+	u32 license_validity_shift;
+	u32 sku_id_shift;
+};
+
 struct msm_vidc_format_capability {
 	struct codec_info *codec_info;
 	u32 codec_info_size;
@@ -201,6 +216,7 @@ struct msm_vidc_format_capability {
 enum vpu_version {
 	VPU_VERSION_IRIS33 = 1,
 	VPU_VERSION_IRIS33_2P, // IRIS3 2 PIPE
+	VPU_VERSION_IRIS2_2P, // IRIS2 2 PIPE
 };
 
 struct msm_vidc_platform_data {
@@ -266,6 +282,11 @@ struct msm_vidc_platform_data {
 	unsigned int dec_output_prop_size_vp9;
 	const u32 *dec_output_prop_av1;
 	unsigned int dec_output_prop_size_av1;
+	const u32  *msm_vidc_ssr_type;
+	unsigned int msm_vidc_ssr_type_size;
+	struct msm_vidc_license_data *license_data;
+	unsigned int license_data_size;
+
 };
 
 struct msm_vidc_platform {
@@ -284,6 +305,7 @@ static inline bool is_mmrm_supported(struct msm_vidc_core *core)
 
 int msm_vidc_init_platform(struct msm_vidc_core *core);
 int msm_vidc_read_efuse(struct msm_vidc_core *core);
+int msm_vidc_get_license_fp_info(struct msm_vidc_core *core);
 
 /* control framework support functions */
 

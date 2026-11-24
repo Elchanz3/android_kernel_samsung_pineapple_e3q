@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _MSM_VIDC_INTERNAL_H_
@@ -644,6 +644,7 @@ enum msm_vidc_core_capability_type {
 	DEVICE_CAPS,
 	SUPPORTS_REQUESTS,
 	SUPPORTS_SYNX_FENCE,
+	SSR_TYPE,
 	CORE_CAP_MAX,
 };
 
@@ -728,6 +729,8 @@ enum sku_version {
 	SKU_VERSION_0 = 0,
 	SKU_VERSION_1,
 	SKU_VERSION_2,
+	SKU_VERSION_3,
+	SKU_VERSION_4,
 };
 
 enum msm_vidc_ssr_trigger_type {

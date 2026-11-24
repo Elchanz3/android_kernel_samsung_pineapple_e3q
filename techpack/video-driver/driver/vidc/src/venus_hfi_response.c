@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of_address.h>
@@ -15,10 +15,6 @@
 #include "msm_vidc_memory.h"
 #include "msm_vidc_fence.h"
 #include "msm_vidc_platform.h"
-
-#if IS_ENABLED(CONFIG_SEC_ABC) //for SM8650 H/W AP defect issue screening - vidc_system_error_0x5000002 / vidc_system_error_0x5000003
-#include <linux/sti/abc_common.h>
-#endif
 
 #undef in_range
 #define in_range(range, val) (((range.begin) < (val)) && ((range.end) > (val)))
@@ -76,7 +72,7 @@ static void print_sfr_message(struct msm_vidc_core *core)
 				vsfr->buf_size, core->sfr.mem_size);
 			return;
 		}
-		vsfr_size = vsfr->buf_size - sizeof(u32);
+		vsfr_size = core->sfr.mem_size - sizeof(u32);
 		p = memchr(vsfr->rg_data, '\0', vsfr_size);
 		/* SFR isn't guaranteed to be NULL terminated */
 		if (p == NULL)
@@ -388,7 +384,7 @@ int handle_system_error(struct msm_vidc_core *core,
 {
 	bool bug_on = false;
 
-	d_vpr_e("%s: system error received\n", __func__);
+	d_vpr_e(FMT_STRING_SYSTEM_ERROR, __func__);
 	print_sfr_message(core);
 
 	if (pkt) {
@@ -407,7 +403,10 @@ int handle_system_error(struct msm_vidc_core *core,
 		}
 	}
 
-	msm_vidc_core_deinit(core, true);
+	core_lock(core, __func__);
+	msm_vidc_change_core_state(core, MSM_VIDC_CORE_ERROR, __func__);
+	msm_vidc_core_deinit_locked(core, true);
+	core_unlock(core, __func__);
 
 	return 0;
 }
@@ -1896,16 +1895,6 @@ static int handle_system_response(struct msm_vidc_core *core,
 			if (packet->flags & HFI_FW_FLAGS_SYSTEM_ERROR) {
 				d_vpr_e("%s: received system error %#x\n",
 					__func__, packet->type);
-#if IS_ENABLED(CONFIG_SEC_ABC)
-				if (packet->type == 0x5000003) {
-					sec_abc_send_event("MODULE=mm@INFO=vidc_sys_err_type3");
-				    d_vpr_e("%s: ABC report vidc_sys_err_type3(0x5000003)\n", __func__);
-				}
-				else if (packet->type == 0x5000002) {
-					sec_abc_send_event("MODULE=mm@INFO=vidc_sys_err_type2");
-				    d_vpr_e("%s: ABC report vidc_sys_err_type2(0x5000002)\n", __func__);
-				}
-#endif
 				rc = handle_system_error(core, packet);
 				if (rc)
 					goto exit;

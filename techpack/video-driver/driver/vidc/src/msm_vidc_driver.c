@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2022, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iommu.h>
@@ -24,10 +24,6 @@
 #include "venus_hfi_response.h"
 #include "hfi_packet.h"
 #include "msm_vidc_events.h"
-
-#if IS_ENABLED(CONFIG_SEC_ABC)
-#include <linux/sti/abc_common.h>
-#endif
 
 extern struct msm_vidc_core *g_core;
 
@@ -1061,7 +1057,8 @@ int msm_vidc_process_resume(struct msm_vidc_inst *inst)
 					return rc;
 				clear_sub_state |= MSM_VIDC_INPUT_PAUSE;
 			}
-			if (is_sub_state(inst, MSM_VIDC_OUTPUT_PAUSE)) {
+			if (is_sub_state(inst, MSM_VIDC_OUTPUT_PAUSE) &&
+			    !is_encode_session(inst)) {
 				rc = venus_hfi_session_resume(inst, OUTPUT_PORT,
 						HFI_CMD_SETTINGS_CHANGE);
 				if (rc)
@@ -1078,7 +1075,8 @@ int msm_vidc_process_resume(struct msm_vidc_inst *inst)
 				return rc;
 			clear_sub_state |= MSM_VIDC_INPUT_PAUSE;
 		}
-		if (is_sub_state(inst, MSM_VIDC_OUTPUT_PAUSE)) {
+		if (is_sub_state(inst, MSM_VIDC_OUTPUT_PAUSE) &&
+		    !is_encode_session(inst)) {
 			rc = venus_hfi_session_resume(inst, OUTPUT_PORT, HFI_CMD_DRAIN);
 			if (rc)
 				return rc;
@@ -1645,6 +1643,11 @@ int msm_vidc_set_auto_framerate(struct msm_vidc_inst *inst, u64 timestamp)
 
 	if (counter < ENC_FPS_WINDOW)
 		goto exit;
+
+	if (curr_fr > inst->capabilities[FRAME_RATE].value) {
+		i_vpr_l(inst, "%s: fps: %u limitted to client fps.\n", __func__, curr_fr >> 16);
+		curr_fr = inst->capabilities[FRAME_RATE].value;
+	}
 
 	/* if framerate changed and stable for 2 frames, set to firmware */
 	if (curr_fr == prev_fr && curr_fr != inst->auto_framerate) {
@@ -3842,9 +3845,6 @@ int msm_vidc_core_init(struct msm_vidc_core *core)
 	if (rc) {
 		msm_vidc_change_core_state(core, MSM_VIDC_CORE_ERROR, __func__);
 		d_vpr_e("%s: core init failed\n", __func__);
-#if IS_ENABLED(CONFIG_SEC_ABC)
-		sec_abc_send_event("MODULE=mm@WARN=venus_fw_load_fail");
-#endif
 		/* do core deinit to handle error */
 		msm_vidc_core_deinit_locked(core, true);
 		goto unlock;
@@ -4060,6 +4060,19 @@ int msm_vidc_smmu_fault_handler(struct iommu_domain *domain,
 	return -ENOSYS;
 }
 
+bool is_ssr_type_allowed(struct msm_vidc_core *core, u32 type)
+{
+	u32 i;
+	const u32 *ssr_type = core->platform->data.msm_vidc_ssr_type;
+	u32 ssr_type_size = core->platform->data.msm_vidc_ssr_type_size;
+
+	for (i = 0; i < ssr_type_size; i++) {
+		if (type == ssr_type[i])
+			return true;
+	}
+	return false;
+}
+
 int msm_vidc_trigger_ssr(struct msm_vidc_core *core,
 		u64 trigger_ssr_val)
 {
@@ -4075,8 +4088,15 @@ int msm_vidc_trigger_ssr(struct msm_vidc_core *core,
 	 */
 	d_vpr_e("%s: trigger ssr is called. trigger ssr val: %#llx\n",
 		__func__, trigger_ssr_val);
+
 	ssr->ssr_type = (trigger_ssr_val &
 			(unsigned long)SSR_TYPE) >> SSR_TYPE_SHIFT;
+
+	if (!is_ssr_type_allowed(core, ssr->ssr_type)) {
+		d_vpr_h("SSR Type %#llx is not allowed\n", ssr->ssr_type);
+		return 0;
+	}
+
 	ssr->sub_client_id = (trigger_ssr_val &
 			(unsigned long)SSR_SUB_CLIENT_ID) >> SSR_SUB_CLIENT_ID_SHIFT;
 	ssr->test_addr = (trigger_ssr_val &
