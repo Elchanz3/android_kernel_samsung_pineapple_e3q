@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -605,9 +605,9 @@ u32 synx_custom_get_status(struct synx_coredata *synx_obj, u32 status)
 			synx_obj->status = synx_get_child_status(synx_obj);
 		else
 			synx_obj->status = parent_global_status;
+		custom_status = synx_obj->status;
 	}
 
-	custom_status = synx_obj->status;
 	mutex_unlock(&synx_obj->obj_lock);
 
 bail:
@@ -1176,6 +1176,12 @@ int synx_merge(struct synx_session *session,
 	if (IS_ERR_OR_NULL(client))
 		return -SYNX_INVALID;
 
+	synx_obj = kzalloc(sizeof(*synx_obj), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(synx_obj)) {
+		rc = -SYNX_NOMEM;
+		goto fail;
+	}
+
 	rc = synx_util_validate_merge(client, params->h_synxs,
 			params->num_objs, &fences, &count);
 	if (rc < 0) {
@@ -1183,12 +1189,8 @@ int synx_merge(struct synx_session *session,
 			"[sess :%llu] merge validation failed\n",
 			client->id);
 		rc = -SYNX_INVALID;
-		goto fail;
-	}
 
-	synx_obj = kzalloc(sizeof(*synx_obj), GFP_KERNEL);
-	if (IS_ERR_OR_NULL(synx_obj)) {
-		rc = -SYNX_NOMEM;
+		kfree(synx_obj);
 		goto fail;
 	}
 
@@ -1205,12 +1207,20 @@ int synx_merge(struct synx_session *session,
 					*params->h_merged_obj, 0);
 	if (IS_ERR_OR_NULL(map_entry)) {
 		rc = PTR_ERR(map_entry);
-		goto clean_up;
+
+		/*
+		 * dma fence put will take care of removing the references taken
+		 * on child fences
+		 */
+		dma_fence_put(synx_obj->fence);
+		kfree(synx_obj);
+		goto fail;
 	}
 
 	rc = synx_util_add_callback(synx_obj, *params->h_merged_obj);
+
 	if (rc != SYNX_SUCCESS)
-		goto clear;
+		goto clean_up;
 
 	rc = synx_util_init_handle(client, synx_obj,
 			params->h_merged_obj, map_entry);
@@ -1218,8 +1228,7 @@ int synx_merge(struct synx_session *session,
 		dprintk(SYNX_ERR,
 			"[sess :%llu] unable to init merge handle %u\n",
 			client->id, *params->h_merged_obj);
-		dma_fence_put(synx_obj->fence);
-		goto clear;
+		goto clean_up;
 	}
 
 	h_child_list = kzalloc(count*4, GFP_KERNEL);
@@ -1289,13 +1298,25 @@ int synx_merge(struct synx_session *session,
 	synx_put_client(client);
 	return SYNX_SUCCESS;
 clear:
-	synx_util_release_map_entry(map_entry);
+	synx_native_release_core(client, (*params->h_merged_obj));
+	synx_put_client(client);
+	return rc;
+
 clean_up:
-	kfree(synx_obj);
+	/*
+	 * if map_entry is not created the cleanup of child fences have to be
+	 * handled manually
+	 */
+	if (IS_ERR_OR_NULL(map_entry)) {
+		kfree(synx_obj);
+		synx_util_merge_error(client, params->h_synxs, count);
+		if (params->num_objs && params->num_objs <= count)
+			kfree(fences);
+
+	} else {
+		synx_util_release_map_entry(map_entry);
+	}
 fail:
-	synx_util_merge_error(client, params->h_synxs, count);
-	if (params->num_objs && params->num_objs <= count)
-		kfree(fences);
 	synx_put_client(client);
 	return rc;
 }
@@ -1704,8 +1725,8 @@ static int synx_native_import_handle(struct synx_client *client,
 						old_entry);
 	}
 
-	if (rc != SYNX_SUCCESS)
-		return rc;
+	if (IS_ERR_OR_NULL(map_entry))
+		return -SYNX_INVALID;
 
 	*params->new_h_synx = h_synx;
 
@@ -2009,6 +2030,7 @@ static int synx_handle_import(struct synx_private_ioctl_arg *k_ioctl,
 {
 	struct synx_import_info import_info;
 	struct synx_import_params params = {0};
+	int result = SYNX_SUCCESS;
 
 	if (k_ioctl->size != sizeof(import_info))
 		return -SYNX_INVALID;
@@ -2018,28 +2040,32 @@ static int synx_handle_import(struct synx_private_ioctl_arg *k_ioctl,
 			k_ioctl->size))
 		return -EFAULT;
 
-	if (import_info.flags & SYNX_IMPORT_SYNX_FENCE)
-		params.indv.fence = &import_info.synx_obj;
-	else if (import_info.flags & SYNX_IMPORT_DMA_FENCE)
+	if (import_info.flags & SYNX_IMPORT_DMA_FENCE)
 		params.indv.fence =
 			sync_file_get_fence(import_info.desc.id[0]);
+	else if (import_info.flags & SYNX_IMPORT_SYNX_FENCE)
+		params.indv.fence = &import_info.synx_obj;
 
 	params.type = SYNX_IMPORT_INDV_PARAMS;
 	params.indv.flags = import_info.flags;
 	params.indv.new_h_synx = &import_info.new_synx_obj;
 
 	if (synx_import(session, &params))
-		return -SYNX_INVALID;
+		result = -SYNX_INVALID;
 
+	// Fence needs to be put irresepctive of import status
 	if (import_info.flags & SYNX_IMPORT_DMA_FENCE)
 		dma_fence_put(params.indv.fence);
+
+	if (result != SYNX_SUCCESS)
+		return result;
 
 	if (copy_to_user(u64_to_user_ptr(k_ioctl->ioctl_ptr),
 			&import_info,
 			k_ioctl->size))
 		return -EFAULT;
 
-	return SYNX_SUCCESS;
+	return result;
 }
 
 static int synx_handle_import_arr(
@@ -2082,12 +2108,19 @@ static int synx_handle_import_arr(
 	while (idx < arr_info.num_objs) {
 		params.new_h_synx = &arr[idx].new_synx_obj;
 		params.flags = arr[idx].flags;
-		if (arr[idx].flags & SYNX_IMPORT_SYNX_FENCE)
-			params.fence = &arr[idx].synx_obj;
+
 		if (arr[idx].flags & SYNX_IMPORT_DMA_FENCE)
 			params.fence =
 				sync_file_get_fence(arr[idx].desc.id[0]);
+		else if (arr[idx].flags & SYNX_IMPORT_SYNX_FENCE)
+			params.fence = &arr[idx].synx_obj;
+
 		rc = synx_native_import_indv(client, &params);
+
+		// Fence needs to be put irresepctive of import status
+		if (arr[idx].flags & SYNX_IMPORT_DMA_FENCE)
+			dma_fence_put(params.fence);
+
 		if (rc != SYNX_SUCCESS)
 			break;
 		idx++;
@@ -2451,6 +2484,7 @@ static ssize_t synx_read(struct file *filep,
 
 	list_del_init(&cb->node);
 	mutex_unlock(&client->event_q_lock);
+	memset(&data, 0, sizeof(struct synx_userpayload_info_v2));
 
 	rc = size;
 	data.synx_obj = cb->kernel_cb.h_synx;
@@ -2815,6 +2849,11 @@ static int __init synx_init(void)
 	}
 
 	synx_dev->class = class_create(THIS_MODULE, SYNX_DEVICE_NAME);
+
+	if (IS_ERR(synx_dev->class)) {
+		rc = PTR_ERR(synx_dev->class);
+		goto err_class_create;
+	}
 	device_create(synx_dev->class, NULL, synx_dev->dev,
 		NULL, SYNX_DEVICE_NAME);
 
@@ -2865,6 +2904,8 @@ err:
 fail:
 	device_destroy(synx_dev->class, synx_dev->dev);
 	class_destroy(synx_dev->class);
+err_class_create:
+	cdev_del(&synx_dev->cdev);
 reg_fail:
 	unregister_chrdev_region(synx_dev->dev, 1);
 alloc_fail:
