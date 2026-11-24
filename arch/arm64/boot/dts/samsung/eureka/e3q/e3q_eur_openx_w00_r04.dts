@@ -17298,6 +17298,7 @@
 				qcom,wl-reset-gpio = <0xffffffff 0x10 0x00>;
 				qcom,bt-sw-ctrl-gpio = <0xffffffff 0x12 0x00>;
 				mboxes = <0xffffffff 0x00>;
+				qcom,qmp = <0xffffffff>;
 				qcom,bt-vdd18-aon-supply = <0xffffffff>;
 				qcom,bt-vdd12-io-supply = <0xffffffff>;
 				qcom,bt-ant-ldo-supply = <0xffffffff>;
@@ -19053,7 +19054,7 @@
 		sched_walt = "/fragment@146:target:0";
 		qmp_aop = "/fragment@148/__overlay__/bt_kiwi:mboxes:0";
 		qupv3_se14_4uart = "/fragment@149:target:0";
-		aoss_qmp = "/fragment@152/__overlay__/qcom,cnss-kiwi@b0000000:qcom,qmp:0";
+		aoss_qmp = "/fragment@152/__overlay__/qcom,cnss-kiwi@b0000000:qcom,qmp:0\0/fragment@148/__overlay__/bt_kiwi:qcom,qmp:0";
 		pcie_noc = "/fragment@152/__overlay__/qcom,cnss-kiwi@b0000000:interconnects:0\0/fragment@152/__overlay__/qcom,cnss-kiwi@b0000000:interconnects:8";
 		pcie0_rp = "/fragment@153:target:0";
 		VDD_LPI_CX_LEVEL = "/fragment@154/__overlay__/remoteproc-adsp@03000000:cx-supply:0";
