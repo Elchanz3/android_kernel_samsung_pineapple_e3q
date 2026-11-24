@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  *
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _IPA_COMMON_I_H_
@@ -131,6 +131,7 @@
 		ipa3_dec_client_disable_clks_no_block(&log_info); \
 	} while (0)
 
+#ifdef IPA_DEBUG
 /*
  * Printing one warning message in 5 seconds if multiple warning messages
  * are coming back to back.
@@ -146,6 +147,9 @@
 	if (unlikely(rtn && __ratelimit(&_rs)))			\
 		WARN_ON(rtn);					\
 })
+#else
+#define WARN_ON_RATELIMIT_IPA(condition) ((void)0)
+#endif
 
 /*
  * Printing one error message in 5 seconds if multiple error messages
@@ -538,6 +542,21 @@ struct ipa_tx_suspend_irq_data {
 	u32 endpoints[IPA_EP_ARR_SIZE];
 };
 
+/**
+ * struct ipa_rtp_header_add_procparams
+ * @input_ip_version:  Specifies if Input header is IPV4(0) or IPV6(1)
+ * @reserved: for future use
+ */
+
+struct ipa_rtp_header_add_procparams {
+	uint32_t input_ip_version:1;
+	uint32_t reserved:31;
+};
+
+struct ipa_rtp_hdr_proc_ctx_params {
+	struct ipa_rtp_header_add_procparams hdr_add_param;
+};
+
 extern const char *ipa_clients_strings[];
 
 #define IPA_IPC_LOGGING(buf, fmt, args...) \
@@ -746,6 +765,9 @@ int ipa3_reset_hdr(bool user_only);
 */
 int ipa3_add_hdr_proc_ctx(struct ipa_ioc_add_hdr_proc_ctx *proc_ctxs,
 	bool user_only);
+
+int ipa3_add_rtp_hdr_proc_ctx(struct ipa_ioc_add_hdr_proc_ctx *proc_ctxs,
+	struct ipa_rtp_hdr_proc_ctx_params rtp_params, bool user_only);
 
 int ipa3_del_hdr_proc_ctx(struct ipa_ioc_del_hdr_proc_ctx *hdls);
 

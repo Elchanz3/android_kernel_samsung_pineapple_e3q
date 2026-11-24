@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _IPA_UC_OFFLOAD_I_H_
@@ -69,6 +71,7 @@ enum ipa3_hw_features {
 	IPA_HW_FEATURE_ZIP		=	0x4,
 	IPA_HW_FEATURE_NTN		=	0x5,
 	IPA_HW_FEATURE_OFFLOAD		=	0x6,
+	IPA_HW_FEATURE_RTP		=	0x8,
 	IPA_HW_FEATURE_MAX		=	IPA_HW_NUM_FEATURES
 };
 
@@ -184,8 +187,12 @@ enum ipa3_hw_errors {
  * The shared memory is used for communication between IPA HW and CPU.
  */
 struct IpaHwSharedMemCommonMapping_t {
+#ifdef CONFIG_IPA_RTP
+	u16  cmdOp;
+#else
 	u8  cmdOp;
 	u8  reserved_01;
+#endif
 	u16 reserved_03_02;
 	u32 cmdParams;
 	u32 cmdParams_hi;

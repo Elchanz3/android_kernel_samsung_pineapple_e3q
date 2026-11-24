@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  *
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 /*
@@ -90,6 +90,9 @@ enum ipa_ap_ingress_ep_enum {
 #define RMNET_IPA_ULSO_FEATURE \
 	(NETIF_F_SG | NETIF_F_ALL_TSO)
 #define RMNET_IPA_ULSO_SIZE_LIMIT 64000
+#define MAX_WIGIG_CLIENTS_IPA_5_5 3
+#define MAX_WIGIG_CLIENTS_IPA_4_11 0
+#define MAX_WIGIG_CLIENTS 4
 
 static void rmnet_ipa_free_msg(void *buff, u32 len, u32 type);
 static void rmnet_ipa_get_stats_and_update(void);
@@ -157,7 +160,7 @@ struct ipa3_wwan_private {
 
 struct ipa3_netmgr_clock_vote {
 	struct mutex mutex;
-	uint32_t cnt;
+	atomic_t cnt;
 };
 
 struct rmnet_ipa_debugfs {
@@ -1394,12 +1397,8 @@ static int __ipa_wwan_close(struct net_device *dev)
  */
 static int ipa3_wwan_stop(struct net_device *dev)
 {
-	struct ipa3_wwan_private *wwan_ptr = netdev_priv(dev);
-
 	IPAWANDBG("[%s]\n", dev->name);
 	__ipa_wwan_close(dev);
-	if (ipa3_rmnet_res.ipa_napi_enable)
-		napi_disable(&(wwan_ptr->napi));
 	netif_stop_queue(dev);
 	return 0;
 }
@@ -1495,6 +1494,9 @@ static netdev_tx_t ipa3_wwan_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 send:
+	if (atomic_read(&ipa3_ctx->is_suspend_mode_enabled))
+		IPAWANERR("User %s sent data in suspend mode.\n", current->comm);
+
 	/* IPA_PM checking start */
 	/* activate the modem pm for clock scaling */
 	ipa_pm_activate(rmnet_ipa3_ctx->q6_pm_hdl);
@@ -3008,17 +3010,17 @@ static int ipa3_wwan_ioctl(struct net_device *dev, struct ifreq *ifr, void __use
 			if (ext_ioctl_data.u.data) {
 				/* Request to enable LPM */
 				IPAWANDBG("ioctl: unvote IPA clock\n");
-				if (rmnet_ipa3_ctx->clock_vote.cnt) {
-					rmnet_ipa3_ctx->clock_vote.cnt--;
+				if (atomic_read(&rmnet_ipa3_ctx->clock_vote.cnt)) {
+					atomic_dec(&rmnet_ipa3_ctx->clock_vote.cnt);
 					IPA_ACTIVE_CLIENTS_DEC_SPECIAL("NETMGR");
 				}
 			} else {
 				/* Request to disable LPM */
 				IPAWANDBG("ioctl: vote IPA clock\n");
-				if ((rmnet_ipa3_ctx->clock_vote.cnt + 1)
+				if ((atomic_read(&rmnet_ipa3_ctx->clock_vote.cnt) + 1)
 					<= IPA_APP_VOTE_MAX) {
 					IPA_ACTIVE_CLIENTS_INC_SPECIAL("NETMGR");
-					rmnet_ipa3_ctx->clock_vote.cnt++;
+					atomic_inc(&rmnet_ipa3_ctx->clock_vote.cnt);
 				}
 			}
 			mutex_unlock(&rmnet_ipa3_ctx->clock_vote.mutex);
@@ -3960,15 +3962,18 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 	}
 
 	switch (code) {
-#if IS_ENABLED(CONFIG_DEEPSLEEP)
-	case SUBSYS_BEFORE_DS_ENTRY:
-#endif
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 	case QCOM_SSR_BEFORE_SHUTDOWN:
 #else
 	case SUBSYS_BEFORE_SHUTDOWN:
 #endif
 		IPAWANINFO("IPA received MPSS BEFORE_SHUTDOWN\n");
+		/*
+		 * Clear the proxy vote if any. This happens in scenarios
+		 * where Modem restarts before QMI Handshake is complete
+		 */
+		if (!ipa3_is_modem_up())
+			ipa3_proxy_clk_unvote();
 		/* hold a proxy vote for the modem. */
 		ipa3_proxy_clk_vote(atomic_read(&rmnet_ipa3_ctx->is_ssr));
 		/* send SSR before-shutdown notification to IPACM */
@@ -3988,20 +3993,9 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 		if (atomic_read(&rmnet_ipa3_ctx->is_ssr) &&
 			ipa3_ctx_get_type(IPA_HW_TYPE) >= IPA_HW_v4_0)
 			ipa3_q6_post_shutdown_cleanup();
-		ipa3_odl_pipe_cleanup(true);
+		ipa3_odl_pipe_cleanup_from_ssr();
 		IPAWANINFO("IPA BEFORE_SHUTDOWN handling is complete\n");
 		break;
-#if IS_ENABLED(CONFIG_DEEPSLEEP)
-	case SUBSYS_AFTER_DS_ENTRY:
-		IPAWANINFO("IPA Received AFTER DEEPSLEEP ENTRY\n");
-		if (atomic_read(&rmnet_ipa3_ctx->is_ssr) &&
-				ipa3_ctx_get_type(IPA_HW_TYPE) < IPA_HW_v4_0)
-			ipa3_q6_post_shutdown_cleanup();
-
-		IPAWANINFO("AFTER DEEPSLEEP ENTRY handling is complete\n");
-		break;
-#endif
-
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 	case QCOM_SSR_AFTER_SHUTDOWN:
 #else
@@ -4026,23 +4020,13 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 
 		if (ipa3_ctx_get_flag(IPA_ENDP_DELAY_WA_EN))
 			ipa3_client_prod_post_shutdown_cleanup();
+		while (atomic_read(&rmnet_ipa3_ctx->clock_vote.cnt) > 0) {
+			IPAWANDBG("ioctl: unvoting pending IPA clock\n");
+			atomic_dec(&rmnet_ipa3_ctx->clock_vote.cnt);
+			IPA_ACTIVE_CLIENTS_DEC_SPECIAL("NETMGR");
+		}
 		IPAWANINFO("IPA AFTER_SHUTDOWN handling is complete\n");
 		break;
-#if IS_ENABLED(CONFIG_DEEPSLEEP)
-	case SUBSYS_BEFORE_DS_EXIT:
-		IPAWANINFO("IPA received BEFORE DEEPSLEEP EXIT\n");
-		if (atomic_read(&rmnet_ipa3_ctx->is_ssr)) {
-			/* clean up cached QMI msg/handlers */
-			ipa3_qmi_service_exit();
-			ipa3_q6_pre_powerup_cleanup();
-		}
-		/* hold a proxy vote for the modem. */
-		ipa3_proxy_clk_vote(atomic_read(&rmnet_ipa3_ctx->is_ssr));
-		ipa3_reset_freeze_vote();
-		IPAWANINFO("BEFORE DEEPSLEEP EXIT handling is complete\n");
-		break;
-#endif
-
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 	case QCOM_SSR_BEFORE_POWERUP:
 #else
@@ -4059,9 +4043,6 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 		ipa3_reset_freeze_vote();
 		IPAWANINFO("IPA BEFORE_POWERUP handling is complete\n");
 		break;
-#if IS_ENABLED(CONFIG_DEEPSLEEP)
-	case SUBSYS_AFTER_DS_EXIT:
-#endif
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
 	case QCOM_SSR_AFTER_POWERUP:
 #else
@@ -4071,7 +4052,7 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 		if (!atomic_read(&rmnet_ipa3_ctx->is_initialized) &&
 		       atomic_read(&rmnet_ipa3_ctx->is_ssr))
 			platform_driver_register(&rmnet_ipa_driver);
-		ipa3_odl_pipe_open();
+		ipa3_odl_pipe_open_from_ssr();
 		IPAWANINFO("IPA AFTER_POWERUP handling is complete\n");
 		break;
 	default:
@@ -4471,7 +4452,8 @@ static int rmnet_ipa3_set_data_quota_wifi(struct wan_ioctl_set_data_quota *data)
 		  data->interface_name, (unsigned long) data->quota_mbytes);
 
 	if (ipa3_ctx_get_type(IPA_HW_TYPE) >= IPA_HW_v4_5 &&
-		ipa3_ctx_get_type(IPA_HW_TYPE) != IPA_HW_v4_11) {
+		ipa3_ctx_get_type(IPA_HW_TYPE) != IPA_HW_v4_11 &&
+		ipa3_ctx_get_type(IPA_HW_TYPE) != IPA_HW_v5_2) {
 		IPADBG("use ipa-uc for quota\n");
 		rc = ipa3_uc_quota_monitor(data->set_quota);
 	} else {
@@ -4835,15 +4817,29 @@ static inline enum ipa_client_type rmnet_ipa3_get_wigig_cons(int idx)
 	}
 }
 
+static inline int rmnet_ipa3_get_max_wigig_clnt(void)
+{
+	switch (ipa3_ctx->ipa_hw_type) {
+	case IPA_HW_v5_5:
+		return MAX_WIGIG_CLIENTS_IPA_5_5;
+	case IPA_HW_v4_11:
+	case IPA_HW_v5_2:
+		return MAX_WIGIG_CLIENTS_IPA_4_11;
+	default:
+		return MAX_WIGIG_CLIENTS;
+	}
+}
+
 static int rmnet_ipa3_query_tethering_stats_hw(
 	struct wan_ioctl_query_tether_stats *data, bool reset)
 {
-#define MAX_WIGIG_CLIENTS 4
 
 	int rc = 0, index = 0, i = 0;
 	struct ipa_quota_stats_all *con_stats;
 	enum ipa_client_type wlan_client;
-	int ep_idx,wlan_ep_idx,usb_ep_idx;
+	int ep_idx, wlan_ep_idx, usb_ep_idx, max_wigig_clnts;
+
+	max_wigig_clnts = rmnet_ipa3_get_max_wigig_clnt();
 
 	/* qet HW-stats */
 	rc = ipa_get_teth_stats();
@@ -4907,18 +4903,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 	con_stats->client[usb_ep_idx].num_ipv6_pkts,
 	con_stats->client[usb_ep_idx].num_ipv6_bytes);
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -4948,18 +4935,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 		con_stats->client[wlan_ep_idx].num_ipv6_bytes +
 			con_stats->client[usb_ep_idx].num_ipv6_bytes;
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -5018,18 +4996,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 		con_stats->client[usb_ep_idx].num_ipv6_pkts,
 		con_stats->client[usb_ep_idx].num_ipv6_bytes);
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -5058,18 +5027,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 		con_stats->client[wlan_ep_idx].num_ipv6_bytes +
 		con_stats->client[usb_ep_idx].num_ipv6_bytes;
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -5127,18 +5087,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 		con_stats->client[usb_ep_idx].num_ipv6_pkts,
 		con_stats->client[usb_ep_idx].num_ipv6_bytes);
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -5167,18 +5118,9 @@ static int rmnet_ipa3_query_tethering_stats_hw(
 		con_stats->client[wlan_ep_idx].num_ipv6_bytes +
 		con_stats->client[IPA_CLIENT_USB_CONS].num_ipv6_bytes;
 
-	for (i = 0; i < MAX_WIGIG_CLIENTS; i++) {
+	for (i = 0; i < max_wigig_clnts; i++) {
 		enum ipa_client_type wigig_client =
 			rmnet_ipa3_get_wigig_cons(i);
-
-		if (ipa3_ctx->ipa_hw_type >= IPA_HW_v5_5) {
-			if (wigig_client > IPA_CLIENT_WIGIG3_CONS)
-				break;
-		}
-		else {
-			if (wigig_client > IPA_CLIENT_WIGIG4_CONS)
-				break;
-		}
 
 		ep_idx = ipa_get_ep_mapping( wigig_client );
 
@@ -6413,6 +6355,10 @@ int rmnet_ipa3_get_wan_mtu(
 	int rmnet_index;
 
 	mux_channel = rmnet_ipa3_ctx->mux_channel;
+
+	/* prevent string buffer overflows */
+	data->if_name[IPA_RESOURCE_NAME_MAX-1] = '\0';
+
 	rmnet_index =
 		find_vchannel_name_index(data->if_name);
 
@@ -6732,7 +6678,7 @@ int ipa3_wwan_init(void)
 
 	atomic_set(&rmnet_ipa3_ctx->is_initialized, 0);
 	atomic_set(&rmnet_ipa3_ctx->is_ssr, 0);
-	rmnet_ipa3_ctx->clock_vote.cnt = 0;
+	atomic_set(&rmnet_ipa3_ctx->clock_vote.cnt, 0);
 
 	mutex_init(&rmnet_ipa3_ctx->pipe_handle_guard);
 	mutex_init(&rmnet_ipa3_ctx->add_mux_channel_lock);

@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  *
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifdef CONFIG_DEBUG_FS
@@ -26,6 +26,7 @@
 #define IPA_DBG_MAX_RULE_IN_TBL 128
 #define IPA_DBG_ACTIVE_CLIENT_BUF_SIZE ((IPA3_ACTIVE_CLIENTS_LOG_LINE_LEN \
 	* IPA3_ACTIVE_CLIENTS_LOG_BUFFER_SIZE_LINES) + IPA_MAX_MSG_LEN)
+#define MAX_UC_BUFF_SIZE (1 * 1024UL * 1024UL)
 
 #define IPA_DUMP_STATUS_FIELD(f) \
 	pr_err(#f "=0x%x\n", status->f)
@@ -131,6 +132,10 @@ const char *ipa3_hdr_proc_type_name[] = {
 	__stringify(IPA_HDR_PROC_SET_DSCP),
 	__stringify(IPA_HDR_PROC_EoGRE_HEADER_ADD),
 	__stringify(IPA_HDR_PROC_EoGRE_HEADER_REMOVE),
+	__stringify(IPA_HDR_PROC_RTP_METADATA_STREAM0),
+	__stringify(IPA_HDR_PROC_RTP_METADATA_STREAM1),
+	__stringify(IPA_HDR_PROC_RTP_METADATA_STREAM2),
+	__stringify(IPA_HDR_PROC_RTP_METADATA_STREAM3),
 };
 
 static struct dentry *dent;
@@ -140,6 +145,8 @@ static char *active_clients_buf;
 
 static s8 ep_reg_idx;
 static void *ipa_ipc_low_buff;
+static u8 active_streams[MAX_STREAMS];
+static u8 active_flt_cnt;
 
 
 static ssize_t ipa3_read_gen_reg(struct file *file, char __user *ubuf,
@@ -3538,6 +3545,492 @@ free_rt:
 	return 0;
 }
 
+static inline u32 ip_to_int(u8 a, u8 b, u8 c, u8 d)
+{
+	// IP to int is first octet * 256^3 + second octet * 256^2 + third octet * 256 + fourth oct
+	// Bit shifting is quicker than multiplication
+	// 2^24 = 256^3, 2^16 = 256^2, 256 = 2^8
+	return (a << 24) + (b << 16) + (c << 8) + d;
+}
+
+static u32 string_ip_to_integer_ip(char *str_ip)
+{
+	u8 a = 0, b = 0, c = 0, d = 0;
+	char *found = NULL;
+	u32 ip = 0;
+
+	if (!str_ip)
+		return ip;
+
+	found = strsep(&str_ip, ".");
+	if (!found || kstrtou8(found, 0, &a))
+		goto err;
+
+	found = strsep(&str_ip, ".");
+	if (!found || kstrtou8(found, 0, &b))
+		goto err;
+
+	found = strsep(&str_ip, ".");
+	if (!found || kstrtou8(found, 0, &c))
+		goto err;
+
+	found = strsep(&str_ip, ".");
+	if (!found || kstrtou8(found, 0, &d))
+		goto err;
+
+	pr_info("IP ADDR -> %d.%d.%d.%d\n", a, b, c, d);
+	ip = ip_to_int(a, b, c, d);
+
+err:
+	return ip;
+}
+
+static ssize_t ipa_xr_add_flt_to_wlan(struct file *file,
+		const char __user *buf, size_t count, loff_t *ppos)
+{
+	u32 src_ip[MAX_STREAMS] = {0};
+	u32 dst_ip[MAX_STREAMS] = {0};
+	u16 src_port[MAX_STREAMS] = {0};
+	u16 dst_port[MAX_STREAMS] = {0};
+	u8 prot[MAX_STREAMS] = {0};
+	u8 num_filters = 0;
+	ssize_t missing = 0;
+	char *sptr = NULL;
+	char *token = NULL;
+	struct ipa_wdi_opt_dpath_flt_add_cb_params flt_add_req;
+	int result = 0;
+	u8 i = 0, j = 0, stream_id = 0;
+
+	if (count >= sizeof(dbg_buff))
+		return -EFAULT;
+
+	memset(dbg_buff, 0, sizeof(dbg_buff));
+	missing = copy_from_user(dbg_buff, buf, count);
+	if (missing)
+		return -EFAULT;
+
+	dbg_buff[count] = '\0';
+	sptr = dbg_buff;
+
+	/* Getting the number of filters configured by user */
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou8(token, 0, &num_filters))
+		return -EINVAL;
+
+	IPADBG("Number of filters %d\n", num_filters);
+
+	if (num_filters > MAX_STREAMS || num_filters == 0) {
+		IPAERR("Number of filters is zero or more than max_streams, so it is invalid\n");
+		return -EINVAL;
+	}
+
+	if (!atomic_read(&ipa3_ctx->ipa_xr_wdi_flt_rsv_status)) {
+		memset(active_streams, 0, sizeof(active_streams));
+		active_flt_cnt = 0;
+	}
+
+	if (active_flt_cnt + num_filters > MAX_STREAMS) {
+		IPAERR("Active filter count of %u exceeded maximum streams of %u\n",
+				active_flt_cnt, MAX_STREAMS);
+		return -EFAULT;
+	}
+
+	for (i = 0; i < num_filters; i++) {
+		token = strsep(&sptr, " ");
+		if (!token)
+			return -EINVAL;
+		src_ip[i] = string_ip_to_integer_ip(token);
+		if (!src_ip[i])
+			return -EINVAL;
+
+		token = strsep(&sptr, " ");
+		if (!token)
+			return -EINVAL;
+		dst_ip[i] = string_ip_to_integer_ip(token);
+		if (!dst_ip[i])
+			return -EINVAL;
+
+		token = strsep(&sptr, " ");
+		if (!token)
+			return -EINVAL;
+		/* Range detection will be done by this API */
+		if (kstrtou16(token, 0, &src_port[i]) || src_port[i] == 0)
+			return -EINVAL;
+
+		token = strsep(&sptr, " ");
+		if (!token)
+			return -EINVAL;
+		/* Range detection will be done by this API */
+		if (kstrtou16(token, 0, &dst_port[i]) || dst_port[i] == 0)
+			return -EINVAL;
+
+		token = strsep(&sptr, " ");
+		if (!token)
+			return -EINVAL;
+		if (kstrtou8(token, 0, &prot[i]) ||
+				!(prot[i] == IPPROTO_UDP || prot[i] == IPPROTO_TCP))
+			return -EINVAL;
+	}
+
+	if (!atomic_read(&ipa3_ctx->ipa_xr_wdi_flt_rsv_status)) {
+		result = ipa_xr_wdi_opt_dpath_rsrv_filter_req();
+		if (result) {
+			IPAERR("Filter reservation failed at WLAN %d\n", result);
+			return result;
+		}
+	}
+
+	for (i = 0; i < num_filters; i++) {
+		for (j = 0; j < MAX_STREAMS; j++) {
+			if (active_streams[j] == 0) {
+				stream_id = j;
+				break;
+			}
+		}
+
+		IPADBG("Available stream id %u\n", stream_id);
+		memset(&flt_add_req, 0, sizeof(struct ipa_wdi_opt_dpath_flt_add_cb_params));
+		flt_add_req.num_tuples = 1;
+		flt_add_req.flt_info[0].version = 0;
+		flt_add_req.flt_info[0].ipv4_addr.ipv4_saddr = src_ip[i];
+		flt_add_req.flt_info[0].ipv4_addr.ipv4_daddr = dst_ip[i];
+		flt_add_req.flt_info[0].sport = src_port[i];
+		flt_add_req.flt_info[0].dport = dst_port[i];
+		flt_add_req.flt_info[0].protocol = prot[i];
+
+		IPADBG("IPv4 saddr:%lu, daddr:%lu IPv4 sport:%u, dport:%u protocol:%u\n",
+				flt_add_req.flt_info[0].ipv4_addr.ipv4_saddr,
+				flt_add_req.flt_info[0].ipv4_addr.ipv4_daddr,
+				flt_add_req.flt_info[0].sport,
+				flt_add_req.flt_info[0].dport,
+				flt_add_req.flt_info[0].protocol);
+
+		result = ipa_xr_wdi_opt_dpath_add_filter_req(&flt_add_req, stream_id);
+		if (result) {
+			IPAERR("Failed to add filters at wlan\n");
+			return -EPERM;
+		}
+		active_streams[stream_id] = 1;
+		active_flt_cnt++;
+	}
+
+	return count;
+}
+
+static ssize_t ipa_xr_remove_flt_to_wlan(struct file *file,
+		const char __user *buf, size_t count, loff_t *ppos)
+{
+	char *sptr = NULL, *token = NULL;
+	u8 flt_opt = 0;
+	int result = 0;
+	ssize_t missing = 0;
+
+	if (active_flt_cnt == 0) {
+		IPAERR("No active filters to delete\n");
+		return -EFAULT;
+	}
+
+	if (count >= sizeof(dbg_buff))
+		return -EFAULT;
+
+	memset(dbg_buff, 0, sizeof(dbg_buff));
+	missing = copy_from_user(dbg_buff, buf, count);
+	if (missing)
+		return -EFAULT;
+
+	dbg_buff[count] = '\0';
+	sptr = dbg_buff;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou8(token, 0, &flt_opt))
+		return -EINVAL;
+
+	if (flt_opt > MAX_STREAMS) {
+		IPAERR("Flt_opt is more than max_streams, so it is invalid\n");
+		return -EINVAL;
+	}
+
+	if (!atomic_read(&ipa3_ctx->ipa_xr_wdi_flt_rsv_status)) {
+		IPAERR("No existing filters at wlan\n");
+		memset(active_streams, 0, sizeof(active_streams));
+		active_flt_cnt = 0;
+		return -EPERM;
+	}
+
+	/* flt_opt == 0, will remove all streams filters from wlan */
+	if (!flt_opt) {
+		result = ipa_xr_wdi_opt_dpath_remove_all_filter_req();
+		if (result) {
+			IPAERR("Failed to remove all streams filters from wlan\n");
+			return -EPERM;
+		}
+		active_flt_cnt = 0;
+		memset(active_streams, 0, sizeof(active_streams));
+		IPADBG("Removed all streams existing filters\n");
+		return count;
+	}
+
+	if (active_streams[flt_opt-1] == 0) {
+		IPADBG("Stream_ID: %d filter is already deleted at WLAN\n", flt_opt);
+		return -EPERM;
+	}
+
+	/* Based on stream ID removing filters from wlan */
+	result = ipa_xr_wdi_opt_dpath_remove_filter_req(flt_opt - 1);
+	if (result) {
+		IPAERR("Failed to remove stream-id: %d filter from wlan\n", flt_opt);
+		return -EPERM;
+	}
+	IPADBG("Removed stream-id: %d filter from wlan\n", flt_opt);
+	active_flt_cnt--;
+	active_streams[flt_opt - 1] = 0;
+	return count;
+}
+
+#ifdef CONFIG_IPA_RTP
+static ssize_t ipa_xr_add_flt_to_ipa_wlan(struct file *file,
+		const char __user *buf, size_t count, loff_t *ppos)
+{
+	struct traffic_tuple_info tuple_info;
+	u32 src_ip = 0;
+	u32 dst_ip = 0;
+	u16 src_port = 0;
+	u16 dst_port = 0;
+	u8 prot = 0;
+	ssize_t missing = 0;
+	char *sptr = NULL, *token = NULL;
+	int result = 0;
+	u32 bs_buff_size = 0;
+	u8 stream_id = 0;
+
+	struct bitstream_buffers_to_uc data;
+	dma_addr_t bs_phys_base[MAX_BUFF], mb_phys_base[MAX_BUFF];
+	void *bs_va[MAX_BUFF] = {NULL}, *mb_va[MAX_BUFF] = {NULL};
+	int i = 0, j = 0;
+
+	if (!atomic_read(&ipa3_ctx->ipa_xr_wdi_flt_rsv_status)) {
+		memset(active_streams, 0, sizeof(active_streams));
+		active_flt_cnt = 0;
+	}
+
+	if (active_flt_cnt >= MAX_STREAMS) {
+		IPAERR("Maximum filters already installed: %u\n", active_flt_cnt);
+		return -EFAULT;
+	}
+
+	if (count >= sizeof(dbg_buff))
+		return -EFAULT;
+
+	memset(dbg_buff, 0, sizeof(dbg_buff));
+	missing = copy_from_user(dbg_buff, buf, count);
+	if (missing)
+		return -EFAULT;
+
+	dbg_buff[count] = '\0';
+	sptr = dbg_buff;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	src_ip = string_ip_to_integer_ip(token);
+	if (!src_ip)
+		return -EINVAL;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	dst_ip = string_ip_to_integer_ip(token);
+	if (!dst_ip)
+		return -EINVAL;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou16(token, 0, &src_port) || src_port == 0)
+		return -EINVAL;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou16(token, 0, &dst_port) || dst_port == 0)
+		return -EINVAL;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou8(token, 0, &prot) || prot != IPPROTO_UDP)
+		return -EINVAL;
+
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou32(token, 0, &bs_buff_size) || bs_buff_size > MAX_UC_BUFF_SIZE)
+		return -EINVAL;
+
+	for (j = 0; j < MAX_STREAMS; j++) {
+		if (active_streams[j] == 0) {
+			stream_id = j;
+			break;
+		}
+	}
+
+	IPADBG("Available stream id %u\n", stream_id);
+	IPADBG("Framing bitstream & Metadata buffer of size :%lu\n", bs_buff_size);
+
+	data.buff_cnt = MAX_BUFF;
+	data.cookie = 0x1234;
+	for (i = 0; i < data.buff_cnt; i++) {
+		data.bs_info[i].stream_id = stream_id;
+		data.bs_info[i].fence_id = i;
+		bs_va[i] = dma_alloc_coherent(ipa3_ctx->rtp_pdev, bs_buff_size,
+			&bs_phys_base[i], GFP_KERNEL);
+		if (!bs_va[i]) {
+			IPADBG("Failed to allocate bitstream buffers of size: %u\n",
+							bs_buff_size);
+			goto free_bs_mb_buff;
+		}
+
+		IPADBG("Bit stream buffer va is 0x%x\n", bs_va[i]);
+		IPADBG("Bit stream buffer iova is 0x%x\n", bs_phys_base[i]);
+		data.bs_info[i].buff_addr = bs_phys_base[i];
+		data.bs_info[i].buff_fd = 0;
+		data.bs_info[i].buff_size = bs_buff_size;
+		mb_va[i] = dma_alloc_coherent(ipa3_ctx->rtp_pdev, IPA_MAX_MSG_LEN,
+			&mb_phys_base[i], GFP_KERNEL);
+		if (!mb_va[i]) {
+			IPADBG("Failed to allocate metadata buffers of size: %u\n",
+							IPA_MAX_MSG_LEN);
+			dma_free_coherent(ipa3_ctx->rtp_pdev, bs_buff_size,
+					bs_va[i], bs_phys_base[i]);
+			goto free_bs_mb_buff;
+		}
+
+		IPADBG("Metadata buffer va is 0x%x\n", mb_va[i]);
+		IPADBG("Metadata buffer iova is 0x%x\n", mb_phys_base[i]);
+		data.bs_info[i].meta_buff_addr = mb_phys_base[i];
+		data.bs_info[i].meta_buff_fd = 0;
+		data.bs_info[i].meta_buff_size = IPA_MAX_MSG_LEN;
+	}
+
+	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
+
+	result = ipa3_uc_send_add_bitstream_buffers_cmd(&data);
+	if (result) {
+		IPAERR("Failed to send bitstream buffers to uC\n");
+		IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+		goto free_bs_mb_buff;
+	}
+
+	tuple_info.ts_info.no_of_openframe = 3;
+	tuple_info.ts_info.max_pkt_frame = 256;
+	tuple_info.ts_info.stream_type = 0;
+	tuple_info.ts_info.reorder_timeout = 100;
+	tuple_info.ts_info.num_slices_per_frame = 0;
+
+	tuple_info.ip_type = 0;
+	tuple_info.ip_info.ipv4.src_port_number = src_port;
+	tuple_info.ip_info.ipv4.dst_port_number = dst_port;
+	tuple_info.ip_info.ipv4.src_ip = src_ip;
+	tuple_info.ip_info.ipv4.dst_ip = dst_ip;
+	tuple_info.ip_info.ipv4.protocol = prot;
+
+	IPADBG("IPv4 saddr:0x%x, daddr:0x%x\n",
+			 tuple_info.ip_info.ipv4.src_ip,
+			 tuple_info.ip_info.ipv4.dst_ip);
+	IPADBG("IPv4 sport:%u, dport:%u\n",
+			 tuple_info.ip_info.ipv4.src_port_number,
+			 tuple_info.ip_info.ipv4.dst_port_number);
+
+	if (ipa3_install_rtp_hdr_proc_rt_flt_rules(&tuple_info, stream_id) ||
+		ipa3_tuple_info_cmd_to_wlan_uc(&tuple_info, stream_id)) {
+		IPAERR("Failed to install rtp hdr proc and flt rules or filters at WLAN\n");
+		ipa3_delete_rtp_hdr_proc_rt_flt_rules(stream_id);
+		IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+		goto free_bs_mb_buff;
+	}
+	active_flt_cnt++;
+	active_streams[stream_id] = 1;
+	IPADBG("Sent bitstream and metadata buffer, filter info to uC or WLAN\n");
+	IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+
+	return count;
+
+free_bs_mb_buff:
+	/* ith bs_buff is already freed above */
+	for (j = i-1; j >= 0; j--) {
+		if (bs_va[j])
+			dma_free_coherent(ipa3_ctx->rtp_pdev, bs_buff_size,
+				bs_va[j], bs_phys_base[j]);
+		if (mb_va[j])
+			dma_free_coherent(ipa3_ctx->rtp_pdev, IPA_MAX_MSG_LEN,
+				mb_va[j], mb_phys_base[j]);
+	}
+	return -ENOMEM;
+}
+
+static ssize_t ipa_xr_remove_flt_to_ipa_wlan(struct file *file,
+		const char __user *buf, size_t count, loff_t *ppos)
+{
+	char *sptr = NULL, *token = NULL;
+	u8 stream_id = 0;
+	ssize_t missing = 0;
+	struct remove_bitstream_buffers rmv_sid_req;
+
+	if (active_flt_cnt == 0) {
+		IPAERR("No active filters to delete\n");
+		return -EFAULT;
+	}
+
+	if (!atomic_read(&ipa3_ctx->ipa_xr_wdi_flt_rsv_status)) {
+		IPAERR("No existing filters at wlan\n");
+		memset(active_streams, 0, sizeof(active_streams));
+		active_flt_cnt = 0;
+		return -EPERM;
+	}
+
+	if (count >= sizeof(dbg_buff))
+		return -EFAULT;
+
+	memset(dbg_buff, 0, sizeof(dbg_buff));
+	missing = copy_from_user(dbg_buff, buf, count);
+	if (missing)
+		return -EFAULT;
+
+	dbg_buff[count] = '\0';
+	sptr = dbg_buff;
+	token = strsep(&sptr, " ");
+	if (!token)
+		return -EINVAL;
+	if (kstrtou8(token, 0, &stream_id))
+		return -EINVAL;
+
+	if (stream_id > MAX_STREAMS || stream_id == 0) {
+		IPAERR("Stream_id is zero or more than %u. Exit\n", MAX_STREAMS);
+		return -EINVAL;
+	}
+
+	IPA_ACTIVE_CLIENTS_INC_SIMPLE();
+
+	rmv_sid_req.stream_id = stream_id;
+	if (ipa3_uc_send_remove_stream_cmd(&rmv_sid_req) ||
+		ipa3_delete_rtp_hdr_proc_rt_flt_rules(stream_id - 1)) {
+		IPADBG("Failed to remove stream id: %d filters from IPA and WLAN\n", stream_id);
+		IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+		return -EPERM;
+	}
+
+	active_streams[stream_id - 1] = 0;
+	active_flt_cnt--;
+	IPA_ACTIVE_CLIENTS_DEC_SIMPLE();
+	IPADBG("Removed stream id: %d filters from IPA and WLAN\n", stream_id);
+	return count;
+}
+#endif
+
 static const struct ipa3_debugfs_file debugfs_files[] = {
 	{
 		"gen_reg", IPA_READ_ONLY_MODE, NULL, {
@@ -3773,6 +4266,24 @@ static const struct ipa3_debugfs_file debugfs_files[] = {
 		"ipa_loopback_on_ipa", IPA_READ_ONLY_MODE, NULL, {
 			.read = ipa3_perform_loopback,
 		}
+	}, {
+		"xr_wlan_add_flt", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa_xr_add_flt_to_wlan
+		}
+	},  {
+		"xr_wlan_rmv_flt", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa_xr_remove_flt_to_wlan,
+		}
+#if defined(CONFIG_IPA_RTP)
+	}, {
+		"xr_ipa_wlan_add_flt", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa_xr_add_flt_to_ipa_wlan,
+		}
+	}, {
+		"xr_ipa_wlan_rmv_flt", IPA_WRITE_ONLY_MODE, NULL, {
+			.write = ipa_xr_remove_flt_to_ipa_wlan,
+		}
+#endif
 	}
 };
 
