@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2019, 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023,2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 /*
@@ -33,8 +33,8 @@
  * to use a dedicated logical channel for HLOS and SP Application-Pair.
  *
  * Each HLOS/SP Application can be either Client or Server or both,
- * Messaging is allways point-to-point between 2 HLOS<=>SP applications.
- * Each channel exclusevly used by single Client or Server.
+ * Messaging is always point-to-point between 2 HLOS<=>SP applications.
+ * Each channel exclusively used by single Client or Server.
  *
  * User Space Request & Response are synchronous.
  * read() & write() operations are blocking until completed or terminated.
@@ -537,10 +537,10 @@ static int spcom_rx(struct spcom_channel *ch,
 		mutex_unlock(&ch->lock); /* unlock while waiting */
 		/* wait for rx response */
 		if (timeout_msec)
-			timeleft = wait_for_completion_interruptible_timeout(
+			timeleft = wait_for_completion_killable_timeout(
 						     &ch->rx_done, jiffies);
 		else
-			ret = wait_for_completion_interruptible(&ch->rx_done);
+			ret = wait_for_completion_killable(&ch->rx_done);
 		mutex_lock(&ch->lock);
 
 		if (timeout_msec && timeleft == 0) {
@@ -554,7 +554,7 @@ static int spcom_rx(struct spcom_channel *ch,
 			ret = -ERESTART;
 			goto exit_err;
 		} else if (ret < 0 || timeleft < 0) {
-			spcom_pr_err("rx wait was interrupted!");
+			spcom_pr_err("rx wait was interrupted! PID: %d", current_pid());
 			ret = -EINTR; /* abort, not restartable */
 			goto exit_err;
 		} else if (ch->actual_rx_size) {
@@ -947,6 +947,11 @@ static int modify_dma_buf_addr(struct spcom_channel *ch, void *buf,
 
 	for (i = 0 ; i < ARRAY_SIZE(ch->dmabuf_array) ; i++) {
 		if (ch->dmabuf_array[i].handle == dma_buf) {
+			if (ch->dmabuf_array[i].attach != NULL) {
+				dma_buf_unmap_attachment(ch->dmabuf_array[i].attach,
+						ch->dmabuf_array[i].sg, DMA_BIDIRECTIONAL);
+				dma_buf_detach(dma_buf, ch->dmabuf_array[i].attach);
+			}
 			ch->dmabuf_array[i].attach = attach;
 			ch->dmabuf_array[i].sg = sg;
 			found_handle = true;
@@ -2735,7 +2740,7 @@ static int spcom_ioctl_handle_lock_dmabuf_command(struct spcom_ioctl_dmabuf_lock
 	int fd = 0;
 	int i = 0;
 
-	spcom_pr_dbg("Lock dmabuf cmd arg: ch_name[%s], fd[%d], padding[%u], PID[%ld]\n",
+	spcom_pr_dbg("Lock dmabuf cmd arg: ch_name[%s], fd[%d], padding[%u], PID[%d]\n",
 		arg->ch_name, arg->fd, arg->padding, current_pid());
 
 	ch_name = arg->ch_name;
@@ -2838,7 +2843,7 @@ static int spcom_ioctl_handle_unlock_dmabuf_command(struct spcom_ioctl_dmabuf_lo
 	int ret = 0;
 	bool unlock_all = false;
 
-	spcom_pr_dbg("Unlock dmabuf cmd arg: ch_name[%s], fd[%d], padding[%u], PID[%ld]\n",
+	spcom_pr_dbg("Unlock dmabuf cmd arg: ch_name[%s], fd[%d], padding[%u], PID[%d]\n",
 		arg->ch_name, arg->fd, arg->padding, current_pid());
 
 	ch_name = arg->ch_name;
@@ -3051,8 +3056,8 @@ static int spcom_ioctl_handle_poll_event(struct spcom_ioctl_poll_event *arg, int
 				&spcom_dev->rpmsg_state_change);
 
 			if (ret) {/* wait was interrupted */
-				spcom_pr_info("Wait for link state change interrupted, ret[%d]\n",
-						ret);
+				spcom_pr_info("Wait for link state change interrupted, ret[%d], pid: %d\n",
+						ret, current_pid());
 				return -EINTR;
 			}
 		}
@@ -3231,12 +3236,12 @@ bool is_arg_size_expected(unsigned int cmd, uint32_t arg_size)
 		expected_size = sizeof(struct spcom_ioctl_dmabuf_lock);
 		break;
 	default:
-		spcom_pr_err("No userspace data for ioctl cmd[%ld]\n", cmd);
+		spcom_pr_err("No userspace data for ioctl cmd[%d]\n", cmd);
 		return false;
 	}
 
 	if (arg_size != expected_size) {
-		spcom_pr_err("Invalid cmd size: cmd[%ld], arg size[%u], expected[%u]\n",
+		spcom_pr_err("Invalid cmd size: cmd[%d], arg size[%u], expected[%u]\n",
 				cmd, arg_size, expected_size);
 		return false;
 	}
@@ -3948,7 +3953,6 @@ static int spcom_probe(struct platform_device *pdev)
 		pr_err("Unable to create IPC log context\n");
 
 	spcom_pr_info("Driver Initialization completed ok\n");
-
 	return 0;
 
 fail_reg_chardev:
