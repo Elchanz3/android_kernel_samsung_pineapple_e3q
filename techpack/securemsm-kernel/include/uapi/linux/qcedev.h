@@ -52,7 +52,14 @@ enum qcedev_offload_oper_enum {
 	QCEDEV_OFFLOAD_HLOS_HLOS_1 = 2,
 	QCEDEV_OFFLOAD_HLOS_CPB = 3,
 	QCEDEV_OFFLOAD_HLOS_CPB_1 = 4,
+	/*
+	 * Keep the Android 14 (LA.VENDOR.14.3.0) value: the vendor HALs on this
+	 * device were built with CPB_HLOS = 5. The newer CPB entries go after it.
+	 */
 	QCEDEV_OFFLOAD_CPB_HLOS = 5,
+	QCEDEV_OFFLOAD_HLOS_CPB_2 = 6,
+	QCEDEV_OFFLOAD_HLOS_CPB_3 = 7,
+	QCEDEV_OFFLOAD_HLOS_CPB_4 = 8,
 	QCEDEV_OFFLOAD_OPER_LAST
 };
 

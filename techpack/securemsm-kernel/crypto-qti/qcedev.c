@@ -3,7 +3,7 @@
  * QTI CE device driver.
  *
  * Copyright (c) 2010-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/mman.h>
@@ -26,6 +26,7 @@
 #include "linux/qcedev.h"
 #include <linux/interconnect.h>
 #include <linux/delay.h>
+#include <linux/version.h>
 
 #include <crypto/hash.h>
 #include "qcedevi.h"
@@ -46,7 +47,7 @@
  * This is temporary, and we can use the 1500 value once the
  * core irqs are enabled.
  */
-#define MAX_OFFLOAD_CRYPTO_WAIT_TIME 20
+#define MAX_OFFLOAD_CRYPTO_WAIT_TIME 50
 
 #define MAX_REQUEST_TIME 5000
 
@@ -333,9 +334,9 @@ static void req_done(unsigned long data)
 	podev->active_command = NULL;
 
 	if (areq) {
+		areq->state = QCEDEV_REQ_DONE;
 		if (!areq->timed_out)
 			complete(&areq->complete);
-		areq->state = QCEDEV_REQ_DONE;
 	}
 
 	/* Look through queued requests and wake up the corresponding thread */
@@ -363,6 +364,10 @@ void qcedev_sha_req_cb(void *cookie, unsigned char *digest,
 	if (!areq || !areq->cookie)
 		return;
 	handle = (struct qcedev_handle *) areq->cookie;
+
+        if (!handle || !handle->cntl)
+                return;
+
 	pdev = handle->cntl;
 	if (!pdev)
 		return;
@@ -391,6 +396,10 @@ void qcedev_cipher_req_cb(void *cookie, unsigned char *icv,
 	if (!areq || !areq->cookie)
 		return;
 	handle = (struct qcedev_handle *) areq->cookie;
+
+	if (!handle || !handle->cntl)
+		return;
+
 	podev = handle->cntl;
 	if (!podev)
 		return;
@@ -572,6 +581,9 @@ static int start_offload_cipher_req(struct qcedev_control *podev,
 		case QCEDEV_OFFLOAD_HLOS_HLOS_1:
 		case QCEDEV_OFFLOAD_HLOS_CPB:
 		case QCEDEV_OFFLOAD_HLOS_CPB_1:
+		case QCEDEV_OFFLOAD_HLOS_CPB_2:
+		case QCEDEV_OFFLOAD_HLOS_CPB_3:
+		case QCEDEV_OFFLOAD_HLOS_CPB_4:
 			creq.dir = QCE_DECRYPT;
 			break;
 		case QCEDEV_OFFLOAD_CPB_HLOS:
@@ -2519,7 +2531,11 @@ static int qcedev_probe_device(struct platform_device *pdev)
 		return rc;
 	}
 
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+	driver_class = class_create(QCEDEV_DEV);
+#else
 	driver_class = class_create(THIS_MODULE, QCEDEV_DEV);
+#endif
 	if (IS_ERR(driver_class)) {
 		rc = -ENOMEM;
 		pr_err("class_create failed %d\n", rc);
