@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/module.h>
 #include <linux/rpmsg.h>
@@ -247,19 +247,24 @@ static int delete_dsp_session(struct msm_cvp_inst *inst,
 			dprintk(CVP_DSP, "%s find device addr 0x%x\n",
 				__func__, buf->smem->device_addr);
 
-			rc = eva_fastrpc_dev_unmap_dma(
-					frpc_node->cvp_fastrpc_device,
-					buf);
-			if (rc)
-				dprintk_rl(CVP_WARN,
-					"%s Failed to unmap buffer 0x%x\n",
-					__func__, rc);
+			if (buf->ownership == CLIENT) {
+				msm_cvp_unmap_smem(inst, buf->smem, "unmap dsp");
+				msm_cvp_smem_put_dma_buf(buf->smem->dma_buf);
+			} else if (buf->ownership == DSP) {
+				rc = eva_fastrpc_dev_unmap_dma(
+						frpc_node->cvp_fastrpc_device,
+						buf);
+				if (rc)
+					dprintk_rl(CVP_WARN,
+							"%s Failed to unmap buffer 0x%x\n",
+							__func__, rc);
 
-			rc = cvp_release_dsp_buffers(inst, buf);
-			if (rc)
-				dprintk(CVP_ERR,
-					"%s Failed to free buffer 0x%x\n",
-					__func__, rc);
+				rc = cvp_release_dsp_buffers(inst, buf);
+				if (rc)
+					dprintk(CVP_ERR,
+							"%s Failed to free buffer 0x%x\n",
+							__func__, rc);
+			}
 
 			list_del(&buf->list);
 
@@ -1388,6 +1393,7 @@ void __dsp_cvp_sess_create(struct cvp_dsp_cmd_msg *cmd)
 {
 	struct cvp_dsp_apps *me = &gfa_cv;
 	struct msm_cvp_inst *inst = NULL;
+	struct msm_cvp_core *core = NULL;
 	uint64_t inst_handle = 0;
 	uint32_t pid;
 	int rc = 0;
@@ -1399,6 +1405,12 @@ void __dsp_cvp_sess_create(struct cvp_dsp_cmd_msg *cmd)
 	struct fastrpc_device *frpc_device;
 
 	cmd->ret = 0;
+	core = cvp_driver->cvp_core;
+	if (!core) {
+		dprintk(CVP_ERR, "%s CVP core not initialized\n", __func__);
+		cmd->ret = -1;
+		return;
+	}
 
 	dprintk(CVP_DSP,
 		"%s sess Type %d Mask %d Prio %d Sec %d hdl 0x%x\n",
@@ -1407,6 +1419,17 @@ void __dsp_cvp_sess_create(struct cvp_dsp_cmd_msg *cmd)
 		dsp2cpu_cmd->session_prio,
 		dsp2cpu_cmd->is_secure,
 		dsp2cpu_cmd->pid);
+
+	core->resources.max_inst_count = MAX_SUPPORTED_INSTANCES;
+	if (msm_cvp_check_for_inst_overload(core, &rc)) {
+		dprintk(CVP_ERR, "Reached EVA session limit, can not create new session\n");
+		cmd->ret = -1;
+		mutex_lock(&core->lock);
+		list_for_each_entry(inst, &core->instances, list)
+			cvp_print_inst(CVP_ERR, inst);
+		mutex_unlock(&core->lock);
+		return;
+	}
 
 	rc = eva_fastrpc_driver_register(dsp2cpu_cmd->pid);
 	if (rc) {
@@ -1485,9 +1508,9 @@ void __dsp_cvp_sess_create(struct cvp_dsp_cmd_msg *cmd)
 
 	inst->task = task;
 	dprintk(CVP_DSP,
-		"%s CREATE_SESS id 0x%x, cpu_low 0x%x, cpu_high 0x%x\n",
+		"%s CREATE_SESS id 0x%x, cpu_low 0x%x, cpu_high 0x%x, inst %pK, inst->session %pK\n",
 		__func__, cmd->session_id, cmd->session_cpu_low,
-		cmd->session_cpu_high);
+		cmd->session_cpu_high, inst, inst->session);
 
 	spin_lock(&inst->core->resources.pm_qos.lock);
 	inst->core->resources.pm_qos.off_vote_cnt++;
@@ -1597,8 +1620,7 @@ void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
 
-	if (!inst || !is_cvp_inst_valid(inst)) {
-		dprintk(CVP_ERR, "%s incorrect session ID %llx\n", __func__, inst);
+	if (!inst) {
 		cmd->ret = -1;
 		goto dsp_fail_power_req;
 	}
@@ -1812,8 +1834,9 @@ void __dsp_cvp_mem_alloc(struct cvp_dsp_cmd_msg *cmd)
 	cmd->sbuf.iova = buf->smem->device_addr;
 	cmd->sbuf.v_dsp_addr = v_dsp_addr;
 	dprintk(CVP_DSP, "%s: size %d, iova 0x%x, v_dsp_addr 0x%llx\n",
-		__func__, cmd->sbuf.size, cmd->sbuf.iova,
-		cmd->sbuf.v_dsp_addr);
+		__func__, cmd->sbuf.size, cmd->sbuf.iova, cmd->sbuf.v_dsp_addr);
+	dprintk(CVP_DSP, "%s: DSP2CPU_session_id 0x%x, smem_fd 0x%x, smem_refcount %d\n",
+		__func__, dsp2cpu_cmd->session_id, buf->smem->fd, buf->smem->refcount);
 
 	cvp_put_fastrpc_node(frpc_node);
 	return;
@@ -1846,11 +1869,12 @@ void __dsp_cvp_mem_free(struct cvp_dsp_cmd_msg *cmd)
 	cmd->ret = 0;
 
 	dprintk(CVP_DSP,
-		"%s sess id 0x%x, low 0x%x, high 0x%x, hnl 0x%x\n",
+		"%s sess 0x%x, low 0x%x, high 0x%x, hnl 0x%x, iova 0x%x, fd 0x%x\n",
 		__func__, dsp2cpu_cmd->session_id,
 		dsp2cpu_cmd->session_cpu_low,
 		dsp2cpu_cmd->session_cpu_high,
-		dsp2cpu_cmd->pid);
+		dsp2cpu_cmd->pid, dsp2cpu_cmd->sbuf.iova,
+		dsp2cpu_cmd->sbuf.fd);
 
 	inst = (struct msm_cvp_inst *)get_inst_from_dsp(
 			dsp2cpu_cmd->session_cpu_high,
@@ -1884,7 +1908,8 @@ void __dsp_cvp_mem_free(struct cvp_dsp_cmd_msg *cmd)
 		}
 
 		/* Verify with device addr */
-		if (buf->smem->device_addr == dsp2cpu_cmd->sbuf.iova) {
+		if ((buf->smem->device_addr == dsp2cpu_cmd->sbuf.iova) &&
+			(buf->fd == dsp2cpu_cmd->sbuf.fd)) {
 			dprintk(CVP_DSP, "%s find device addr 0x%x\n",
 				__func__, buf->smem->device_addr);
 			dprintk(CVP_DSP, "fd in list 0x%x, fd from dsp 0x%x\n",
@@ -1967,18 +1992,10 @@ void __dsp_cvp_sess_stop(struct cvp_dsp_cmd_msg *cmd)
 {
 	struct cvp_dsp_apps *me = &gfa_cv;
 	struct msm_cvp_inst *inst;
-	struct cvp_session_queue *sq;
 	int rc;
 	struct cvp_dsp2cpu_cmd *dsp2cpu_cmd = &me->pending_dsp2cpu_cmd;
 
 	cmd->ret = 0;
-
-	dprintk(CVP_DSP,
-		"%s sess id 0x%x, low 0x%x, high 0x%x, pid 0x%x\n",
-		__func__, dsp2cpu_cmd->session_id,
-		dsp2cpu_cmd->session_cpu_low,
-		dsp2cpu_cmd->session_cpu_high,
-		dsp2cpu_cmd->pid);
 
 	inst = (struct msm_cvp_inst *)get_inst_from_dsp(
 			dsp2cpu_cmd->session_cpu_high,
@@ -1990,14 +2007,12 @@ void __dsp_cvp_sess_stop(struct cvp_dsp_cmd_msg *cmd)
 		return;
 	}
 
-	sq = &inst->session_queue;
-	spin_lock(&sq->lock);
-	if (sq->state == QUEUE_STOP) {
-		spin_unlock(&sq->lock);
-		dprintk(CVP_WARN, "DSP double stopped session %llx\n", inst);
-		return;
-	}
-	spin_unlock(&sq->lock);
+	dprintk(CVP_DSP,
+		"%s sess id 0x%x low 0x%x high 0x%x, pid 0x%x, inst_kref_refcount 0x%x\n",
+		__func__, dsp2cpu_cmd->session_id,
+		dsp2cpu_cmd->session_cpu_low,
+		dsp2cpu_cmd->session_cpu_high,
+		dsp2cpu_cmd->pid, kref_read(&inst->kref));
 
 	rc = msm_cvp_session_stop(inst, (struct eva_kmd_arg *)NULL);
 	if (rc) {
@@ -2045,6 +2060,8 @@ wait_dsp:
 		goto wait_dsp;
 	}
 
+	/* Set the cmd to 0 to avoid sending previous session values in case the command fails*/
+	memset(&cmd, 0, sizeof(struct cvp_dsp_cmd_msg));
 	cmd.type = me->pending_dsp2cpu_cmd.type;
 
 	if (rc == -ERESTARTSYS) {

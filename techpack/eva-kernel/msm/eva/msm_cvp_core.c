@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/dma-direction.h>
@@ -64,10 +64,10 @@ int msm_cvp_private(void *cvp_inst, unsigned int cmd,
 }
 EXPORT_SYMBOL(msm_cvp_private);
 
-static bool msm_cvp_check_for_inst_overload(struct msm_cvp_core *core,
+bool msm_cvp_check_for_inst_overload(struct msm_cvp_core *core,
 		u32 *instance_count)
 {
-	u32 secure_instance_count = 0;
+	u32 secure_instance_count = 0, cam_count = 0, cv_count = 0;
 	struct msm_cvp_inst *inst = NULL;
 	bool overload = false;
 
@@ -77,15 +77,26 @@ static bool msm_cvp_check_for_inst_overload(struct msm_cvp_core *core,
 		/* This flag is not updated yet for the current instance */
 		if (inst->flags & CVP_SECURE)
 			secure_instance_count++;
+		if (inst->prop.type == HFI_SESSION_DMM)
+			cam_count++;
+		else
+			cv_count++;
 	}
 	mutex_unlock(&core->lock);
 
 	/* Instance count includes current instance as well. */
 
-	if ((*instance_count >= core->resources.max_inst_count) ||
+	if ((*instance_count > core->resources.max_inst_count) ||
 		(secure_instance_count >=
 			core->resources.max_secure_inst_count))
 		overload = true;
+	if (cam_count > MAX_DMM_INSTANCES) {
+		dprintk(CVP_WARN, "Reached 8 DMM session limit\n");
+		overload = true;
+	} else if (cv_count > MAX_CV_INSTANCES) {
+		dprintk(CVP_WARN, "Reached 8 generic CV session limit\n");
+		overload = true;
+	}
 	return overload;
 }
 
@@ -359,6 +370,16 @@ stop_session:
 			__func__, inst);
 		goto exit;
 	}
+	spin_lock(&sq->lock);
+	if (sq->state == QUEUE_STOP) {
+		spin_unlock(&sq->lock);
+		dprintk(CVP_WARN,
+			"%s: Double stop session - inst %llx, sess %llx, %s of type %d\n",
+			__func__, inst, inst->session, inst->proc_name, inst->session_type);
+		goto release_arp;
+	}
+	spin_unlock(&sq->lock);
+
 	if (!empty) {
 		/* STOP SESSION to avoid SMMU fault after releasing ARP */
 		ops_tbl = inst->core->dev_ops;
@@ -371,9 +392,14 @@ stop_session:
 
 		/*Fail stop session, release arp later may cause smmu fault*/
 		rc = wait_for_sess_signal_receipt(inst, HAL_SESSION_STOP_DONE);
-		if (rc)
+		if (rc) {
 			dprintk(CVP_WARN, "%s: wait for sess_stop fail, rc %d\n",
 					__func__, rc);
+		} else {
+			spin_lock(&sq->lock);
+			sq->state = QUEUE_STOP;
+			spin_unlock(&sq->lock);
+		}
 		/* Continue to release ARP anyway */
 	}
 release_arp:
@@ -453,6 +479,7 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 		core->smem_leak_count += atomic_read(&inst->smem_count);
 	}
 	kfree(inst);
+	inst = NULL;
 	dprintk(CVP_SESS,
 		"sys-stat: nr_insts %d msgs %d, frames %d, bufs %d, smems %d\n",
 		atomic_read(&nr_insts),

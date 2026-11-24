@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/memory.h>
@@ -117,8 +117,6 @@ static bool __is_ctl_power_on(struct iris_hfi_device *device);
 
 static void __print_sidebandmanager_regs(struct iris_hfi_device *device);
 static void dump_noc_reg(struct iris_hfi_device *device);
-
-int __read_register(struct iris_hfi_device *device, u32 reg);
 
 static struct cvp_hal_ops hal_ops = {
 	.interrupt_init = interrupt_init_iris2,
@@ -335,7 +333,9 @@ static int __acquire_regulator(struct regulator_info *rinfo,
 		/*Acquire XO_RESET to avoid race condition with video*/
 		rc = call_iris_op(device, reset_control_acquire_name, device, "cvp_xo_reset");
 		if (rc) {
-			dprintk(CVP_ERR, "XO_RESET could not be acquired: skip acquiring the regulator %s from FW\n", rinfo->name);
+			dprintk(CVP_ERR,
+				"XO_RESET could not be acquired: skip acquiring the regulator %s from FW\n",
+				rinfo->name);
 			return -EINVAL;
 		}
 
@@ -378,7 +378,9 @@ static int __hand_off_regulator(struct iris_hfi_device *device, struct regulator
 		/*Acquire XO_RESET to avoid race condition with video*/
 		rc = call_iris_op(device, reset_control_acquire_name, device, "cvp_xo_reset");
 		if (rc) {
-			dprintk(CVP_ERR, "XO_RESET could not be acquired: skip hand off the regulator %s to FW\n", rinfo->name);
+			dprintk(CVP_ERR,
+				"XO_RESET could not be acquired: skip hand off the regulator %s to FW\n",
+				rinfo->name);
 			return -EINVAL;
 		}
 
@@ -553,11 +555,11 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 {
 	struct cvp_hfi_queue_header *queue;
 	struct cvp_hfi_msg_session_hdr *msg_pkt;
-	u32 packet_size_in_words, new_read_idx;
+	u32 packet_size_in_words, new_read_idx, packet_size_in_bytes;
 	u32 *read_ptr;
 	u32 receive_request = 0;
 	u32 read_idx, write_idx;
-		int rc = 0;
+	int rc = 0;
 
 	if (!qinfo || !packet || !pb_tx_req_is_set) {
 		dprintk(CVP_ERR, "Invalid Params\n");
@@ -626,6 +628,7 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 	}
 
 	packet_size_in_words = (*read_ptr) >> 2;
+	packet_size_in_bytes = *read_ptr;
 	if (!packet_size_in_words) {
 		spin_unlock(&qinfo->hfi_lock);
 		dprintk(CVP_ERR, "Zero packet size\n");
@@ -647,6 +650,12 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 					(u8 *)qinfo->q_array.align_virtual_addr,
 					new_read_idx << 2);
 		}
+		/*
+		 * Copy back the validated size to avoid security issue. As we are reading
+		 * the packet from a shared queue, there is a possibility to get the
+		 * packet->size data corrupted of shared queue by mallicious FW.
+		 */
+		*((u32 *) packet) = packet_size_in_bytes;
 	} else {
 		dprintk(CVP_WARN,
 			"BAD packet received, read_idx: %#x, pkt_size: %d\n",
@@ -802,7 +811,7 @@ static int __read_gcc_register(struct iris_hfi_device *device, u32 reg)
 }
 
 
-int __read_register(struct iris_hfi_device *device, u32 reg)
+static int __read_register(struct iris_hfi_device *device, u32 reg)
 {
 	int rc = 0;
 	u8 *base_addr;
@@ -883,50 +892,94 @@ static int __set_registers(struct iris_hfi_device *device)
 
 	__write_register(device, CVP_CPU_CS_AXI4_QOS,
 				pdata->noc_qos->axi_qos);
-	__write_register(device, CVP_NOC_RGE_PRIORITYLUT_LOW,
-				pdata->noc_qos->prioritylut_low);
-	__write_register(device, CVP_NOC_RGE_PRIORITYLUT_HIGH,
-				pdata->noc_qos->prioritylut_high);
-	__write_register(device, CVP_NOC_RGE_URGENCY_LOW,
-				pdata->noc_qos->urgency_low);
-	__write_register(device, CVP_NOC_RGE_DANGERLUT_LOW,
-				pdata->noc_qos->dangerlut_low);
-	__write_register(device, CVP_NOC_RGE_SAFELUT_LOW,
-				pdata->noc_qos->safelut_low);
-	__write_register(device, CVP_NOC_GCE_PRIORITYLUT_LOW,
-				pdata->noc_qos->prioritylut_low);
-	__write_register(device, CVP_NOC_GCE_PRIORITYLUT_HIGH,
-				pdata->noc_qos->prioritylut_high);
-	__write_register(device, CVP_NOC_GCE_URGENCY_LOW,
-				pdata->noc_qos->urgency_low);
-	__write_register(device, CVP_NOC_GCE_DANGERLUT_LOW,
-				pdata->noc_qos->dangerlut_low);
-	__write_register(device, CVP_NOC_GCE_SAFELUT_LOW,
-				pdata->noc_qos->safelut_low);
-	__write_register(device, CVP_NOC_CDM_PRIORITYLUT_LOW,
-				pdata->noc_qos->prioritylut_low);
-	__write_register(device, CVP_NOC_CDM_PRIORITYLUT_HIGH,
-				pdata->noc_qos->prioritylut_high);
-	__write_register(device, CVP_NOC_CDM_URGENCY_LOW,
-				pdata->noc_qos->urgency_low_ro);
-	__write_register(device, CVP_NOC_CDM_DANGERLUT_LOW,
-				pdata->noc_qos->dangerlut_low);
-	__write_register(device, CVP_NOC_CDM_SAFELUT_LOW,
-				pdata->noc_qos->safelut_low);
+	__write_register(device,
+			CVP_NOC_RGE_PRIORITYLUT_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			pdata->noc_qos->prioritylut_low);
+	__write_register(device,
+			CVP_NOC_RGE_PRIORITYLUT_HIGH +
+			device->res->qos_noc_rge_niu_offset,
+			pdata->noc_qos->prioritylut_high);
+	__write_register(device,
+			CVP_NOC_RGE_URGENCY_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			pdata->noc_qos->urgency_low);
+	__write_register(device,
+			CVP_NOC_RGE_DANGERLUT_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			pdata->noc_qos->dangerlut_low);
+	__write_register(device,
+			CVP_NOC_RGE_SAFELUT_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			pdata->noc_qos->safelut_low);
+	__write_register(device,
+			CVP_NOC_GCE_PRIORITYLUT_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			pdata->noc_qos->prioritylut_low);
+	__write_register(device,
+			CVP_NOC_GCE_PRIORITYLUT_HIGH +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			pdata->noc_qos->prioritylut_high);
+	__write_register(device,
+			CVP_NOC_GCE_URGENCY_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			pdata->noc_qos->urgency_low);
+	__write_register(device,
+			CVP_NOC_GCE_DANGERLUT_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			pdata->noc_qos->dangerlut_low);
+	__write_register(device,
+			CVP_NOC_GCE_SAFELUT_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			pdata->noc_qos->safelut_low);
+
+	__write_register(device,
+			CVP_NOC_CDM_PRIORITYLUT_LOW +
+			device->res->qos_noc_cdm_niu_offset,
+			pdata->noc_qos->prioritylut_low);
+	__write_register(device,
+			CVP_NOC_CDM_PRIORITYLUT_HIGH +
+			device->res->qos_noc_cdm_niu_offset,
+			pdata->noc_qos->prioritylut_high);
+	__write_register(device,
+			CVP_NOC_CDM_URGENCY_LOW +
+			device->res->qos_noc_cdm_niu_offset,
+			pdata->noc_qos->urgency_low_ro);
+	__write_register(device,
+			CVP_NOC_CDM_DANGERLUT_LOW +
+			device->res->qos_noc_cdm_niu_offset,
+			pdata->noc_qos->dangerlut_low);
+	__write_register(device,
+			CVP_NOC_CDM_SAFELUT_LOW +
+			device->res->qos_noc_cdm_niu_offset,
+			pdata->noc_qos->safelut_low);
 
 	/* Below registers write moved from FW to SW to enable UBWC */
-	__write_register(device, CVP_NOC_RGE_NIU_DECCTL_LOW,
-				0x1);
-	__write_register(device, CVP_NOC_RGE_NIU_ENCCTL_LOW,
-				0x1);
-	__write_register(device, CVP_NOC_GCE_VADL_TOF_NIU_DECCTL_LOW,
-				0x1);
-	__write_register(device, CVP_NOC_GCE_VADL_TOF_NIU_ENCCTL_LOW,
-				0x1);
-	__write_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS,
-				0x3);
-	__write_register(device, CVP_NOC_MAIN_SIDEBANDMANAGER_FAULTINEN0_LOW,
-				0x1);
+	__write_register(device,
+			CVP_NOC_RGE_NIU_DECCTL_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			0x1);
+	__write_register(device,
+			CVP_NOC_RGE_NIU_ENCCTL_LOW +
+			device->res->qos_noc_rge_niu_offset,
+			0x1);
+	__write_register(device,
+			CVP_NOC_GCE_VADL_TOF_NIU_DECCTL_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			0x1);
+	__write_register(device,
+			CVP_NOC_GCE_VADL_TOF_NIU_ENCCTL_LOW +
+			device->res->qos_noc_gce_vadl_tof_niu_offset,
+			0x1);
+
+	__write_register(device,
+			CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS +
+			device->res->noc_core_err_offset,
+			0x3);
+	__write_register(device,
+			CVP_NOC_MAIN_SIDEBANDMANAGER_FAULTINEN0_LOW +
+			device->res->noc_main_sidebandmanager_offset,
+			0x1);
 
 	call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 	return 0;
@@ -1470,7 +1523,6 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 			dprintk(CVP_WARN, "%s Fail acquire xo_reset at %d\n", __func__, __LINE__);
 			return -EINVAL;
 		}
-
 		__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
 		call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 	}
@@ -1509,12 +1561,13 @@ static int __iface_msgq_read(struct iris_hfi_device *device, void *pkt)
 		if (tx_req_is_set) {
 			if (!__is_ctl_power_on(device))
 				dprintk(CVP_ERR, "%s power off, don't access reg\n", __func__);
-			i = call_iris_op(device, reset_control_acquire_name, device, "cvp_xo_reset");
+			i = call_iris_op(device, reset_control_acquire_name, device,
+					"cvp_xo_reset");
 			if (i) {
-				dprintk(CVP_WARN, "%s Fail acquire xo_reset at %d\n", __func__, __LINE__);
+				dprintk(CVP_WARN, "%s Fail acquire xo_reset at %d\n",
+						__func__, __LINE__);
 				return -EINVAL;
 			}
-
 			__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
 			call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 		}
@@ -1531,6 +1584,7 @@ static int __iface_dbgq_read(struct iris_hfi_device *device, void *pkt)
 	u32 tx_req_is_set = 0;
 	int rc = 0;
 	struct cvp_iface_q_info *q_info;
+	int i = 0;
 
 	if (!pkt) {
 		dprintk(CVP_ERR, "Invalid Params\n");
@@ -1550,7 +1604,15 @@ static int __iface_dbgq_read(struct iris_hfi_device *device, void *pkt)
 		if (tx_req_is_set) {
 			if (!__is_ctl_power_on(device))
 				dprintk(CVP_ERR, "%s power off, don't access reg\n", __func__);
+			i = call_iris_op(device, reset_control_acquire_name, device,
+					"cvp_xo_reset");
+			if (i) {
+				dprintk(CVP_WARN, "%s Fail acquire xo_reset at %d\n",
+						__func__, __LINE__);
+				return -EINVAL;
+			}
 			__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
+			call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 		}
 		rc = 0;
 	} else
@@ -2495,7 +2557,6 @@ static void __core_clear_interrupt(struct iris_hfi_device *device)
 		dprintk(CVP_WARN, "%s Fail acquire xo_reset at %d\n", __func__, __LINE__);
 		return;
 	}
-
 	intr_status = __read_register(device, CVP_WRAPPER_INTR_STATUS);
 	call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 
@@ -2586,7 +2647,7 @@ static int iris_hfi_session_clean(void *session)
 	struct cvp_hal_session *sess_close;
 	struct iris_hfi_device *device;
 
-	if (!session) {
+	if (!session || session == (void *)0xdeadbeef) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
@@ -2891,7 +2952,7 @@ static int iris_hfi_session_release_buffers(void *sess)
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
 
-	if (!session || !session->device) {
+	if (!session || session == (void *)0xdeadbeef || !session->device) {
 		dprintk(CVP_ERR, "Invalid Params\n");
 		return -EINVAL;
 	}
@@ -3218,20 +3279,24 @@ skip_power_off:
 static void __process_sys_error(struct iris_hfi_device *device)
 {
 	struct cvp_hfi_sfr_struct *vsfr = NULL;
+	u32 sfr_buf_size = 0;
 
 	vsfr = (struct cvp_hfi_sfr_struct *)device->sfr.align_virtual_addr;
 	if (vsfr) {
-		void *p = memchr(vsfr->rg_data, '\0', vsfr->bufSize);
-		/*
-		 * SFR isn't guaranteed to be NULL terminated
-		 * since SYS_ERROR indicates that Iris is in the
-		 * process of crashing.
-		 */
-		if (p == NULL)
-			vsfr->rg_data[vsfr->bufSize - 1] = '\0';
+		sfr_buf_size = vsfr->bufSize;
+		if (sfr_buf_size < ALIGNED_SFR_SIZE) {
+			void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
+			/*
+			* SFR isn't guaranteed to be NULL terminated
+			* since SYS_ERROR indicates that Iris is in the
+			* process of crashing.
+			*/
+			if (p == NULL)
+				vsfr->rg_data[sfr_buf_size - 1] = '\0';
 
-		dprintk(CVP_ERR, "SFR Message from FW: %s\n",
-				vsfr->rg_data);
+			dprintk(CVP_ERR, "SFR Message from FW: %s\n",
+					vsfr->rg_data);
+		}
 	}
 }
 
@@ -3442,29 +3507,11 @@ static int __response_handler(struct iris_hfi_device *device)
 	}
 
 	if (device->intr_status & CVP_FATAL_INTR_BMSK) {
-		struct cvp_hfi_sfr_struct *vsfr = (struct cvp_hfi_sfr_struct *)
-			device->sfr.align_virtual_addr;
-		struct msm_cvp_cb_info info = {
-			.response_type = HAL_SYS_WATCHDOG_TIMEOUT,
-			.response.cmd = {
-				.device_id = 0,
-			}
-		};
-
-		if (vsfr)
-			dprintk(CVP_ERR, "SFR Message from FW: %s\n",
-					vsfr->rg_data);
 		if (device->intr_status & CVP_WRAPPER_INTR_MASK_CPU_NOC_BMSK)
 			dprintk(CVP_ERR, "Received Xtensa NOC error\n");
 
 		if (device->intr_status & CVP_WRAPPER_INTR_MASK_CORE_NOC_BMSK)
 			dprintk(CVP_ERR, "Received CVP core NOC error\n");
-
-		if (device->intr_status & CVP_WRAPPER_INTR_MASK_A2HWD_BMSK)
-			dprintk(CVP_ERR, "Received CVP watchdog timeout\n");
-
-		packets[packet_count++] = info;
-		goto exit;
 	}
 
 	/* Bleed the msg queue dry of packets */
@@ -3540,7 +3587,6 @@ static int __response_handler(struct iris_hfi_device *device)
 		}
 	}
 
-exit:
 	__flush_debug_queue(device, raw_packet);
 	return packet_count;
 }
@@ -4105,7 +4151,9 @@ static int __disable_regulator_impl(struct regulator_info *rinfo,
 	/*Acquire XO_RESET to avoid race condition with video*/
 	rc = call_iris_op(device, reset_control_acquire_name, device, "cvp_xo_reset");
 	if (rc) {
-		dprintk(CVP_ERR, "XO_RESET could not be acquired: skip disabling the regulator %s\n", rinfo->name);
+		dprintk(CVP_ERR,
+			"XO_RESET could not be acquired: skip disabling the regulator %s\n",
+			rinfo->name);
 		return -EINVAL;
 	}
 
@@ -4176,7 +4224,9 @@ static int __enable_regulator(struct iris_hfi_device *device,
 		/*Acquire XO_RESET to avoid race condition with video*/
 		rc = call_iris_op(device, reset_control_acquire_name, device, "cvp_xo_reset");
 		if (rc) {
-			dprintk(CVP_ERR, "XO_RESET could not be acquired: skip enabling the regulator %s\n", rinfo->name);
+			dprintk(CVP_ERR,
+				"XO_RESET could not be acquired: skip enabling the regulator %s\n",
+				rinfo->name);
 			return -EINVAL;
 		}
 
@@ -4747,11 +4797,14 @@ static void __print_sidebandmanager_regs(struct iris_hfi_device *device)
 		goto exit;
 	}
 	main_sbm_ln0_low = __read_register(device,
-			CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN0_LOW);
+						CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN0_LOW +
+						device->res->noc_main_sidebandmanager_offset);
 	main_sbm_ln0_high = __read_register(device,
-			CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN0_HIGH);
+						CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN0_HIGH +
+						device->res->noc_main_sidebandmanager_offset);
 	main_sbm_ln1_high = __read_register(device,
-			CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN1_HIGH);
+						CVP_NOC_MAIN_SIDEBANDMANAGER_SENSELN1_HIGH +
+						device->res->noc_main_sidebandmanager_offset);
 	call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 
 exit:
@@ -5358,47 +5411,61 @@ static void __noc_error_info_iris2(struct iris_hfi_device *device)
 		return;
 	}
 
-	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_SWID_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_swid_low,
 			"CVP_NOC__CORE_ERL_MAIN_SWID_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_HIGH_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_SWID_HIGH_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_swid_high,
 			"CVP_NOC_CORE_ERL_MAIN_SWID_HIGH", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_mainctl_low,
 			"CVP_NOC_CORE_ERL_MAIN_MAINCTL_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRVLD_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRVLD_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errvld_low,
 			"CVP_NOC_CORE_ERL_MAIN_ERRVLD_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errclr_low,
 			"CVP_NOC_CORE_ERL_MAIN_ERRCLR_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG0_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog0_low,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG0_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_HIGH_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG0_HIGH_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog0_high,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG0_HIGH", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG1_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog1_low,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG1_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_HIGH_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG1_HIGH_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog1_high,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG1_HIGH", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_LOW_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG2_LOW_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog2_low,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG2_LOW", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_HIGH_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG2_HIGH_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog2_high,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG2_HIGH", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_LOW_OFFS);
-	__err_log(log_required, &noc_log->err_core_errlog3_low, 
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG3_LOW_OFFS + device->res->noc_core_err_offset);
+	__err_log(log_required, &noc_log->err_core_errlog3_low,
 			"CORE ERRLOG3_LOW, below details", val);
 	__print_reg_details(val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_HIGH_OFFS);
+	val = __read_register(device,
+			CVP_NOC_CORE_ERR_ERRLOG3_HIGH_OFFS + device->res->noc_core_err_offset);
 	__err_log(log_required, &noc_log->err_core_errlog3_high,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG3_HIGH", val);
-	__write_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS, 0x1);
+	__write_register(device,
+			CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS + device->res->noc_core_err_offset, 0x1);
 	call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 #define CVP_SS_CLK_HALT 0x8
 #define CVP_SS_CLK_EN 0xC
@@ -5674,48 +5741,68 @@ static void dump_noc_reg(struct iris_hfi_device *device)
 		return;
 	}
 
-	val = __read_register(device, CVP_NOC_RGE_NIU_DECCTL_LOW);
+	val = __read_register(device, CVP_NOC_RGE_NIU_DECCTL_LOW
+			+ device->res->qos_noc_rge_niu_offset);
 	dprintk(CVP_ERR, "CVP_NOC_RGE_NIU_DECCTL_LOW: 0x%x", val);
-	val = __read_register(device, CVP_NOC_RGE_NIU_ENCCTL_LOW);
+	val = __read_register(device, CVP_NOC_RGE_NIU_ENCCTL_LOW
+			+ device->res->qos_noc_rge_niu_offset);
 	dprintk(CVP_ERR, "CVP_NOC_RGE_NIU_ENCCTL_LOW: 0x%x", val);
-	val = __read_register(device, CVP_NOC_GCE_VADL_TOF_NIU_DECCTL_LOW);
+	val = __read_register(device, CVP_NOC_GCE_VADL_TOF_NIU_DECCTL_LOW
+			+ device->res->qos_noc_gce_vadl_tof_niu_offset);
 	dprintk(CVP_ERR, "CVP_NOC_GCE_VADL_TOF_NIU_DECCTL_LOW: 0x%x", val);
-	val = __read_register(device, CVP_NOC_GCE_VADL_TOF_NIU_ENCCTL_LOW);
+	val = __read_register(device, CVP_NOC_GCE_VADL_TOF_NIU_ENCCTL_LOW
+			+ device->res->qos_noc_gce_vadl_tof_niu_offset);
 	dprintk(CVP_ERR, "CVP_NOC_GCE_VADL_TOF_NIU_ENCCTL_LOW: 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS: 0x%x", val);
-	val = __read_register(device, CVP_NOC_MAIN_SIDEBANDMANAGER_FAULTINEN0_LOW);
+	val = __read_register(device, CVP_NOC_MAIN_SIDEBANDMANAGER_FAULTINEN0_LOW
+			+ device->res->noc_main_sidebandmanager_offset);
 	dprintk(CVP_ERR, "CVP_NOC_MAIN_SIDEBANDMANAGER_FAULTINEN0_LOW: 0x%x", val);
 
 	dprintk(CVP_ERR, "Dumping Core NoC registers\n");
-	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC__CORE_ERL_MAIN_SWID_LOW: 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_HIGH_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_SWID_HIGH_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVVP_NOC_CORE_ERL_MAIN_SWID_HIGH 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_MAINCTL_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_MAINCTL_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRVLD_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRVLD_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRVLD_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRCLR_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG0_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_HIGH_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG0_HIGH_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG0_HIGH 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG1_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_HIGH_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG1_HIGH_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG1_HIGH 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG2_LOW 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_HIGH_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG2_HIGH_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG2_HIGH 0x%x", val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_LOW_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_LOW_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CORE ERRLOG3_LOW 0x%x, below details", val);
 	__print_reg_details(val);
-	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_HIGH_OFFS);
+	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_HIGH_OFFS
+			+ device->res->noc_core_err_offset);
 	dprintk(CVP_ERR, "CVP_NOC_CORE_ERL_MAIN_ERRLOG3_HIGH 0x%x", val);
-	__write_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS, 0x1);
+	__write_register(device, CVP_NOC_CORE_ERR_ERRCLR_LOW_OFFS
+			+ device->res->noc_core_err_offset, 0x1);
 
 	call_iris_op(device, reset_control_release_name, device, "cvp_xo_reset");
 	if (msm_cvp_fw_low_power_mode) {

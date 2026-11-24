@@ -71,7 +71,7 @@ static int _copy_pkt_from_user(struct eva_kmd_arg *kp,
 
 	k = &kp->data.hfi_pkt;
 	u = &up->data.hfi_pkt;
-	for (i = start; i < size; i++)
+	for (i = start; i < start + size; i++)
 		if (get_user(k->pkt_data[i], &u->pkt_data[i]))
 			return -EFAULT;
 
@@ -171,7 +171,7 @@ static int _copy_sysprop_from_user(struct eva_kmd_arg *kp,
 	}
 
 	return _copy_pkt_from_user(kp, up, 1,
-		(k->prop_num * ((sizeof(struct eva_kmd_sys_property) >> 2))));
+		(k->prop_num * (sizeof(struct eva_kmd_sys_property) >> 2)));
 }
 
 static int _copy_pkt_to_user(struct eva_kmd_arg *kp,

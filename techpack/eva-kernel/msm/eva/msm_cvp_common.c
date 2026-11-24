@@ -196,7 +196,7 @@ struct msm_cvp_inst *cvp_get_inst_validate(struct msm_cvp_core *core,
 
 	s = cvp_get_inst(core, session_id);
 	if (!s) {
-		WARN(true, "%s session doesn't exit\n", __func__);
+		dprintk(CVP_WARN, "%s session doesn't exit\n", __func__);
 		return NULL;
 	}
 
@@ -362,8 +362,8 @@ int wait_for_sess_signal_receipt(struct msm_cvp_inst *inst,
 		msecs_to_jiffies(
 			inst->core->resources.msm_cvp_hw_rsp_timeout));
 	if (!rc) {
-		dprintk(CVP_WARN, "Wait interrupted or timed out: %d, %d\n",
-				SESSION_MSG_INDEX(cmd), cmd);
+		dprintk(CVP_WARN, "Wait interrupted or timed out: %d\n",
+				SESSION_MSG_INDEX(cmd));
 		if (inst->state != MSM_CVP_CORE_INVALID)
 			print_hfi_queue_info(ops_tbl);
 		rc = -ETIMEDOUT;
@@ -600,11 +600,11 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 			core, cmd, core->ssr_count);
 	mutex_lock(&core->clk_lock);
 	hfi_device = ops_tbl->hfi_device_data;
+	call_hfi_op(ops_tbl, flush_debug_queue, ops_tbl->hfi_device_data);
 	if (hfi_device->error == CVP_ERR_NOC_ERROR) {
 		dprintk(CVP_WARN, "Got NOC error");
 		msm_cvp_noc_error_info(core);
 	}
-	call_hfi_op(ops_tbl, flush_debug_queue, ops_tbl->hfi_device_data);
 	list_for_each_entry(inst, &core->instances, list) {
 		cvp_print_inst(CVP_WARN, inst);
 		if (inst->state != MSM_CVP_CORE_INVALID) {
@@ -653,7 +653,7 @@ void msm_cvp_comm_session_clean(struct msm_cvp_inst *inst)
 		dprintk(CVP_ERR, "%s invalid params\n", __func__);
 		return;
 	}
-	if (!inst->session) {
+	if (!inst->session || inst->session == (void *)0xdeadbeef) {
 		dprintk(CVP_SESS, "%s: inst %pK session already cleaned\n",
 			__func__, inst);
 		return;
@@ -1299,7 +1299,7 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	if (!inst || !inst->core || !inst->core->dev_ops) {
 		dprintk(CVP_ERR, "%s: invalid input parameters\n", __func__);
 		return -EINVAL;
-	} else if (!inst->session) {
+	} else if (!inst->session || inst->session == (void *)0xdeadbeef) {
 		dprintk(CVP_ERR, "%s: no session to kill for inst %pK\n",
 			__func__, inst);
 		return 0;

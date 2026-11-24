@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_cvp.h"
@@ -11,13 +11,10 @@
 #include "cvp_comm_def.h"
 #include "cvp_power.h"
 #include "cvp_hfi_api.h"
-#include "cvp_hfi_io.h"
 static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
 	struct eva_kmd_hfi_packet *in_pkt,
 	unsigned int in_offset,
 	unsigned int in_buf_num);
-
-int __read_register(struct iris_hfi_device *device, u32 reg);
 
 int msm_cvp_get_session_info(struct msm_cvp_inst *inst, u32 *session)
 {
@@ -94,32 +91,14 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 	struct cvp_session_msg *msg = NULL;
 	struct cvp_hfi_msg_session_hdr *hdr;
 	int rc = 0;
-	u32 reg;
-	struct iris_hfi_device *dev = NULL;
 
 	if (wait_event_timeout(sq->wq,
 		cvp_msg_pending(sq, &msg, ktid), timeout) == 0) {
-		dprintk(CVP_WARN, "session queue wait timeout and session_id = %#x\n", hash32_ptr(inst->session));
+		dprintk(CVP_WARN, "session queue wait timeout\n");
 		if (inst && inst->core && inst->core->dev_ops &&
-				inst->state != MSM_CVP_CORE_INVALID) {
+				inst->state != MSM_CVP_CORE_INVALID)
 			print_hfi_queue_info(inst->core->dev_ops);
-		}
-		dev = (struct iris_hfi_device *)(inst->core->dev_ops->hfi_device_data);
-		reg = __read_register(dev, CVP_SS_WDVALUE1);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_WDVALUE1: %x\n", reg);
-		reg = __read_register(dev, CVP_SS_IRQ_STATUS);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_IRQ_STATUS: %x\n", reg);
-		reg = __read_register(dev, CVP_SS_IRQ_MASK);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_IRQ_MASK: %x\n", reg);
-		reg = __read_register(dev, CVP_CPU_CS_SCIACMD);
-		dprintk(CVP_ERR, "CVP0_VPU_CPU_CS_SCIACMD: %x\n", reg);
-		reg = __read_register(dev, CVP_WRAPPER_INTR_MASK);
-		dprintk(CVP_ERR, "CVP_VPU_WRAPPER_INTR_MASK: %x\n", reg);
-		reg = __read_register(dev, CVP_WRAPPER_INTR_STATUS);
-		dprintk(CVP_ERR, "CVP_VPU_WRAPPER_INTR_STATUS: %x\n", reg);
-
 		rc = -ETIMEDOUT;
-		BUG_ON(1);
 		goto exit;
 	}
 
@@ -293,7 +272,9 @@ static bool cvp_fence_wait(struct cvp_fence_queue *q,
 		return false;
 
 	*fence = NULL;
-	mutex_lock(&q->lock);
+
+	while (!mutex_trylock(&q->lock))
+		usleep_range(100, 200);
 	*state = q->state;
 	if (*state != QUEUE_START) {
 		mutex_unlock(&q->lock);
@@ -450,8 +431,10 @@ wait:
 	if (state != QUEUE_START)
 		goto exit;
 
-	if (!f)
+	if (!f) {
+		usleep_range(100, 200);
 		goto wait;
+	}
 
 	pkt = f->pkt;
 	synx = (u32 *)f->synx;
@@ -510,8 +493,18 @@ static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
 	enum op_mode mode;
 	struct cvp_buf_type *buf;
 	bool override;
+	unsigned int total_fence_count = 0;
 
 	int rc = 0;
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	if (!offset || !num)
+		return 0;
+
+	if (offset < (sizeof(struct cvp_hfi_cmd_session_hdr)/sizeof(u32))) {
+		dprintk(CVP_ERR, "%s: Incorrect offset in cmd %d\n", __func__, offset);
+		rc = -EINVAL;
+		goto exit;
+	}
 
 	override = get_pkt_fenceoverride((struct cvp_hal_session_cmd_pkt*)in_pkt);
 
@@ -602,7 +595,15 @@ kernel_fence:
 			f->num_fences++;
 			buf->fence_type &= ~INPUT_FENCE_BITMASK;
 			buf->input_handle = 0;
+			total_fence_count++;
 		}
+		if (buf->output_handle)
+			total_fence_count++;
+	}
+	if (total_fence_count > MAX_HFI_FENCE_SIZE) {
+		dprintk(CVP_ERR, "Invalid total_fence_count %d\n", total_fence_count);
+		rc = -EINVAL;
+		goto free_exit;
 	}
 	f->output_index = f->num_fences;
 
@@ -944,9 +945,8 @@ int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	struct eva_kmd_session_control *sc = NULL;
 	struct msm_cvp_inst *s;
 	struct cvp_hfi_ops *ops_tbl;
-	int rc;
-	struct iris_hfi_device *dev = NULL;
-	u32 reg;
+	int rc = 0;
+	int curr_sq_state = -1;
 
 	if (!inst || !inst->core) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -961,8 +961,27 @@ int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 		return -ECONNRESET;
 
 	sq = &inst->session_queue;
+	curr_sq_state = sq->state;
 
 	spin_lock(&sq->lock);
+	if (sq->state != QUEUE_START) {
+		spin_unlock(&sq->lock);
+		dprintk(CVP_ERR,
+			"%s: Stop not allowed - curr state %d,  inst %llx, sess %llx, %s type %d\n",
+			__func__, sq->state, inst, inst->session, inst->proc_name,
+			inst->session_type);
+		rc = -EINVAL;
+		return rc;
+	}
+
+	if (sq->state == QUEUE_STOP) {
+		spin_unlock(&sq->lock);
+		dprintk(CVP_WARN,
+				"%s: Double stop session - inst %llx, sess %llx, %s of type %d\n",
+				__func__, inst, inst->session, inst->proc_name, inst->session_type);
+		return rc;
+	}
+
 	if (sq->msg_count) {
 		dprintk(CVP_ERR, "session stop incorrect: queue not empty%d\n",
 			sq->msg_count);
@@ -984,28 +1003,20 @@ int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_WARN, "%s: session stop failed rc %d\n",
 				__func__, rc);
+		spin_lock(&sq->lock);
+		sq->state = curr_sq_state;
+		spin_unlock(&sq->lock);
 		goto stop_thread;
 	}
 
 	/* Wait for FW response */
 	rc = wait_for_sess_signal_receipt(inst, HAL_SESSION_STOP_DONE);
 	if (rc) {
-		dprintk(CVP_WARN, "%s: wait for signal failed, rc %d and session_id = %#x\n",
-				__func__, rc, hash32_ptr(inst->session));
-		dev = (struct iris_hfi_device *)(ops_tbl->hfi_device_data);
-		reg = __read_register(dev, CVP_SS_WDVALUE1);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_WDVALUE1: %x\n", reg);
-		reg = __read_register(dev, CVP_SS_IRQ_STATUS);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_IRQ_STATUS: %x\n", reg);
-		reg = __read_register(dev, CVP_SS_IRQ_MASK);
-		dprintk(CVP_ERR, "CVP0_CVP_SS_IRQ_MASK: %x\n", reg);
-		reg = __read_register(dev, CVP_CPU_CS_SCIACMD);
-		dprintk(CVP_ERR, "CVP0_VPU_CPU_CS_SCIACMD: %x\n", reg);
-		reg = __read_register(dev, CVP_WRAPPER_INTR_MASK);
-		dprintk(CVP_ERR, "CVP_VPU_WRAPPER_INTR_MASK: %x\n", reg);
-		reg = __read_register(dev, CVP_WRAPPER_INTR_STATUS);
-		dprintk(CVP_ERR, "CVP_VPU_WRAPPER_INTR_STATUS: %x\n", reg);
-		BUG_ON(1);
+		dprintk(CVP_WARN, "%s: wait for signal failed, rc %d\n",
+				__func__, rc);
+		spin_lock(&sq->lock);
+		sq->state = curr_sq_state;
+		spin_unlock(&sq->lock);
 		goto stop_thread;
 	}
 
@@ -1030,8 +1041,6 @@ int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 		spin_unlock(&sq->lock);
 		return 0;
 	}
-
-	sq->state = QUEUE_STOP;
 
 	dprintk(CVP_SESS, "Stop session queue: %pK session_id = %#x\n",
 			inst, hash32_ptr(inst->session));
@@ -1128,6 +1137,7 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 			rc = dma_buf_fd(hfi->sfr.mem_data.dma_buf, O_RDONLY | O_CLOEXEC);
 			if (rc < 0) {
 				dprintk(CVP_WARN, "Failed get dma_buf fd %d\n", rc);
+				dma_buf_put(hfi->sfr.mem_data.dma_buf);
 				break;
 			}
 
@@ -1659,7 +1669,7 @@ int msm_cvp_session_deinit(struct msm_cvp_inst *inst)
 		inst, hash32_ptr(inst->session));
 
 	session = (struct cvp_hal_session *)inst->session;
-	if (!session)
+	if (!session || session == (void *)0xdeadbeef)
 		return rc;
 
 	rc = msm_cvp_comm_try_state(inst, MSM_CVP_CLOSE_DONE);
