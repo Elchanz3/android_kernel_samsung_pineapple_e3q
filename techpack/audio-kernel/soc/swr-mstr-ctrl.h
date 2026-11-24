@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _SWR_WCD_CTRL_H
@@ -11,6 +11,7 @@
 #include <linux/pm_qos.h>
 #include <linux/pm.h>
 #include <soc/swr-common.h>
+#include <bindings/audio-codec-port-types.h>
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
@@ -31,7 +32,7 @@
 #define SWR_MAX_COL		7 /* Cols = 16 */
 #define SWR_MIN_COL		0 /* Cols = 2 */
 
-#define SWR_WCD_NAME	"swr-wcd"
+#define SWR_NAME	"swr-mgr"
 
 #define SWR_MSTR_PORT_LEN	13 /* Number of master ports */
 
@@ -43,6 +44,7 @@
 #define SWRM_VERSION_1_6   0x01060000
 #define SWRM_VERSION_1_7   0x01070000
 #define SWRM_VERSION_2_0   0x02000000
+#define SWRM_VERSION_2_1   0x02010000
 
 #define SWR_MAX_CH_PER_PORT 8
 
@@ -152,6 +154,7 @@ struct swr_mstr_ctrl {
 	int irq;
 	int wake_irq;
 	int version;
+	int version_index;
 	int mclk_freq;
 	int bus_clk;
 	u32 num_dev;
@@ -190,6 +193,7 @@ struct swr_mstr_ctrl {
 	int hw_core_clk_en;
 	int aud_core_clk_en;
 	int clk_src;
+	u32 pcm_enable_count;
 	u32 disable_div2_clk_switch;
 	u32 rd_fifo_depth;
 	u32 wr_fifo_depth;

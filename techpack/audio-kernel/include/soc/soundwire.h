@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _LINUX_SOUNDWIRE_H
@@ -28,6 +29,7 @@ enum {
 #define SWR_CLK_RATE_4P8MHZ      4800000
 #define SWR_CLK_RATE_9P6MHZ      9600000
 #define SWR_CLK_RATE_11P2896MHZ  11289600
+#define SWR_CLK_RATE_12P288MHZ   12288000
 
 extern struct bus_type soundwire_type;
 struct swr_device;
@@ -131,6 +133,7 @@ struct swr_port_info {
 	u8 req_ch;
 	u8 num_ch;
 	u32 ch_rate;
+	u32 req_ch_rate;
 };
 
 struct swr_port_params {
@@ -269,8 +272,12 @@ struct swr_device {
 	struct device    dev;
 	u64 addr;
 	u8 group_id;
+	bool paging_support;
 	struct irq_domain *slave_irq;
 	bool slave_irq_pending;
+	bool clk_scale_initialized;
+	u8 scp1_val; /*used for v1.2 or class devices*/
+	u8 scp2_val; /*used for v1.2 or class devices*/
 };
 
 static inline struct swr_device *to_swr_device(struct device *dev)

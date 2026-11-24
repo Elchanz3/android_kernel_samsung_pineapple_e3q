@@ -16,40 +16,37 @@ endif
 ifeq ($(CONFIG_SND_SOC_AUTO), y)
 	ifdef CONFIG_SND_SOC_SA8155
 		include $(AUDIO_ROOT)/config/sa8155auto.conf
-		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sa8155autoconf.h
 	endif
 	ifdef CONFIG_SND_SOC_SA6155
 		include $(AUDIO_ROOT)/config/sa6155auto.conf
-		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sa6155autoconf.h
 	endif
 	ifdef CONFIG_SND_SOC_GVM
 		include $(AUDIO_ROOT)/config/gvmauto.conf
-        export
         INCS    +=  -include $(AUDIO_ROOT)/config/gvmautoconf.h
+	endif
+	ifdef CONFIG_SND_SOC_SA7255
+		include $(AUDIO_ROOT)/config/sa7255auto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/sa7255autoconf.h
 	endif
 else
 ifeq ($(KERNEL_BUILD), 0)
 	ifeq ($(CONFIG_ARCH_SM8150), y)
 		ifdef CONFIG_SND_SOC_SA8155
 			include $(AUDIO_ROOT)/config/sa8155auto.conf
-			export
 			INCS    +=  -include $(AUDIO_ROOT)/config/sa8155autoconf.h
 		else
 			include $(AUDIO_ROOT)/config/sm8150auto.conf
-			export
 			INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
 		endif
 	endif
 	ifeq ($(CONFIG_ARCH_SM6150), y)
 		ifdef CONFIG_SND_SOC_SA6155
 			include $(AUDIO_ROOT)/config/sa6155auto.conf
-			export
 			INCS    +=  -include $(AUDIO_ROOT)/config/sa6155autoconf.h
 		else
 			include $(AUDIO_ROOT)/config/sm6150auto.conf
-			export
 			INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
 		endif
 	endif
@@ -74,6 +71,10 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/pineappleauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/pineappleautoconf.h
 	endif
+	ifeq ($(CONFIG_ARCH_PITTI), y)
+		include $(AUDIO_ROOT)/config/pittiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/pittiautoconf.h
+	endif
 	ifeq ($(CONFIG_ARCH_LITO), y)
 		include $(AUDIO_ROOT)/config/litoauto.conf
 		export
@@ -94,7 +95,6 @@ ifeq ($(KERNEL_BUILD), 0)
 	endif
 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
 		include $(AUDIO_ROOT)/config/sm8150auto.conf
-		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_QCS405), y)
@@ -104,7 +104,6 @@ ifeq ($(KERNEL_BUILD), 0)
 	endif
 	ifeq ($(CONFIG_QTI_QUIN_GVM), y)
 		include $(AUDIO_ROOT)/config/gvmauto.conf
-		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/gvmautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_SDXLEMUR), y)
@@ -235,6 +234,10 @@ ifdef CONFIG_SND_SWR_HAPTICS
 	SWR_HAP_OBJS += swr-haptics.o
 endif
 
+ifdef CONFIG_LPASS_BT_SWR
+	LPASS_BT_SWR_OBJS += lpass-bt-swr.o
+endif
+
 LINUX_INC +=	-Iinclude/linux
 
 INCS +=		$(COMMON_INC) \
@@ -274,11 +277,13 @@ ifeq ($(KERNEL_BUILD), 1)
 	obj-y	+= wcd937x/
 	obj-y	+= wcd938x/
 	obj-y	+= wcd939x/
+	obj-y	+= wcd9378/
 	obj-y	+= bolero/
 	obj-y	+= lpass-cdc/
 	obj-y	+= wsa884x/
 	obj-y	+= wsa883x/
 	obj-y	+= rouleur/
+	obj-y	+= ./
 endif
 
 ifdef CONFIG_SND_SOC_TAS25XX
@@ -322,6 +327,9 @@ hdmi_dlkm-y := $(HDMICODEC_OBJS)
 
 obj-$(CONFIG_SND_SWR_HAPTICS) += swr_haptics_dlkm.o
 swr_haptics_dlkm-y := $(SWR_HAP_OBJS)
+
+obj-$(CONFIG_LPASS_BT_SWR) += lpass_bt_swr_dlkm.o
+lpass_bt_swr_dlkm-y := $(LPASS_BT_SWR_OBJS)
 
 # inject some build related information
 DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

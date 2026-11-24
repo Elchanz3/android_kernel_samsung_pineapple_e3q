@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -32,6 +32,8 @@
 			SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000)
 #define LPASS_CDC_WSA_MACRO_RX_MIX_RATES (SNDRV_PCM_RATE_48000 |\
 			SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000)
+#define LPASS_CDC_WSA_MACRO_VI_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
+			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000)
 #define LPASS_CDC_WSA_MACRO_RX_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
 		SNDRV_PCM_FMTBIT_S24_LE |\
 		SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S32_LE)
@@ -325,13 +327,24 @@ struct lpass_cdc_wsa_macro_priv {
 static struct snd_soc_dai_driver lpass_cdc_wsa_macro_dai[];
 static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 
-static const char *const rx_text[] = {
+/* for Version 2P6 */
+static const char *const rx_text_v2p6[] = {
 	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4",
 	"RX5", "RX6", "RX7", "RX8", "DEC0", "DEC1"
 };
 
-static const char *const rx_mix_text[] = {
+static const char *const rx_mix_text_v2p6[] = {
 	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4", "RX5", "RX6", "RX7", "RX8"
+};
+
+/* for Version 2P5 */
+static const char *const rx_text_v2p5[] = {
+	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4",
+	"RX5", "DEC0", "DEC1"
+};
+
+static const char *const rx_mix_text_v2p5[] = {
+	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4", "RX5"
 };
 
 static const char *const rx_mix_ec_text[] = {
@@ -370,68 +383,127 @@ static SOC_ENUM_SINGLE_EXT_DECL(lpass_cdc_wsa_macro_comp_mode_enum,
 			lpass_cdc_wsa_macro_comp_mode_text);
 
 /* RX INT0 */
-static const struct soc_enum rx0_prim_inp0_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
-		0, 12, rx_text);
-
-static const struct soc_enum rx0_prim_inp1_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
-		3, 12, rx_text);
-
-static const struct soc_enum rx0_prim_inp2_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
-		3, 12, rx_text);
-
-static const struct soc_enum rx0_mix_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
-		0, 10, rx_mix_text);
-
 static const struct soc_enum rx0_sidetone_mix_enum =
 	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, 2, rx_sidetone_mix_text);
 
-static const struct snd_kcontrol_new rx0_prim_inp0_mux =
-	SOC_DAPM_ENUM("WSA_RX0 INP0 Mux", rx0_prim_inp0_chain_enum);
+/* for Version 2P5 */
+static const struct soc_enum rx0_prim_inp0_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
+		0, 9, rx_text_v2p5);
 
-static const struct snd_kcontrol_new rx0_prim_inp1_mux =
-	SOC_DAPM_ENUM("WSA_RX0 INP1 Mux", rx0_prim_inp1_chain_enum);
+static const struct soc_enum rx0_prim_inp1_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
+		3, 9, rx_text_v2p5);
 
-static const struct snd_kcontrol_new rx0_prim_inp2_mux =
-	SOC_DAPM_ENUM("WSA_RX0 INP2 Mux", rx0_prim_inp2_chain_enum);
+static const struct soc_enum rx0_prim_inp2_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
+		3, 9, rx_text_v2p5);
 
-static const struct snd_kcontrol_new rx0_mix_mux =
-	SOC_DAPM_ENUM("WSA_RX0 MIX Mux", rx0_mix_chain_enum);
+static const struct soc_enum rx0_mix_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
+		0, 7, rx_mix_text_v2p5);
+
+static const struct snd_kcontrol_new rx0_prim_inp0_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX0 INP0 Mux", rx0_prim_inp0_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx0_prim_inp1_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX0 INP1 Mux", rx0_prim_inp1_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx0_prim_inp2_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX0 INP2 Mux", rx0_prim_inp2_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx0_mix_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX0 MIX Mux", rx0_mix_chain_enum_v2p5);
+
+static const struct soc_enum rx1_prim_inp0_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
+		0, 9, rx_text_v2p5);
+
+static const struct soc_enum rx1_prim_inp1_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
+		3, 9, rx_text_v2p5);
+
+static const struct soc_enum rx1_prim_inp2_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
+		3, 9, rx_text_v2p5);
+
+static const struct soc_enum rx1_mix_chain_enum_v2p5 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
+		0, 7, rx_mix_text_v2p5);
+
+static const struct snd_kcontrol_new rx1_prim_inp0_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX1 INP0 Mux", rx1_prim_inp0_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx1_prim_inp1_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX1 INP1 Mux", rx1_prim_inp1_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx1_prim_inp2_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX1 INP2 Mux", rx1_prim_inp2_chain_enum_v2p5);
+
+static const struct snd_kcontrol_new rx1_mix_mux_v2p5 =
+	SOC_DAPM_ENUM("WSA_RX1 MIX Mux", rx1_mix_chain_enum_v2p5);
+/* End of Version 2P5 */
+
+/* for Version 2P6 */
+static const struct soc_enum rx0_prim_inp0_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
+		0, 12, rx_text_v2p6);
+
+static const struct soc_enum rx0_prim_inp1_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
+		3, 12, rx_text_v2p6);
+
+static const struct soc_enum rx0_prim_inp2_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
+		3, 12, rx_text_v2p6);
+
+static const struct soc_enum rx0_mix_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
+		0, 10, rx_mix_text_v2p6);
+
+static const struct snd_kcontrol_new rx0_prim_inp0_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX0 INP0 Mux", rx0_prim_inp0_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx0_prim_inp1_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX0 INP1 Mux", rx0_prim_inp1_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx0_prim_inp2_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX0 INP2 Mux", rx0_prim_inp2_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx0_mix_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX0 MIX Mux", rx0_mix_chain_enum_v2p6);
+
+static const struct soc_enum rx1_prim_inp0_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
+		0, 12, rx_text_v2p6);
+
+static const struct soc_enum rx1_prim_inp1_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
+		3, 12, rx_text_v2p6);
+
+static const struct soc_enum rx1_prim_inp2_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
+		3, 12, rx_text_v2p6);
+
+static const struct soc_enum rx1_mix_chain_enum_v2p6 =
+	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
+		0, 10, rx_mix_text_v2p6);
+
+static const struct snd_kcontrol_new rx1_prim_inp0_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX1 INP0 Mux", rx1_prim_inp0_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx1_prim_inp1_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX1 INP1 Mux", rx1_prim_inp1_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx1_prim_inp2_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX1 INP2 Mux", rx1_prim_inp2_chain_enum_v2p6);
+
+static const struct snd_kcontrol_new rx1_mix_mux_v2p6 =
+	SOC_DAPM_ENUM("WSA_RX1 MIX Mux", rx1_mix_chain_enum_v2p6);
+/* End of Version 2P6 */
 
 static const struct snd_kcontrol_new rx0_sidetone_mix_mux =
 	SOC_DAPM_ENUM("WSA_RX0 SIDETONE MIX Mux", rx0_sidetone_mix_enum);
-
-/* RX INT1 */
-static const struct soc_enum rx1_prim_inp0_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
-		0, 12, rx_text);
-
-static const struct soc_enum rx1_prim_inp1_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
-		3, 12, rx_text);
-
-static const struct soc_enum rx1_prim_inp2_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
-		3, 12, rx_text);
-
-static const struct soc_enum rx1_mix_chain_enum =
-	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
-		0, 10, rx_mix_text);
-
-static const struct snd_kcontrol_new rx1_prim_inp0_mux =
-	SOC_DAPM_ENUM("WSA_RX1 INP0 Mux", rx1_prim_inp0_chain_enum);
-
-static const struct snd_kcontrol_new rx1_prim_inp1_mux =
-	SOC_DAPM_ENUM("WSA_RX1 INP1 Mux", rx1_prim_inp1_chain_enum);
-
-static const struct snd_kcontrol_new rx1_prim_inp2_mux =
-	SOC_DAPM_ENUM("WSA_RX1 INP2 Mux", rx1_prim_inp2_chain_enum);
-
-static const struct snd_kcontrol_new rx1_mix_mux =
-	SOC_DAPM_ENUM("WSA_RX1 MIX Mux", rx1_mix_chain_enum);
 
 static const struct soc_enum rx_mix_ec0_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_MIX_CFG0,
@@ -487,7 +559,7 @@ static struct snd_soc_dai_driver lpass_cdc_wsa_macro_dai[] = {
 		.id = LPASS_CDC_WSA_MACRO_AIF_VI,
 		.capture = {
 			.stream_name = "WSA_AIF_VI Capture",
-			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_48000,
+			.rates = LPASS_CDC_WSA_MACRO_VI_RATES,
 			.formats = LPASS_CDC_WSA_MACRO_RX_FORMATS,
 			.rate_max = 48000,
 			.rate_min = 8000,
@@ -1132,6 +1204,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
 		0x20, 0x20);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX0_SPKR_PROT_PATH_CTL,
 		0x0F, val);
@@ -1144,6 +1217,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
 			0x10, 0x10);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX0_SPKR_PROT_PATH_CTL,
 			0x20, 0x00);
@@ -1161,6 +1235,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 			0x20, 0x20);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CTL,
 			0x0F, val);
@@ -1173,6 +1248,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 			0x10, 0x10);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CTL,
 			0x20, 0x00);
@@ -1343,18 +1419,21 @@ static int lpass_cdc_wsa_macro_enable_mix_path(struct snd_soc_dapm_widget *w,
 
 	if (!(strcmp(w->name, "WSA_RX0 MIX INP"))) {
 		gain_reg = LPASS_CDC_WSA_RX0_RX_VOL_MIX_CTL;
+		reg = LPASS_CDC_WSA_RX0_RX_PATH_CTL +
+			(LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET *  w->shift);
+		mix_reg = LPASS_CDC_WSA_RX0_RX_PATH_MIX_CTL +
+			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 	} else if (!(strcmp(w->name, "WSA_RX1 MIX INP"))) {
 		gain_reg = LPASS_CDC_WSA_RX1_RX_VOL_MIX_CTL;
+		reg = LPASS_CDC_WSA_RX1_RX_PATH_CTL +
+			(LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET *  w->shift);
+		mix_reg = LPASS_CDC_WSA_RX1_RX_PATH_MIX_CTL +
+			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 	} else {
 		dev_err_ratelimited(component->dev, "%s: No gain register avail for %s\n",
 			__func__, w->name);
 		return 0;
 	}
-
-	reg = LPASS_CDC_WSA_RX0_RX_PATH_CTL +
-			(LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET *  w->shift);
-	mix_reg = LPASS_CDC_WSA_RX0_RX_PATH_MIX_CTL +
-			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
@@ -1641,6 +1720,14 @@ static bool lpass_cdc_wsa_macro_adie_lb(struct snd_soc_component *component,
 	u16 int_mux_cfg0 = 0, int_mux_cfg1 = 0;
 	u8 int_mux_cfg0_val = 0, int_mux_cfg1_val = 0;
 	u8 int_n_inp0 = 0, int_n_inp1 = 0, int_n_inp2 = 0;
+	int int_1_rx = INTn_1_INP_SEL_DEC0;
+	int int_2_rx = INTn_1_INP_SEL_DEC1;
+	u32 version;
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
 
 	int_mux_cfg0 = LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0 + interp_idx * 8;
 	int_mux_cfg1 = int_mux_cfg0 + 4;
@@ -1648,18 +1735,29 @@ static bool lpass_cdc_wsa_macro_adie_lb(struct snd_soc_component *component,
 	int_mux_cfg1_val = snd_soc_component_read(component, int_mux_cfg1);
 
 	int_n_inp0 = int_mux_cfg0_val & 0x0F;
-	if (int_n_inp0 == INTn_1_INP_SEL_DEC0 ||
-		int_n_inp0 == INTn_1_INP_SEL_DEC1)
+
+	version = lpass_cdc_get_version(wsa_dev);
+
+	/* For Lpass version <= 2.5 the config mux didnot have rx6,rx7,rx8.
+	 * So decrease by 3 will select the correct index.
+	 */
+	if (version <= LPASS_CDC_VERSION_2_5) {
+		int_1_rx = int_1_rx - 3;
+		int_2_rx = int_2_rx - 3;
+	}
+
+	if (int_n_inp0 == int_1_rx ||
+		int_n_inp0 == int_2_rx)
 		return true;
 
 	int_n_inp1 = int_mux_cfg0_val >> 4;
-	if (int_n_inp1 == INTn_1_INP_SEL_DEC0 ||
-		int_n_inp1 == INTn_1_INP_SEL_DEC1)
+	if (int_n_inp1 == int_1_rx ||
+		int_n_inp1 == int_2_rx)
 		return true;
 
 	int_n_inp2 = int_mux_cfg1_val >> 4;
-	if (int_n_inp2 == INTn_1_INP_SEL_DEC0 ||
-		int_n_inp2 == INTn_1_INP_SEL_DEC1)
+	if (int_n_inp2 == int_1_rx ||
+		int_n_inp2 == int_2_rx)
 		return true;
 
 	return false;
@@ -2917,6 +3015,61 @@ static const struct snd_kcontrol_new aif_cps_mixer[] = {
 			lpass_cdc_wsa_macro_cps_feed_mixer_put),
 };
 
+static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets_v2p6[] = {
+
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP0", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp0_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP1", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp1_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP2", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp2_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 MIX INP", SND_SOC_NOPM,
+		0, 0, &rx0_mix_mux_v2p6, lpass_cdc_wsa_macro_enable_mix_path,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP0", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp0_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP1", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp1_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP2", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp2_mux_v2p6, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 MIX INP", SND_SOC_NOPM,
+		0, 0, &rx1_mix_mux_v2p6, lpass_cdc_wsa_macro_enable_mix_path,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+};
+
+static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets_v2p5[] = {
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP0", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp0_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP1", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp1_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 INP2", SND_SOC_NOPM, 0, 0,
+		&rx0_prim_inp2_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX0 MIX INP", SND_SOC_NOPM,
+		0, 0, &rx0_mix_mux_v2p5, lpass_cdc_wsa_macro_enable_mix_path,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP0", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp0_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP1", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp1_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 INP2", SND_SOC_NOPM, 0, 0,
+		&rx1_prim_inp2_mux_v2p5, lpass_cdc_wsa_macro_enable_swr,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MUX_E("WSA_RX1 MIX INP", SND_SOC_NOPM,
+		0, 0, &rx1_mix_mux_v2p5, lpass_cdc_wsa_macro_enable_mix_path,
+		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+};
+
 static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets[] = {
 	SND_SOC_DAPM_AIF_IN("WSA AIF1 PB", "WSA_AIF1 Playback", 0,
 		SND_SOC_NOPM, 0, 0),
@@ -2968,30 +3121,6 @@ static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets[] = {
 	SND_SOC_DAPM_MIXER("WSA RX4", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_MIXER("WSA RX5", SND_SOC_NOPM, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_MUX_E("WSA_RX0 INP0", SND_SOC_NOPM, 0, 0,
-		&rx0_prim_inp0_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX0 INP1", SND_SOC_NOPM, 0, 0,
-		&rx0_prim_inp1_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX0 INP2", SND_SOC_NOPM, 0, 0,
-		&rx0_prim_inp2_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX0 MIX INP", SND_SOC_NOPM,
-		0, 0, &rx0_mix_mux, lpass_cdc_wsa_macro_enable_mix_path,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX1 INP0", SND_SOC_NOPM, 0, 0,
-		&rx1_prim_inp0_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX1 INP1", SND_SOC_NOPM, 0, 0,
-		&rx1_prim_inp1_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX1 INP2", SND_SOC_NOPM, 0, 0,
-		&rx1_prim_inp2_mux, lpass_cdc_wsa_macro_enable_swr,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MUX_E("WSA_RX1 MIX INP", SND_SOC_NOPM,
-		0, 0, &rx1_mix_mux, lpass_cdc_wsa_macro_enable_mix_path,
-		SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 	SND_SOC_DAPM_PGA_E("WSA_RX INT0 MIX", SND_SOC_NOPM,
 			0, 0, NULL, 0, lpass_cdc_wsa_macro_enable_main_path,
 			SND_SOC_DAPM_PRE_PMU),
@@ -3571,6 +3700,7 @@ static int lpass_cdc_wsa_macro_init(struct snd_soc_component *component)
 	struct snd_soc_dapm_context *dapm =
 				snd_soc_component_get_dapm(component);
 	int ret;
+	u32 version;
 	struct device *wsa_dev = NULL;
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
 
@@ -3592,6 +3722,24 @@ static int lpass_cdc_wsa_macro_init(struct snd_soc_component *component)
 	if (ret < 0) {
 		dev_err(wsa_dev, "%s: Failed to add controls\n", __func__);
 		return ret;
+	}
+
+	version = lpass_cdc_get_version(wsa_dev);
+
+	if (version <= LPASS_CDC_VERSION_2_5) {
+		ret = snd_soc_dapm_new_controls(dapm, lpass_cdc_wsa_macro_dapm_widgets_v2p5,
+						ARRAY_SIZE(lpass_cdc_wsa_macro_dapm_widgets_v2p5));
+		if (ret < 0) {
+			dev_err(wsa_dev, "%s: Failed to add lpass v2p5 controls\n", __func__);
+			return ret;
+		}
+	} else {
+		ret = snd_soc_dapm_new_controls(dapm, lpass_cdc_wsa_macro_dapm_widgets_v2p6,
+					ARRAY_SIZE(lpass_cdc_wsa_macro_dapm_widgets_v2p6));
+		if (ret < 0) {
+			dev_err(wsa_dev, "%s: Failed to add lpass v2p6 controls\n", __func__);
+			return ret;
+		}
 	}
 
 	ret = snd_soc_dapm_add_routes(dapm, wsa_audio_map,

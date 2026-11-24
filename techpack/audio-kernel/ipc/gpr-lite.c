@@ -1,6 +1,6 @@
 /* Copyright (c) 2011-2017, 2019-2021 The Linux Foundation. All rights reserved.
  * Copyright (c) 2018, Linaro Limited
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -125,8 +125,7 @@ int gpr_send_pkt(struct gpr_device *adev, struct gpr_pkt *pkt)
 	    (gpr_get_q6_state() != GPR_SUBSYS_LOADED)) {
 		dev_err_ratelimited(gpr->dev, "%s: Still Dsp is not Up\n", __func__);
 		return -ENETRESET;
-	}
-	else if ((adev->domain_id == GPR_DOMAIN_MODEM) &&
+	} else if ((adev->domain_id == GPR_DOMAIN_MODEM) &&
 		   (gpr_get_modem_state() == GPR_SUBSYS_DOWN)) {
 		dev_err_ratelimited(gpr->dev, "%s: Still Modem is not Up\n", __func__);
 		return -ENETRESET;
@@ -312,7 +311,7 @@ static int gpr_callback(struct rpmsg_device *rpdev, void *buf,
 	__func__ , hdr->dst_port, hdr_size, pkt_size);
 
 	if (hdr->opcode == APM_EVENT_MODULE_TO_CLIENT) {
-		dev_err(gpr->dev, "%s: Acquire wakelock in case of module event with timeout %d",
+		dev_dbg(gpr->dev, "%s: Acquire wakelock in case of module event with timeout %d",
 			__func__, WAKELOCK_TIMEOUT);
 		pm_wakeup_ws_event(gpr_priv->wsource, WAKELOCK_TIMEOUT, true);
 	}
@@ -382,14 +381,15 @@ static void gpr_device_remove(struct device *dev)
 	struct gpr_device *adev = to_gpr_device(dev);
 	struct gpr_driver *adrv;
 	struct gpr *gpr = dev_get_drvdata(adev->dev.parent);
+	unsigned long flags;
 
 	if (dev->driver) {
 		adrv = to_gpr_driver(dev->driver);
 		if (adrv->remove)
 			adrv->remove(adev);
-		spin_lock(&gpr->svcs_lock);
+		spin_lock_irqsave(&gpr->svcs_lock, flags);
 		idr_remove(&gpr->svcs_idr, adev->svc_id);
-		spin_unlock(&gpr->svcs_lock);
+		spin_unlock_irqrestore(&gpr->svcs_lock, flags);
 	}
 
 	return;
@@ -422,6 +422,7 @@ static int gpr_add_device(struct device *dev, struct device_node *np,
 	struct gpr *gpr = dev_get_drvdata(dev);
 	struct gpr_device *adev = NULL;
 	int ret;
+	unsigned long flags;
 
 	adev = kzalloc(sizeof(*adev), GFP_KERNEL);
 	if (!adev)
@@ -446,10 +447,10 @@ static int gpr_add_device(struct device *dev, struct device_node *np,
 	adev->dev.release = gpr_dev_release;
 	adev->dev.driver = NULL;
 
-	spin_lock(&gpr->svcs_lock);
+	spin_lock_irqsave(&gpr->svcs_lock, flags);
 	idr_alloc(&gpr->svcs_idr, adev, id->svc_id,
 		  id->svc_id + 1, GFP_ATOMIC);
-	spin_unlock(&gpr->svcs_lock);
+	spin_unlock_irqrestore(&gpr->svcs_lock, flags);
 
 	dev_info_ratelimited(dev, "Adding GPR dev: %s\n", dev_name(&adev->dev));
 
@@ -555,6 +556,10 @@ static int gpr_probe(struct rpmsg_device *rpdev)
 	gpr_priv->wsource = wakeup_source_register(gpr_priv->dev, "audio-gpr");
 	dev_info(dev, "%s: gpr-lite probe success\n",
 		__func__);
+
+#ifndef CONFIG_MSM_QDSP6_PDR
+	gpr_set_q6_state(GPR_SUBSYS_LOADED);
+#endif
 
 	return 0;
 }

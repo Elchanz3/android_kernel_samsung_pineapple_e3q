@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -51,10 +51,20 @@
 #define HPH_IMPEDANCE_2VPK_MODE_OHMS 260
 #define XTALK_L_CH_NUM 0
 #define XTALK_R_CH_NUM 1
+#define GND_EXT_FET_MARGIN_MOHMS 200
 
 #define NUM_ATTEMPTS 5
 #define COMP_MAX_COEFF 25
 #define HPH_MODE_MAX 4
+
+#define WCD_USBSS_WRITE true
+#define WCD_USBSS_READ false
+#define WCD_USBSS_DP_EN 0x1E
+#define WCD_USBSS_DN_EN 0x21
+#define P_THRESH_SEL_MASK 0x0E
+#define P_THRESH_SEL_SHIFT 0x01
+#define VTH_4P0 0x04
+#define VTH_4P2 0x06
 
 #define DAPM_MICBIAS1_STANDALONE "MIC BIAS1 Standalone"
 #define DAPM_MICBIAS2_STANDALONE "MIC BIAS2 Standalone"
@@ -622,6 +632,12 @@ static int wcd939x_parse_port_mapping(struct device *dev,
 
 	for (i = 0; i < map_length; i++) {
 		port_num = dt_array[NUM_SWRS_DT_PARAMS * i];
+
+		if (port_num >= MAX_PORT || ch_iter >= MAX_CH_PER_PORT) {
+			dev_err(dev, "%s: Invalid port or channel number\n", __func__);
+			goto err_pdata_fail;
+		}
+
 		slave_port_type = dt_array[NUM_SWRS_DT_PARAMS * i + 1];
 		ch_mask = dt_array[NUM_SWRS_DT_PARAMS * i + 2];
 		ch_rate = dt_array[NUM_SWRS_DT_PARAMS * i + 3];
@@ -883,6 +899,7 @@ static int  wcd939x_config_power_mode(struct snd_soc_component *component,
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 static int wcd939x_get_usbss_hph_power_mode(int hph_mode)
 {
 	switch (hph_mode) {
@@ -894,6 +911,7 @@ static int wcd939x_get_usbss_hph_power_mode(int hph_mode)
 		return 0x2;
 	}
 }
+#endif
 
 static int wcd939x_enable_hph_pcm_index(struct snd_soc_component *component,
 				int event, int hph)
@@ -1068,14 +1086,14 @@ static int wcd939x_config_xtalk(struct snd_soc_component *component,
 		/* Write scale and alpha based on channel */
 		if (xtalk_indx == XTALK_L_CH_NUM) {
 			snd_soc_component_update_bits(component, xtalk_sec1, 0xFF,
-						      pdata->usbcss_hs.alpha_l);
+						      pdata->usbcss_hs.xtalk.alpha_l);
 			snd_soc_component_update_bits(component, xtalk_sec0, 0x1F,
-						      pdata->usbcss_hs.scale_l);
+						      pdata->usbcss_hs.xtalk.scale_l);
 		} else if (xtalk_indx == XTALK_R_CH_NUM) {
 			snd_soc_component_update_bits(component, xtalk_sec1, 0xFF,
-						      pdata->usbcss_hs.alpha_r);
+						      pdata->usbcss_hs.xtalk.alpha_r);
 			snd_soc_component_update_bits(component, xtalk_sec0, 0x1F,
-						      pdata->usbcss_hs.scale_r);
+						      pdata->usbcss_hs.xtalk.scale_r);
 		} else {
 			snd_soc_component_update_bits(component, xtalk_sec1, 0xFF, MIN_XTALK_ALPHA);
 			snd_soc_component_update_bits(component, xtalk_sec0, 0x1F, MAX_XTALK_SCALE);
@@ -1421,10 +1439,12 @@ static int wcd939x_codec_enable_hphr_pa(struct snd_soc_dapm_widget *w,
 			snd_soc_component_update_bits(component,
 					REG_FIELD_VALUE(HPH, PWR_LEVEL, 0x00));
 		}
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 		/* update USBSS power mode for AATC */
 		if (wcd939x->mbhc->wcd_mbhc.mbhc_cfg->enable_usbc_analog)
 			wcd_usbss_audio_config(NULL, WCD_USBSS_CONFIG_TYPE_POWER_MODE,
 				wcd939x_get_usbss_hph_power_mode(hph_mode));
+#endif
 		snd_soc_component_update_bits(component,
 			REG_FIELD_VALUE(VNEG_CTRL_4, ILIM_SEL, 0xD));
 		snd_soc_component_update_bits(component,
@@ -1519,9 +1539,11 @@ static int wcd939x_codec_enable_hphr_pa(struct snd_soc_dapm_widget *w,
 					REG_FIELD_VALUE(HPH, HPHR_REF_ENABLE, 0x00));
 		snd_soc_component_update_bits(component,
 					REG_FIELD_VALUE(PDM_WD_CTL1, PDM_WD_EN, 0x00));
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 		if (wcd939x->mbhc->wcd_mbhc.mbhc_cfg->enable_usbc_analog &&
 			!(snd_soc_component_read(component, WCD939X_HPH) & 0XC0))
 			wcd_usbss_audio_config(NULL, WCD_USBSS_CONFIG_TYPE_POWER_MODE, 1);
+#endif
 		wcd_cls_h_fsm(component, &wcd939x->clsh_info,
 			     WCD_CLSH_EVENT_POST_PA,
 			     WCD_CLSH_STATE_HPHR,
@@ -1574,10 +1596,12 @@ static int wcd939x_codec_enable_hphl_pa(struct snd_soc_dapm_widget *w,
 			snd_soc_component_update_bits(component,
 				REG_FIELD_VALUE(HPH, PWR_LEVEL, 0x00));
 		}
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 		/* update USBSS power mode for AATC */
 		if (wcd939x->mbhc->wcd_mbhc.mbhc_cfg->enable_usbc_analog)
 			wcd_usbss_audio_config(NULL, WCD_USBSS_CONFIG_TYPE_POWER_MODE,
 				wcd939x_get_usbss_hph_power_mode(hph_mode));
+#endif
 		snd_soc_component_update_bits(component,
 			REG_FIELD_VALUE(VNEG_CTRL_4, ILIM_SEL, 0xD));
 		snd_soc_component_update_bits(component,
@@ -1670,9 +1694,11 @@ static int wcd939x_codec_enable_hphl_pa(struct snd_soc_dapm_widget *w,
 					REG_FIELD_VALUE(HPH, HPHL_REF_ENABLE, 0x00));
 		snd_soc_component_update_bits(component,
 					REG_FIELD_VALUE(PDM_WD_CTL0, PDM_WD_EN, 0x00));
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 		if (wcd939x->mbhc->wcd_mbhc.mbhc_cfg->enable_usbc_analog &&
 			!(snd_soc_component_read(component, WCD939X_HPH) & 0XC0))
 			wcd_usbss_audio_config(NULL, WCD_USBSS_CONFIG_TYPE_POWER_MODE, 1);
+#endif
 		wcd_cls_h_fsm(component, &wcd939x->clsh_info,
 			     WCD_CLSH_EVENT_POST_PA,
 			     WCD_CLSH_STATE_HPHL,
@@ -3718,6 +3744,10 @@ static const struct snd_kcontrol_new va_amic5_switch[] = {
 	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0)
 };
 
+static const struct snd_kcontrol_new dmic0_switch[] = {
+	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0)
+};
+
 static const struct snd_kcontrol_new dmic1_switch[] = {
 	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0)
 };
@@ -3743,10 +3773,6 @@ static const struct snd_kcontrol_new dmic6_switch[] = {
 };
 
 static const struct snd_kcontrol_new dmic7_switch[] = {
-	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0)
-};
-
-static const struct snd_kcontrol_new dmic8_switch[] = {
 	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0)
 };
 
@@ -3882,28 +3908,28 @@ static const struct snd_soc_dapm_widget wcd939x_dapm_widgets[] = {
 	SND_SOC_DAPM_ADC_E("ADC4", NULL, SND_SOC_NOPM, 3, 0,
 				wcd939x_codec_enable_adc,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC1", NULL, SND_SOC_NOPM, 0, 0,
+	SND_SOC_DAPM_ADC_E("DMIC0", NULL, SND_SOC_NOPM, 0, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC2", NULL, SND_SOC_NOPM, 1, 0,
+	SND_SOC_DAPM_ADC_E("DMIC1", NULL, SND_SOC_NOPM, 1, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC3", NULL, SND_SOC_NOPM, 2, 0,
+	SND_SOC_DAPM_ADC_E("DMIC2", NULL, SND_SOC_NOPM, 2, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC4", NULL, SND_SOC_NOPM, 3, 0,
+	SND_SOC_DAPM_ADC_E("DMIC3", NULL, SND_SOC_NOPM, 3, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC5", NULL, SND_SOC_NOPM, 4, 0,
+	SND_SOC_DAPM_ADC_E("DMIC4", NULL, SND_SOC_NOPM, 4, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC6", NULL, SND_SOC_NOPM, 5, 0,
+	SND_SOC_DAPM_ADC_E("DMIC5", NULL, SND_SOC_NOPM, 5, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC7", NULL, SND_SOC_NOPM, 6, 0,
+	SND_SOC_DAPM_ADC_E("DMIC6", NULL, SND_SOC_NOPM, 6, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_ADC_E("DMIC8", NULL, SND_SOC_NOPM, 7, 0,
+	SND_SOC_DAPM_ADC_E("DMIC7", NULL, SND_SOC_NOPM, 7, 0,
 				wcd939x_codec_enable_dmic,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 
@@ -3973,6 +3999,10 @@ static const struct snd_soc_dapm_widget wcd939x_dapm_widgets[] = {
 	SND_SOC_DAPM_MIXER_E("ADC4_MIXER", SND_SOC_NOPM, ADC4, 0, adc4_switch,
 				ARRAY_SIZE(adc4_switch), wcd939x_tx_swr_ctrl,
 				SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_MIXER_E("DMIC0_MIXER", SND_SOC_NOPM, DMIC0,
+				0, dmic0_switch, ARRAY_SIZE(dmic0_switch),
+				wcd939x_tx_swr_ctrl, SND_SOC_DAPM_PRE_PMU |
+				SND_SOC_DAPM_POST_PMD),
 	SND_SOC_DAPM_MIXER_E("DMIC1_MIXER", SND_SOC_NOPM, DMIC1,
 				0, dmic1_switch, ARRAY_SIZE(dmic1_switch),
 				wcd939x_tx_swr_ctrl, SND_SOC_DAPM_PRE_PMU |
@@ -3999,10 +4029,6 @@ static const struct snd_soc_dapm_widget wcd939x_dapm_widgets[] = {
 				SND_SOC_DAPM_POST_PMD),
 	SND_SOC_DAPM_MIXER_E("DMIC7_MIXER", SND_SOC_NOPM, DMIC7,
 				0, dmic7_switch, ARRAY_SIZE(dmic7_switch),
-				wcd939x_tx_swr_ctrl, SND_SOC_DAPM_PRE_PMU |
-				SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_MIXER_E("DMIC8_MIXER", SND_SOC_NOPM, DMIC8,
-				0, dmic8_switch, ARRAY_SIZE(dmic8_switch),
 				wcd939x_tx_swr_ctrl, SND_SOC_DAPM_PRE_PMU |
 				SND_SOC_DAPM_POST_PMD),
 	/* micbias widgets*/
@@ -4198,6 +4224,9 @@ static const struct snd_soc_dapm_route wcd939x_audio_map[] = {
 	{"ADC4 MUX", "CH4_AMIC4", "AMIC4_MIXER"},
 	{"ADC4 MUX", "CH4_AMIC5", "AMIC5_MIXER"},
 
+	{"WCD_TX_OUTPUT", NULL, "DMIC0_MIXER"},
+	{"DMIC0_MIXER", "Switch", "DMIC0"},
+
 	{"WCD_TX_OUTPUT", NULL, "DMIC1_MIXER"},
 	{"DMIC1_MIXER", "Switch", "DMIC1"},
 
@@ -4218,9 +4247,6 @@ static const struct snd_soc_dapm_route wcd939x_audio_map[] = {
 
 	{"WCD_TX_OUTPUT", NULL, "DMIC7_MIXER"},
 	{"DMIC7_MIXER", "Switch", "DMIC7"},
-
-	{"WCD_TX_OUTPUT", NULL, "DMIC8_MIXER"},
-	{"DMIC8_MIXER", "Switch", "DMIC8"},
 
 	{"IN1_HPHL", NULL, "WCD_RX_DUMMY"},
 	{"IN1_HPHL", NULL, "VDD_BUCK"},
@@ -4639,6 +4665,23 @@ static struct snd_soc_component_driver soc_codec_dev_wcd939x = {
 	.resume = wcd939x_soc_codec_resume,
 };
 
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
+static void wcd_usbss_set_ovp_threshold(u32 threshold)
+{
+	uint32_t ovp_regs[2][2] = {{WCD_USBSS_DP_EN, 0x00}, {WCD_USBSS_DN_EN, 0x00}};
+
+	/* Get current register values */
+	wcd_usbss_register_update(ovp_regs, WCD_USBSS_READ, ARRAY_SIZE(ovp_regs));
+	/* Overwrite OVP tresholds */
+	ovp_regs[0][1] &= (~P_THRESH_SEL_MASK);
+	ovp_regs[0][1] |= (threshold << P_THRESH_SEL_SHIFT);
+	ovp_regs[1][1] &= (~P_THRESH_SEL_MASK);
+	ovp_regs[1][1] |= (threshold << P_THRESH_SEL_SHIFT);
+	/* Write updated register values */
+	wcd_usbss_register_update(ovp_regs, WCD_USBSS_WRITE, ARRAY_SIZE(ovp_regs));
+}
+#endif
+
 static int wcd939x_reset(struct device *dev)
 {
 	struct wcd939x_priv *wcd939x = NULL;
@@ -4662,23 +4705,33 @@ static int wcd939x_reset(struct device *dev)
 	if (value > 0)
 		return 0;
 
+	/* Set OVP threshold to 4.0V before reset */
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
+	wcd_usbss_set_ovp_threshold(VTH_4P0);
+#endif
+
 	rc = msm_cdc_pinctrl_select_sleep_state(wcd939x->rst_np);
 	if (rc) {
 		dev_err_ratelimited(dev, "%s: wcd sleep state request fail!\n",
 				__func__);
-		return rc;
+		return -EPROBE_DEFER;
 	}
 	/* 20us sleep required after pulling the reset gpio to LOW */
-	usleep_range(20, 30);
+	usleep_range(80, 85);
 
 	rc = msm_cdc_pinctrl_select_active_state(wcd939x->rst_np);
 	if (rc) {
 		dev_err_ratelimited(dev, "%s: wcd active state request fail!\n",
 				__func__);
-		return rc;
+		return -EPROBE_DEFER;
 	}
 	/* 20us sleep required after pulling the reset gpio to HIGH */
-	usleep_range(20, 30);
+	usleep_range(80, 85);
+
+	/* Set OVP threshold to 4.2V after reset */
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
+	wcd_usbss_set_ovp_threshold(VTH_4P2);
+#endif
 
 	return rc;
 }
@@ -4768,41 +4821,69 @@ static void wcd939x_dt_parse_micbias_info(struct device *dev,
 	}
 }
 
+static void fill_r_common_gnd_buffer(struct wcd939x_usbcss_hs_params *usbcss_hs, u32 val)
+{
+	size_t i;
+
+	for (i = 0; i < R_COMMON_GND_BUFFER_SIZE; i++)
+		usbcss_hs->gnd.r_cm_gnd_buffer.data[i] = val;
+}
+
 static void init_usbcss_hs_params(struct wcd939x_usbcss_hs_params *usbcss_hs)
 {
-	usbcss_hs->r_gnd_sbu1_int_fet_mohms = 145;
-	usbcss_hs->r_gnd_sbu2_int_fet_mohms = 185;
-	usbcss_hs->r_gnd_ext_fet_customer_mohms = 0;
-	usbcss_hs->r_gnd_ext_fet_mohms = 0;  /* to be computed during MBHC zdet */
-	usbcss_hs->r_gnd_par_route1_mohms = 5;
-	usbcss_hs->r_gnd_par_route2_mohms = 330;
-	usbcss_hs->r_gnd_par_tot_mohms = 0;
-	usbcss_hs->r_gnd_sbu1_res_tot_mohms = 0;
-	usbcss_hs->r_gnd_sbu2_res_tot_mohms = 0;
-	usbcss_hs->r_conn_par_load_pos_mohms = 7550;
-	usbcss_hs->r_aud_int_fet_l_mohms = 303;
-	usbcss_hs->r_aud_int_fet_r_mohms = 275;
-	usbcss_hs->r_aud_ext_fet_l_mohms = 0; /* to be computed during MBHC zdet */
-	usbcss_hs->r_aud_ext_fet_r_mohms = 0; /* to be computed during MBHC zdet */
-	usbcss_hs->r_aud_res_tot_l_mohms = 0;
-	usbcss_hs->r_aud_res_tot_r_mohms = 0;
-	usbcss_hs->r_surge_mohms = 272;
-	usbcss_hs->r_load_eff_l_mohms = 0; /* to be computed during MBHC zdet */
-	usbcss_hs->r_load_eff_r_mohms = 0; /* to be computed during MBHC zdet */
-	usbcss_hs->r3 = 1;
-	usbcss_hs->r4 = 330;
-	usbcss_hs->r5 = 5;
-	usbcss_hs->r6 = 1;
-	usbcss_hs->r7 = 5;
-	usbcss_hs->k_aud_times_100 = 13;
-	usbcss_hs->k_gnd_times_100 = 13;
-	usbcss_hs->aud_tap_offset = 0;
-	usbcss_hs->gnd_tap_offset = 0;
-	usbcss_hs->scale_l = MAX_XTALK_SCALE;
-	usbcss_hs->alpha_l = MIN_XTALK_ALPHA;
-	usbcss_hs->scale_r = MAX_XTALK_SCALE;
-	usbcss_hs->alpha_r = MIN_XTALK_ALPHA;
-	usbcss_hs->xtalk_config = XTALK_NONE;
+	fill_r_common_gnd_buffer(usbcss_hs, 0);
+	usbcss_hs->gnd.sbu1.r_gnd_int_fet_mohms = 183;
+	usbcss_hs->gnd.sbu2.r_gnd_int_fet_mohms = 127;
+	usbcss_hs->gnd.r_cm_gnd_buffer.write_index = 0;
+	usbcss_hs->gnd.rdson_mohms = 500;
+	usbcss_hs->gnd.rdson_3p6v_mohms = 545;
+	usbcss_hs->gnd.r_gnd_ext_fet_mohms = 0;  /* to be computed during MBHC zdet */
+	usbcss_hs->gnd.r_common_gnd_mohms = 0;
+	usbcss_hs->gnd.r_common_gnd_offset = 0;
+	usbcss_hs->gnd.r_common_gnd_margin = 500;
+	usbcss_hs->gnd.gnd_ext_fet_delta_mohms = 45;
+	usbcss_hs->gnd.gnd_ext_fet_min_mohms = 0;
+	usbcss_hs->gnd.sbu1.r_gnd_par_route1_mohms = 5;
+	usbcss_hs->gnd.sbu2.r_gnd_par_route1_mohms = 5;
+	usbcss_hs->gnd.sbu1.r_gnd_par_route2_mohms = 330;
+	usbcss_hs->gnd.sbu2.r_gnd_par_route2_mohms = 330;
+	usbcss_hs->gnd.sbu1.r_gnd_par_tot_mohms = 0;
+	usbcss_hs->gnd.sbu2.r_gnd_par_tot_mohms = 0;
+	usbcss_hs->gnd.sbu1.r_gnd_res_tot_mohms = 0;
+	usbcss_hs->gnd.sbu2.r_gnd_res_tot_mohms = 0;
+	usbcss_hs->aud.l.r_aud_int_fet_mohms = 290;
+	usbcss_hs->aud.r.r_aud_int_fet_mohms = 290;
+	usbcss_hs->aud.l.r_aud_ext_fet_mohms = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->aud.r.r_aud_ext_fet_mohms = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->aud.l.r_aud_res_tot_mohms = 0;
+	usbcss_hs->aud.r.r_aud_res_tot_mohms = 0;
+	usbcss_hs->aud.r_surge_mohms = 229;
+	usbcss_hs->aud.l.r_load_eff_mohms = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->aud.r.r_load_eff_mohms = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->aud.l.zval = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->aud.r.zval = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->zdiffval = 0; /* to be computed during MBHC zdet */
+	usbcss_hs->diff_slope_factor_times_1000 = 9898;
+	usbcss_hs->se_slope_factor_times_1000 = 9906;
+	usbcss_hs->aud.l.r1 = 310;
+	usbcss_hs->aud.r.r1 = 310;
+	usbcss_hs->aud.l.r3 = 1;
+	usbcss_hs->aud.r.r3 = 1;
+	usbcss_hs->gnd.sbu1.r4 = 530;
+	usbcss_hs->gnd.sbu2.r4 = 530;
+	usbcss_hs->gnd.sbu1.r5 = 5;
+	usbcss_hs->gnd.sbu2.r5 = 5;
+	usbcss_hs->gnd.sbu1.r6 = 1;
+	usbcss_hs->gnd.sbu2.r6 = 1;
+	usbcss_hs->gnd.sbu1.r7 = 5;
+	usbcss_hs->gnd.sbu2.r7 = 5;
+	usbcss_hs->aud.k_aud_times_100 = 13;
+	usbcss_hs->aud.aud_tap_offset = 0;
+	usbcss_hs->xtalk.scale_l = MAX_XTALK_SCALE;
+	usbcss_hs->xtalk.alpha_l = MIN_XTALK_ALPHA;
+	usbcss_hs->xtalk.scale_r = MAX_XTALK_SCALE;
+	usbcss_hs->xtalk.alpha_r = MIN_XTALK_ALPHA;
+	usbcss_hs->xtalk.xtalk_config = XTALK_NONE;
 }
 
 static void parse_xtalk_param(struct device *dev, u32 default_val, u32 *prop_val_p,
@@ -4827,7 +4908,7 @@ static void parse_xtalk_param(struct device *dev, u32 default_val, u32 *prop_val
 static void wcd939x_dt_parse_usbcss_hs_info(struct device *dev,
 					    struct wcd939x_usbcss_hs_params *usbcss_hs)
 {
-	u32 prop_val = 0;
+	u32 prop_val = 0, r_common_gnd_mohms = 0;
 	s32 prop_val_signed = 0;
 	int rc = 0;
 
@@ -4839,7 +4920,7 @@ static void wcd939x_dt_parse_usbcss_hs_info(struct device *dev,
 		rc = wcd939x_read_of_property_u32(dev, "qcom,usbcss-hs-xtalk-config", &prop_val);
 		if ((!rc) && (prop_val == XTALK_NONE || prop_val == XTALK_DIGITAL
 			      || prop_val == XTALK_ANALOG)) {
-			usbcss_hs->xtalk_config = (enum xtalk_mode) prop_val;
+			usbcss_hs->xtalk.xtalk_config = (enum xtalk_mode) prop_val;
 		} else
 			dev_dbg(dev, "%s: %s OOB. Default value of %s used.\n",
 				__func__, "qcom,usbcss-hs-xtalk-config", "XTALK_NONE");
@@ -4850,86 +4931,147 @@ static void wcd939x_dt_parse_usbcss_hs_info(struct device *dev,
 	/* k values for linearizer */
 	if (of_find_property(dev->of_node, "qcom,usbcss-hs-lin-k-aud", NULL)) {
 		rc = wcd939x_read_of_property_s32(dev, "qcom,usbcss-hs-lin-k-aud",
-						  &prop_val);
-		if ((!rc) && (prop_val <= MAX_K_TIMES_100) && (prop_val >= MIN_K_TIMES_100))
-			usbcss_hs->k_aud_times_100 = prop_val;
-		dev_dbg(dev, "%s: %s OOB. Default value of %d will be used.\n",
-			__func__, "qcom,usbcss-hs-lin-k-aud",
-			usbcss_hs->k_aud_times_100);
-	} else {
-		dev_dbg(dev, "%s: %s property not found. Default value of %d will be used.\n",
-			__func__, "qcom,usbcss-hs-lin-k-aud",
-			usbcss_hs->k_aud_times_100);
-	}
-	if (of_find_property(dev->of_node, "qcom,usbcss-hs-lin-k-gnd", NULL)) {
-		rc = wcd939x_read_of_property_s32(dev, "qcom,usbcss-hs-lin-k-gnd",
 						  &prop_val_signed);
 		if ((!rc) && (prop_val_signed <= MAX_K_TIMES_100) &&
 		    (prop_val_signed >= MIN_K_TIMES_100))
-			usbcss_hs->k_gnd_times_100 = prop_val_signed;
-		dev_dbg(dev, "%s: %s OOB. Default value of %d will be used.\n",
-			__func__, "qcom,usbcss-hs-lin-k-gnd",
-			usbcss_hs->k_gnd_times_100);
+			usbcss_hs->aud.k_aud_times_100 = prop_val_signed;
+		else
+			dev_dbg(dev, "%s: %s OOB. Default value of %d will be used.\n",
+				__func__, "qcom,usbcss-hs-lin-k-aud",
+				usbcss_hs->aud.k_aud_times_100);
 	} else {
 		dev_dbg(dev, "%s: %s property not found. Default value of %d will be used.\n",
-			__func__, "qcom,usbcss-hs-lin-k-gnd",
-			usbcss_hs->k_gnd_times_100);
+			__func__, "qcom,usbcss-hs-lin-k-aud",
+			usbcss_hs->aud.k_aud_times_100);
 	}
 
-	/* r_gnd_ext_fet_customer_mohms */
-	parse_xtalk_param(dev, usbcss_hs->r_gnd_ext_fet_customer_mohms, &prop_val,
-			  "qcom,usbcss-hs-rdson");
-	usbcss_hs->r_gnd_ext_fet_customer_mohms = prop_val;
-	/* r_conn_par_load_pos_mohm */
-	parse_xtalk_param(dev, usbcss_hs->r_conn_par_load_pos_mohms, &prop_val,
-			  "qcom,usbcss-hs-r2");
-	usbcss_hs->r_conn_par_load_pos_mohms = prop_val;
+	/* Differential slope factor */
+	if (of_find_property(dev->of_node, "qcom,usbcss-hs-diff-slope", NULL)) {
+		rc = wcd939x_read_of_property_u32(dev, "qcom,usbcss-hs-diff-slope", &prop_val);
+		if ((!rc) && (prop_val <= MAX_DIFF_SLOPE_FACTOR) &&
+		    (prop_val >= MIN_DIFF_SLOPE_FACTOR))
+			usbcss_hs->diff_slope_factor_times_1000 = prop_val;
+		else
+			dev_dbg(dev, "%s: %s OOB. Default value of %d will be used.\n",
+				__func__, "qcom,usbcss-hs-diff-slope",
+				usbcss_hs->diff_slope_factor_times_1000);
+	} else {
+		dev_dbg(dev, "%s: %s property not found. Default value of %d will be used.\n",
+			__func__, "qcom,usbcss-hs-diff-slope",
+			usbcss_hs->diff_slope_factor_times_1000);
+	}
+
+	/* R_ds(on) */
+	parse_xtalk_param(dev, usbcss_hs->gnd.rdson_mohms, &prop_val, "qcom,usbcss-hs-rdson-6v");
+	usbcss_hs->gnd.rdson_mohms = prop_val;
+	/* R_ds(on) Vgs=3.6V */
+	parse_xtalk_param(dev, usbcss_hs->gnd.rdson_3p6v_mohms, &prop_val,
+			  "qcom,usbcss-hs-rdson-3p6v");
+	usbcss_hs->gnd.rdson_3p6v_mohms = prop_val;
+	usbcss_hs->gnd.gnd_ext_fet_delta_mohms = (s32) (usbcss_hs->gnd.rdson_3p6v_mohms -
+							usbcss_hs->gnd.rdson_mohms);
+	/* r_common_gnd_margin */
+	parse_xtalk_param(dev, usbcss_hs->gnd.r_common_gnd_margin, &prop_val,
+			  "qcom,usbcss-hs-rcom-margin");
+	usbcss_hs->gnd.r_common_gnd_margin = prop_val;
+	/* r1 */
+	parse_xtalk_param(dev, usbcss_hs->aud.l.r1, &prop_val,
+			  "qcom,usbcss-hs-r1-l");
+	usbcss_hs->aud.l.r1 = prop_val;
+	parse_xtalk_param(dev, usbcss_hs->aud.r.r1, &prop_val,
+			  "qcom,usbcss-hs-r1-r");
+	usbcss_hs->aud.r.r1 = prop_val;
 	/* r3 */
-	parse_xtalk_param(dev, usbcss_hs->r3, &prop_val,
-			  "qcom,usbcss-hs-r3");
-	usbcss_hs->r3 = prop_val;
+	parse_xtalk_param(dev, usbcss_hs->aud.l.r3, &prop_val,
+			  "qcom,usbcss-hs-r3-l");
+	usbcss_hs->aud.l.r3 = prop_val;
+	parse_xtalk_param(dev, usbcss_hs->aud.r.r3, &prop_val,
+			  "qcom,usbcss-hs-r3-r");
+	usbcss_hs->aud.r.r3 = prop_val;
 	/* r4 */
-	parse_xtalk_param(dev, usbcss_hs->r4, &prop_val,
-			  "qcom,usbcss-hs-r4");
-	usbcss_hs->r4 = prop_val;
+	parse_xtalk_param(dev, usbcss_hs->gnd.sbu1.r4, &prop_val,
+			  "qcom,usbcss-hs-r4-sbu1");
+	usbcss_hs->gnd.sbu1.r4 = prop_val;
+	parse_xtalk_param(dev, usbcss_hs->gnd.sbu2.r4, &prop_val,
+			  "qcom,usbcss-hs-r4-sbu2");
+	usbcss_hs->gnd.sbu2.r4 = prop_val;
 	/* r_gnd_par_route1_mohms and r_gnd_par_route2_mohms */
-	if (usbcss_hs->xtalk_config == XTALK_ANALOG) {
-		parse_xtalk_param(dev, usbcss_hs->r5, &prop_val,
-				  "qcom,usbcss-hs-r5");
-		usbcss_hs->r5 = prop_val;
-		usbcss_hs->r_gnd_par_route1_mohms = usbcss_hs->r5 + usbcss_hs->r4;
-		usbcss_hs->r_gnd_par_route2_mohms = 125;
-	} else if (usbcss_hs->xtalk_config == XTALK_DIGITAL) {
-		parse_xtalk_param(dev, usbcss_hs->r6, &prop_val,
-				  "qcom,usbcss-hs-r6");
-		usbcss_hs->r6 = prop_val;
-		usbcss_hs->r_gnd_par_route2_mohms = usbcss_hs->r6 + usbcss_hs->r4;
-		parse_xtalk_param(dev, usbcss_hs->r_gnd_par_route1_mohms, &prop_val,
-				  "qcom,usbcss-hs-r7");
-		usbcss_hs->r7 = prop_val;
-		usbcss_hs->r_gnd_par_route1_mohms = prop_val;
+	if (usbcss_hs->xtalk.xtalk_config == XTALK_ANALOG) {
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu1.r5, &prop_val,
+				  "qcom,usbcss-hs-r5-sbu1");
+		usbcss_hs->gnd.sbu1.r5 = prop_val;
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu2.r5, &prop_val,
+				  "qcom,usbcss-hs-r5-sbu2");
+		usbcss_hs->gnd.sbu2.r5 = prop_val;
+		usbcss_hs->gnd.sbu1.r_gnd_par_route1_mohms = usbcss_hs->gnd.sbu1.r5 +
+							     usbcss_hs->gnd.sbu1.r4;
+		usbcss_hs->gnd.sbu2.r_gnd_par_route1_mohms = usbcss_hs->gnd.sbu2.r5 +
+							     usbcss_hs->gnd.sbu2.r4;
+		usbcss_hs->gnd.sbu1.r_gnd_par_route2_mohms = 125;
+		usbcss_hs->gnd.sbu2.r_gnd_par_route2_mohms = 125;
+	} else if (usbcss_hs->xtalk.xtalk_config == XTALK_DIGITAL) {
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu1.r6, &prop_val,
+				  "qcom,usbcss-hs-r6-sbu1");
+		usbcss_hs->gnd.sbu1.r6 = prop_val;
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu2.r6, &prop_val,
+				  "qcom,usbcss-hs-r6-sbu2");
+		usbcss_hs->gnd.sbu2.r6 = prop_val;
+		usbcss_hs->gnd.sbu1.r_gnd_par_route2_mohms = usbcss_hs->gnd.sbu1.r6 +
+							     usbcss_hs->gnd.sbu1.r4;
+		usbcss_hs->gnd.sbu2.r_gnd_par_route2_mohms = usbcss_hs->gnd.sbu2.r6 +
+							     usbcss_hs->gnd.sbu2.r4;
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu1.r7, &prop_val,
+				  "qcom,usbcss-hs-r7-sbu1");
+		usbcss_hs->gnd.sbu1.r7 = prop_val;
+		usbcss_hs->gnd.sbu1.r_gnd_par_route1_mohms = prop_val;
+		parse_xtalk_param(dev, usbcss_hs->gnd.sbu2.r7, &prop_val,
+				  "qcom,usbcss-hs-r7-sbu2");
+		usbcss_hs->gnd.sbu2.r7 = prop_val;
+		usbcss_hs->gnd.sbu2.r_gnd_par_route1_mohms = prop_val;
 	}
 
 	/* Compute total resistances */
-	usbcss_hs->r_gnd_par_tot_mohms = usbcss_hs->r_gnd_par_route1_mohms +
-					 usbcss_hs->r_gnd_par_route2_mohms;
-	usbcss_hs->r_gnd_sbu1_res_tot_mohms = get_r_gnd_res_tot_mohms(
-								usbcss_hs->r_gnd_sbu1_int_fet_mohms,
-								usbcss_hs->r_gnd_ext_fet_mohms,
-								usbcss_hs->r_gnd_par_tot_mohms);
-	usbcss_hs->r_gnd_sbu2_res_tot_mohms = get_r_gnd_res_tot_mohms(
-								usbcss_hs->r_gnd_sbu2_int_fet_mohms,
-								usbcss_hs->r_gnd_ext_fet_mohms,
-								usbcss_hs->r_gnd_par_tot_mohms);
-	usbcss_hs->r_aud_res_tot_l_mohms = get_r_aud_res_tot_mohms(
-								usbcss_hs->r_aud_int_fet_l_mohms,
-								usbcss_hs->r_aud_ext_fet_l_mohms);
-	usbcss_hs->r_aud_res_tot_r_mohms = get_r_aud_res_tot_mohms(
-								usbcss_hs->r_aud_int_fet_r_mohms,
-								usbcss_hs->r_aud_ext_fet_r_mohms);
+	usbcss_hs->gnd.sbu1.r_gnd_par_tot_mohms = usbcss_hs->gnd.sbu1.r_gnd_par_route1_mohms +
+						  usbcss_hs->gnd.sbu1.r_gnd_par_route2_mohms;
+	usbcss_hs->gnd.sbu2.r_gnd_par_tot_mohms = usbcss_hs->gnd.sbu2.r_gnd_par_route1_mohms +
+						  usbcss_hs->gnd.sbu2.r_gnd_par_route2_mohms;
+	usbcss_hs->gnd.sbu1.r_gnd_res_tot_mohms = get_r_gnd_res_tot_mohms(
+							usbcss_hs->gnd.sbu1.r_gnd_int_fet_mohms,
+							usbcss_hs->gnd.r_gnd_ext_fet_mohms,
+							usbcss_hs->gnd.sbu1.r_gnd_par_tot_mohms);
+	usbcss_hs->gnd.sbu2.r_gnd_res_tot_mohms = get_r_gnd_res_tot_mohms(
+							usbcss_hs->gnd.sbu2.r_gnd_int_fet_mohms,
+							usbcss_hs->gnd.r_gnd_ext_fet_mohms,
+							usbcss_hs->gnd.sbu2.r_gnd_par_tot_mohms);
+	usbcss_hs->aud.l.r_aud_res_tot_mohms = get_r_aud_res_tot_mohms(
+							usbcss_hs->aud.l.r_aud_int_fet_mohms,
+							usbcss_hs->aud.l.r_aud_ext_fet_mohms,
+							usbcss_hs->aud.l.r3);
+	usbcss_hs->aud.r.r_aud_res_tot_mohms = get_r_aud_res_tot_mohms(
+							usbcss_hs->aud.r.r_aud_int_fet_mohms,
+							usbcss_hs->aud.r.r_aud_ext_fet_mohms,
+							usbcss_hs->aud.r.r3);
 
+	/* Fill r_common_gnd buffer */
+	r_common_gnd_mohms = usbcss_hs->gnd.rdson_mohms +
+			     (usbcss_hs->gnd.sbu1.r_gnd_par_route2_mohms +
+			      usbcss_hs->gnd.sbu2.r_gnd_par_route2_mohms) / 2;
+	fill_r_common_gnd_buffer(usbcss_hs, r_common_gnd_mohms);
+
+	/* Determine min val used for linearizer audio tap calculations */
+	if (usbcss_hs->gnd.rdson_3p6v_mohms < GND_EXT_FET_MARGIN_MOHMS)
+		usbcss_hs->gnd.gnd_ext_fet_min_mohms = 0;
+	else if ((usbcss_hs->gnd.rdson_3p6v_mohms - GND_EXT_FET_MARGIN_MOHMS)
+		 < GND_EXT_FET_MARGIN_MOHMS)
+		usbcss_hs->gnd.gnd_ext_fet_min_mohms = usbcss_hs->gnd.rdson_3p6v_mohms -
+						       GND_EXT_FET_MARGIN_MOHMS;
+	else
+		usbcss_hs->gnd.gnd_ext_fet_min_mohms = GND_EXT_FET_MARGIN_MOHMS;
+
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
 	/* Set linearizer calibration codes to be sourced from SW */
 	wcd_usbss_linearizer_rdac_cal_code_select(LINEARIZER_SOURCE_SW);
+#endif
 }
 
 static int wcd939x_reset_low(struct device *dev)
@@ -4949,6 +5091,11 @@ static int wcd939x_reset_low(struct device *dev)
 				__func__);
 		return -EINVAL;
 	}
+
+	/* Set OVP threshold to 4.0V before reset */
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
+	wcd_usbss_set_ovp_threshold(VTH_4P0);
+#endif
 
 	rc = msm_cdc_pinctrl_select_sleep_state(wcd939x->rst_np);
 	if (rc) {
@@ -5074,11 +5221,13 @@ static void wcd939x_update_regmap_cache(struct wcd939x_priv *wcd939x)
 
 static int wcd939x_bind(struct device *dev)
 {
-	int ret = 0, i = 0, val = 0;
+	int ret = 0, i = 0;
 	struct wcd939x_pdata *pdata = dev_get_platdata(dev);
 	struct wcd939x_priv *wcd939x = dev_get_drvdata(dev);
 	u8 id1 = 0, status1 = 0;
-
+#if IS_ENABLED(CONFIG_QCOM_WCD_USBSS_I2C)
+	int val = 0;
+#endif
 	/*
 	 * Add 5msec delay to provide sufficient time for
 	 * soundwire auto enumeration of slave devices as
@@ -5356,7 +5505,11 @@ static int wcd939x_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_lock_init;
 
-	wcd939x_reset(dev);
+	ret = wcd939x_reset(dev);
+	if (ret == -EPROBE_DEFER) {
+		dev_err(dev, "%s: wcd reset failed!\n", __func__);
+		goto err_lock_init;
+	}
 
 	wcd939x->wakeup = wcd939x_wakeup;
 
