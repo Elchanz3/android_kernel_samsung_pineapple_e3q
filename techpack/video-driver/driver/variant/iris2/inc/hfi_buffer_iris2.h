@@ -19,6 +19,9 @@ typedef s32     HFI_S32;
 typedef u64     HFI_U64;
 typedef HFI_U32 HFI_BOOL;
 
+/* the kernel's minmax.h (6.1.192) defines MIN/MAX unguarded: let it go first */
+#include <linux/minmax.h>
+
 #ifndef MIN
 #define  MIN(x, y) (((x) < (y)) ? (x) : (y))
 #endif
