@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2015,2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -173,6 +173,7 @@ struct wlan_fils_con_info {
  * @CM_MLO_LINK_SWITCH_CONNECT: Connect req triggered for mlo link switch
  * @CM_MLO_LINK_SWITCH_DISCONNECT: Disconnect req triggered for mlo link switch
  * @CM_ROAMING_USER: Roaming request initiated by user
+ * @CM_ROAMING_STA_SAP_MCC: Roaming request initiated by STA+SAP MCC
  * @CM_SOURCE_MAX: max value of connection manager source
  * @CM_SOURCE_INVALID: Invalid connection manager req source
  */
@@ -196,6 +197,7 @@ enum wlan_cm_source {
 	CM_MLO_LINK_SWITCH_CONNECT,
 	CM_MLO_LINK_SWITCH_DISCONNECT,
 	CM_ROAMING_USER,
+	CM_ROAMING_STA_SAP_MCC,
 	CM_SOURCE_MAX,
 	CM_SOURCE_INVALID = CM_SOURCE_MAX,
 };
@@ -233,6 +235,10 @@ enum wlan_cm_source {
  * @vht_caps_mask: mask of valid vht caps
  * @fils_info: Fills related connect info
  * @is_non_assoc_link: non assoc link
+ * @link_id: IEEE link ID of the candidate
+ *              -mandatory and only used for link VDEV connect
+ * @mld_addr: MLD address of candidate
+ *              -mandatory and only used for link VDEV connect
  * @ml_parnter_info: ml partner link info
  */
 struct wlan_cm_connect_req {
@@ -262,6 +268,8 @@ struct wlan_cm_connect_req {
 #endif
 	bool is_non_assoc_link;
 #ifdef WLAN_FEATURE_11BE_MLO
+	uint8_t link_id;
+	struct qdf_mac_addr mld_addr;
 	struct mlo_partner_info ml_parnter_info;
 #endif
 };
@@ -288,6 +296,7 @@ struct wlan_cm_connect_req {
  * @is_non_assoc_link: non assoc link
  * @ml_parnter_info: ml partner link info
  * @owe_trans_ssid: owe trans ssid to be used when scan entry ssid is wildcard
+ * @rsno_gen_used: RSN generation of the candidate
  */
 struct wlan_cm_vdev_connect_req {
 	uint8_t vdev_id;
@@ -310,6 +319,7 @@ struct wlan_cm_vdev_connect_req {
 	struct mlo_partner_info ml_parnter_info;
 #endif
 	struct wlan_ssid owe_trans_ssid;
+	uint8_t rsno_gen_used;
 };
 
 /**
@@ -320,6 +330,7 @@ struct wlan_cm_vdev_connect_req {
  * @bssid: bssid given
  * @prev_bssid: prev AP bssid, given in case supplican want to roam to new BSSID
  * @chan_freq: channel of the AP
+ * @crypto: crypto related info
  */
 struct wlan_cm_roam_req {
 	uint8_t forced_roaming:1;
@@ -328,6 +339,7 @@ struct wlan_cm_roam_req {
 	struct qdf_mac_addr bssid;
 	struct qdf_mac_addr prev_bssid;
 	uint32_t chan_freq;
+	struct wlan_cm_connect_crypto_info crypto;
 };
 
 /**
@@ -477,6 +489,7 @@ struct wlan_connect_rsp_ies {
  * struct wlan_roam_sync_info - roam sync information populated
  * from roam sync indication struct
  * @auth_status: roam auth status (authenticated or connected)
+ * @num_setup_links: Number of links from FW roam sync event
  * @kck_len: kck length
  * @kck: kck info in roam sync
  * @kek_len: kek length
@@ -495,6 +508,9 @@ struct wlan_connect_rsp_ies {
  */
 struct wlan_roam_sync_info {
 	uint8_t auth_status;
+#ifdef WLAN_FEATURE_11BE
+	uint8_t num_setup_links;
+#endif
 	uint8_t kck_len;
 	uint8_t kck[MAX_KCK_LEN];
 	uint8_t kek_len;
@@ -700,12 +716,14 @@ enum wlan_cm_active_request_type {
  * @SLO: Non-ML or Single link ML
  * @MLSR: Multi link Single Radio, indicates that both links
  *        have to be on one mac
+ * @EMLSR: Enhanced multi link single radio
  * @MLMR: Multi link Multi Radio, indicates that both links
  *        can be on different macs
  */
 enum MLO_TYPE {
 	SLO,
 	MLSR,
+	EMLSR,
 	MLMR,
 	MLO_TYPE_MAX
 };

@@ -296,21 +296,13 @@ static void wma_convert_eht_cap(tDot11fIEeht_cap *eht_cap, uint32_t *mac_cap,
 void wma_eht_update_tgt_services(struct wmi_unified *wmi_handle,
 				 struct wma_tgt_services *cfg)
 {
-	bool eht_ini_capab = 0, eht_fw_capab;
-	struct wlan_objmgr_psoc *psoc;
-
-	psoc = wmi_handle->soc->wmi_psoc;
-	wlan_psoc_mlme_get_11be_capab(psoc, &eht_ini_capab);
-	eht_fw_capab = wmi_service_enabled(wmi_handle, wmi_service_11be);
-
-	if (eht_fw_capab && eht_ini_capab) {
+	if (wmi_service_enabled(wmi_handle, wmi_service_11be)) {
 		cfg->en_11be = true;
 		wma_set_fw_wlan_feat_caps(DOT11BE);
 		wma_debug("11be is enabled");
 	} else {
 		cfg->en_11be = false;
-		wma_debug("11be is not enabled INI: %d, FW_CAP: %d",
-			  eht_ini_capab, eht_fw_capab);
+		wma_debug("11be is not enabled");
 	}
 }
 
@@ -1117,6 +1109,11 @@ void wma_vdev_set_listen_interval(uint8_t vdev_id, uint8_t val)
 {
 	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
 	QDF_STATUS status;
+
+	if (!wma) {
+		wma_err("wma handle is null");
+		return;
+	}
 
 	status = wma_vdev_set_param(wma->wmi_handle, vdev_id,
 				    wmi_vdev_param_listen_interval, val);

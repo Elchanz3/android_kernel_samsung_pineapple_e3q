@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2019, 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -75,6 +75,11 @@ typedef __qdf_ipa_wdi_init_in_params_t qdf_ipa_wdi_init_in_params_t;
 #ifdef IPA_WDS_EASYMESH_FEATURE
 #define QDF_IPA_WDI_INIT_IN_PARAMS_WDS_UPDATE(in_params)	\
 	__QDF_IPA_WDI_INIT_IN_PARAMS_WDS_UPDATE(in_params)
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) && \
+	(LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)))
+#define QDF_IPA_WDI_INIT_IN_PARAMS_RX_TLV_FORMAT(in_params)	\
+	__QDF_IPA_WDI_INIT_IN_PARAMS_RX_TLV_FORMAT(in_params)
+#endif
 #endif
 
 /**
@@ -127,6 +132,8 @@ typedef __qdf_ipa_wdi_pipe_setup_info_smmu_t qdf_ipa_wdi_pipe_setup_info_smmu_t;
 	__QDF_IPA_WDI_SETUP_INFO_SMMU_RX_BANK_ID(txrx, bid)
 #define QDF_IPA_WDI_SETUP_INFO_SMMU_RX_PMAC_ID(txrx, pmac_id)	\
 	__QDF_IPA_WDI_SETUP_INFO_SMMU_RX_PMAC_ID(txrx, pmac_id)
+#define QDF_IPA_WDI_SETUP_INFO_SMMU_CHIP_ID(txrx, chip_id)	\
+	__QDF_IPA_WDI_SETUP_INFO_SMMU_CHIP_ID(txrx, chip_id)
 
 typedef __qdf_ipa_ep_cfg_t qdf_ipa_ep_cfg_t;
 
@@ -275,6 +282,8 @@ typedef __qdf_ipa_wdi_pipe_setup_info_t qdf_ipa_wdi_pipe_setup_info_t;
 	__QDF_IPA_WDI_SETUP_INFO_RX_BANK_ID(txrx, bid)
 #define QDF_IPA_WDI_SETUP_INFO_RX_PMAC_ID(txrx, pmac_id)	\
 	__QDF_IPA_WDI_SETUP_INFO_RX_PMAC_ID(txrx, pmac_id)
+#define QDF_IPA_WDI_SETUP_INFO_CHIP_ID(txrx, chip_id)	\
+	__QDF_IPA_WDI_SETUP_INFO_CHIP_ID(txrx, chip_id)
 
 /**
  * qdf_ipa_wdi_conn_in_params_t - information provided by
@@ -354,6 +363,16 @@ typedef __qdf_ipa_wdi_perf_profile_t qdf_ipa_wdi_perf_profile_t;
 	__QDF_IPA_WDI_PERF_PROFILE_CLIENT(profile)
 #define QDF_IPA_WDI_PERF_PROFILE_MAX_SUPPORTED_BW_MBPS(profile)	\
 	__QDF_IPA_WDI_PERF_PROFILE_MAX_SUPPORTED_BW_MBPS(profile)
+
+/**
+ * qdf_ipa_wdi_outstanding_buffs - number of outstanding buffer at IPA.
+ */
+typedef __qdf_ipa_wdi_outstanding_buffs qdf_ipa_wdi_outstanding_buffs;
+
+#define QDF_IPA_WDI_TX_OUTSTANDING_BUFFS(buff)	\
+	__QDF_IPA_WDI_TX_OUTSTANDING_BUFFS(buff)
+#define QDF_IPA_WDI_RX_OUTSTANDING_BUFFS(buff)  \
+	__QDF_IPA_WDI_RX_OUTSTANDING_BUFFS(buff)
 
 /**
  * qdf_ipa_wdi_reg_intf - Client should call this function to
@@ -516,6 +535,102 @@ static inline int qdf_ipa_uc_bw_monitor(qdf_ipa_wdi_bw_info_t *bw_info)
 #endif
 
 #ifdef IPA_OPT_WIFI_DP
+#ifdef IPA_OPT_WIFI_DP_CTRL
+/**
+ * qdf_ipa_wdi_register_flt_cb_v2() - register cb functions with IPA
+ * for optional wifi datapath
+ * @hdl: ipa hdl
+ * @flt_rsrv_cb: cb for filter reservation
+ * @flt_rsrv_rel_cb: cb for filter release
+ * @flt_add_cb: cb for filter addition
+ * @flt_rem_cb: cb for filter removal
+ * @ctrl_flt_add_cb: opt_dp_ctrl filter add cb function
+ * @ctrl_flt_rem_cb: opt_dp_ctrl filter remove cb function
+ * @clk_cb: clock status cb function
+ *
+ * Return: 0 on success, negative on failure
+ */
+static inline int qdf_ipa_wdi_register_flt_cb_v2(
+			ipa_wdi_hdl_t hdl,
+			ipa_wdi_opt_dpath_flt_rsrv_cb flt_rsrv_cb,
+			ipa_wdi_opt_dpath_flt_rsrv_rel_cb flt_rsrv_rel_cb,
+			ipa_wdi_opt_dpath_flt_add_cb flt_add_cb,
+			ipa_wdi_opt_dpath_flt_rem_cb flt_rem_cb,
+			ipa_wdi_opt_dpath_ctrl_flt_add_cb ctrl_flt_add_cb,
+			ipa_wdi_opt_dpath_ctrl_flt_rem_cb ctrl_flt_rem_cb,
+			ipa_wdi_opt_dpath_clk_status_cb clk_cb)
+{
+	return __qdf_ipa_wdi_register_flt_cb_v2((__qdf_ipa_wdi_hdl_t)hdl,
+					     flt_rsrv_cb, flt_rsrv_rel_cb,
+					     flt_add_cb, flt_rem_cb,
+					     ctrl_flt_add_cb, ctrl_flt_rem_cb,
+					     clk_cb);
+}
+
+#ifdef IPA_WDI_OPT_DPATH_CTRL_VER_V2
+/**
+ * qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst() - notify IPA with filter
+ * delete response for optional wifi ctrl datapath
+ * @hdl: ipa hdl
+ * @fltr_hdl : filter handle
+ * @code: filter delete status code
+ *
+ * Return: 0 on success, negative on failure
+ */
+static inline int qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst(
+				ipa_wdi_hdl_t hdl, u32 fltr_hdl,
+				uint16_t code)
+{
+	return __qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst(hdl,
+								    fltr_hdl,
+								    code);
+}
+#else
+/**
+ * qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst() - notify IPA with filter
+ * delete response for optional wifi ctrl datapath
+ * @hdl: ipa hdl
+ * @fltr_hdl : filter handle
+ * @is_success: filter delete status
+ *
+ * Return: 0 on success, negative on failure
+ */
+static inline int qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst(
+				ipa_wdi_hdl_t hdl, u32 fltr_hdl,
+				bool is_success)
+{
+	return __qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst(hdl,
+								    fltr_hdl,
+								    is_success);
+}
+#endif
+
+/**
+ * qdf_ipa_wdi_opt_dpath_enable_clk_req - request IPA to enable clock
+ * @hdl: ipa hdl
+ *
+ * Return: 0 on success, negative on failure
+ */
+static inline int qdf_ipa_wdi_opt_dpath_enable_clk_req(
+						       ipa_wdi_hdl_t hdl)
+{
+	return __qdf_ipa_wdi_opt_dpath_enable_clk_req(hdl);
+}
+
+/**
+ * qdf_ipa_wdi_opt_dpath_disable_clk_req - request IPA to enable clock
+ * @hdl: ipa hdl
+ *
+ * Return: 0 on success, negative on failure
+ */
+static inline int qdf_ipa_wdi_opt_dpath_disable_clk_req(
+						       ipa_wdi_hdl_t hdl)
+{
+	return __qdf_ipa_wdi_opt_dpath_disable_clk_req(hdl);
+}
+
+#endif
+
 /**
  * qdf_ipa_wdi_register_flt_cb() - register cb functions with IPA
  * for optional wifi datapath
@@ -538,6 +653,7 @@ static inline int qdf_ipa_wdi_register_flt_cb(
 					     flt_rsrv_cb, flt_rsrv_rel_cb,
 					     flt_add_cb, flt_rem_cb);
 }
+
 
 /**
  * ipa_wdi_opt_dpath_notify_flt_rsvd_per_inst() - notify IPA with filter
@@ -582,5 +698,21 @@ static inline int qdf_ipa_wdi_opt_dpath_notify_flt_rlsd_per_inst(
 	return 0;
 }
 #endif /* IPA_OPT_WIFI_DP  */
+
+#ifndef IPA_OPT_WIFI_DP_CTRL
+static inline int qdf_ipa_wdi_opt_dpath_notify_ctrl_flt_del_per_inst(
+				ipa_wdi_hdl_t hdl, u32 fltr_hdl,
+				bool is_success)
+{
+	return 0;
+}
+#endif
+
+static inline int
+qdf_ipa_wdi_get_outstanding_buffers(qdf_ipa_wdi_hdl_t hdl,
+				    qdf_ipa_wdi_outstanding_buffs *out)
+{
+	return __qdf_ipa_wdi_get_outstanding_buffers(hdl, out);
+}
 #endif /* IPA_OFFLOAD */
 #endif /* QDF_IPA_WDI3_H */

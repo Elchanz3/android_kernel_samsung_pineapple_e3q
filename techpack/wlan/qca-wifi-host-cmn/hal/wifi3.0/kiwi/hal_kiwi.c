@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,12 +38,6 @@
 
 #include <hal_be_rx.h>
 
-#define UNIFIED_RXPCU_PPDU_END_INFO_8_RX_PPDU_DURATION_OFFSET \
-	RXPCU_PPDU_END_INFO_RX_PPDU_DURATION_OFFSET
-#define UNIFIED_RXPCU_PPDU_END_INFO_8_RX_PPDU_DURATION_MASK \
-	RXPCU_PPDU_END_INFO_RX_PPDU_DURATION_MASK
-#define UNIFIED_RXPCU_PPDU_END_INFO_8_RX_PPDU_DURATION_LSB \
-	RXPCU_PPDU_END_INFO_RX_PPDU_DURATION_LSB
 #define UNIFIED_PHYRX_HT_SIG_0_HT_SIG_INFO_PHYRX_HT_SIG_INFO_DETAILS_OFFSET \
 	PHYRX_HT_SIG_PHYRX_HT_SIG_INFO_DETAILS_MCS_OFFSET
 #define UNIFIED_PHYRX_L_SIG_B_0_L_SIG_B_INFO_PHYRX_L_SIG_B_INFO_DETAILS_OFFSET \
@@ -789,13 +783,9 @@ void hal_register_rx_pkt_hdr_tlv_api_kiwi(struct hal_soc *hal_soc)
 
 static uint8_t *hal_rx_desc_get_80211_hdr_be(void *hw_desc_addr)
 {
-	uint8_t *rx_pkt_hdr;
-	struct rx_mon_pkt_tlvs *rx_desc =
-					(struct rx_mon_pkt_tlvs *)hw_desc_addr;
+	hal_err_rl("No valid packet header");
 
-	rx_pkt_hdr = &rx_desc->pkt_hdr_tlv.rx_pkt_hdr[0];
-
-	return rx_pkt_hdr;
+	return NULL;
 }
 #else
 static uint8_t *hal_rx_desc_get_80211_hdr_be(void *hw_desc_addr)
@@ -843,6 +833,19 @@ void hal_register_rx_pkt_hdr_tlv_api_kiwi(struct hal_soc *hal_soc)
 				hal_rx_pkt_tlv_offset_get_generic;
 }
 #endif
+
+/**
+ * hal_rx_peer_meta_data_get_kiwi() - get peer meta data from rx_pkt_tlvs
+ * @buf: start of rx_tlv_hdr
+ *
+ * Return: peer meta data
+ */
+static inline uint32_t hal_rx_peer_meta_data_get_kiwi(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+
+	return HAL_RX_TLV_PEER_META_DATA_GET(rx_pkt_tlvs);
+}
 
 /**
  * hal_rx_dump_mpdu_start_tlv_kiwi(): dump RX mpdu_start TLV in structured
@@ -1147,6 +1150,96 @@ hal_rx_tlv_populate_mpdu_desc_info_kiwi(uint8_t *buf,
 	mpdu_desc_info->peer_meta_data = mpdu_info->peer_meta_data;
 	mpdu_desc_info->bar_frame = mpdu_info->bar_frame;
 }
+
+/**
+ * hal_rx_tlv_get_freq_kiwi() - API to get the frequency of operating
+ *                              channel from rx_msdu_start
+ * @buf: pointer to the start of RX PKT TLV header
+ *
+ * Return: uint32_t(frequency)
+ */
+
+static inline uint32_t hal_rx_tlv_get_freq_kiwi(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t freq;
+
+	freq = HAL_RX_TLV_FREQ_GET(rx_pkt_tlvs);
+
+	return freq;
+}
+
+/**
+ * hal_rx_mpdu_start_sw_peer_id_get_kiwi() - Retrieve sw peer_id
+ * @buf: network buffer
+ *
+ * Return: sw peer_id
+ */
+static inline uint32_t hal_rx_mpdu_start_sw_peer_id_get_kiwi(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+
+	return HAL_RX_TLV_SW_PEER_ID_GET(rx_pkt_tlvs);
+}
+
+/**
+ * hal_rx_tlv_l3_type_get_kiwi() - API to get the l3 type from
+ *                               rx_msdu_start TLV
+ * @buf: pointer to the start of RX PKT TLV headers
+ *
+ * Return: uint32_t(l3 type)
+ */
+static inline uint32_t hal_rx_tlv_l3_type_get_kiwi(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+
+	return HAL_RX_TLV_L3_TYPE_GET(rx_pkt_tlvs);
+}
+
+#ifdef CONFIG_WORD_BASED_TLV
+/**
+ * hal_rx_priv_info_set_in_tlv_kiwi() - Save the private info to
+ *                              the reserved bytes of rx_tlv_hdr
+ * @buf: start of rx_tlv_hdr
+ * @priv_data: hal_wbm_err_desc_info structure
+ * @len: length of the private data
+ *
+ * Return: void
+ */
+static inline void hal_rx_priv_info_set_in_tlv_kiwi(uint8_t *buf,
+						    uint8_t *priv_data,
+						    uint32_t len)
+{
+	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t copy_len = (len > HAL_RX_TLV_PRIV_INFO_BYTES) ?
+			     HAL_RX_TLV_PRIV_INFO_BYTES : len;
+
+	qdf_mem_copy(&(HAL_RX_MSDU_END(pkt_tlvs).ipv6_options_crc),
+		     priv_data, copy_len);
+}
+
+/**
+ * hal_rx_priv_info_get_from_tlv_kiwi() - retrieve the private data from
+ *                             the reserved bytes of rx_tlv_hdr.
+ * @buf: start of rx_tlv_hdr
+ * @priv_data: Handle to get the private data, output parameter.
+ * @len: length of the private data
+ *
+ * Return: void
+ */
+static inline void hal_rx_priv_info_get_from_tlv_kiwi(uint8_t *buf,
+						      uint8_t *priv_data,
+						      uint32_t len)
+{
+	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t copy_len = (len > HAL_RX_TLV_PRIV_INFO_BYTES) ?
+			     HAL_RX_TLV_PRIV_INFO_BYTES : len;
+
+	qdf_mem_copy(priv_data,
+		     &(HAL_RX_MSDU_END(pkt_tlvs).ipv6_options_crc),
+		     copy_len);
+}
+#endif
 
 /**
  * hal_reo_status_get_header_kiwi() - Process reo desc info
@@ -1571,6 +1664,24 @@ hal_rx_flow_setup_fse_kiwi(uint8_t *rx_fst, uint32_t table_offset,
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, TIMESTAMP);
 
 	return fse;
+}
+
+static inline QDF_STATUS
+hal_rx_flow_delete_cmem_fse_kiwi(struct hal_soc *hal_soc, uint32_t cmem_ba,
+				 uint32_t table_offset)
+{
+	uint32_t fse_offset;
+
+	fse_offset = cmem_ba + (table_offset * HAL_RX_FST_ENTRY_SIZE);
+	if (!(HAL_CMEM_READ(hal_soc, fse_offset +
+			    HAL_OFFSET(RX_FLOW_SEARCH_ENTRY, VALID))))
+		return QDF_STATUS_E_NOENT;
+
+	/* Reset the Valid bit */
+	HAL_CMEM_WRITE(hal_soc, fse_offset + HAL_OFFSET(RX_FLOW_SEARCH_ENTRY,
+							VALID), 0);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 /**
@@ -2038,6 +2149,60 @@ bool hal_rx_en_mcast_fp_data_filter_kiwi(void)
 	return false;
 }
 
+#ifdef WLAN_PKT_CAPTURE_TX_2_0
+/**
+ * hal_txmon_get_frame_timestamp_kiwi() - api to get frame timestamp for tx monitor
+ * @tlv_tag: TLV tag
+ * @tx_tlv: pointer to tx tlv information
+ * @ppdu_info: pointer to ppdu_info
+ *
+ * Return: void
+ */
+static inline
+void hal_txmon_get_frame_timestamp_kiwi(uint32_t tlv_tag, void *tx_tlv,
+					void *ppdu_info)
+{
+	struct hal_tx_ppdu_info *tx_ppdu_info =
+			(struct hal_tx_ppdu_info *) ppdu_info;
+
+	switch (tlv_tag) {
+	case WIFIRESPONSE_END_STATUS_E:
+	{
+		hal_response_end_status_t *resp_end_status =
+					(hal_response_end_status_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(resp_end_status->start_of_frame_timestamp_15_0 |
+			 (resp_end_status->start_of_frame_timestamp_31_16 << 16));
+		break;
+	}
+
+	case WIFITX_FES_STATUS_END_E:
+	{
+		hal_tx_fes_status_end_t *tx_fes_end =
+					(hal_tx_fes_status_end_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(tx_fes_end->start_of_frame_timestamp_15_0 |
+			 tx_fes_end->start_of_frame_timestamp_31_16 <<
+			 HAL_TX_LSB(TX_FES_STATUS_END,
+			 START_OF_FRAME_TIMESTAMP_31_16));
+		break;
+	}
+	case WIFITX_FES_STATUS_PROT_E:
+	{
+		hal_tx_fes_status_prot_t *fes_prot =
+					(hal_tx_fes_status_prot_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(fes_prot->start_of_frame_timestamp_15_0 |
+			fes_prot->start_of_frame_timestamp_31_16 << 15);
+		break;
+	}
+	}
+}
+#endif
+
 #ifdef QCA_WIFI_KIWI_V2
 /**
  * hal_srng_dst_hw_init_misc_1_kiwi() - Function to initialize MISC_1 register
@@ -2113,6 +2278,53 @@ void hal_srng_dst_hw_init_kiwi(struct hal_soc *hal_soc,
 	hal_srng_dst_hw_init_generic(hal_soc, srng, idle_check, idx);
 }
 
+/**
+ * hal_rx_flow_cmem_update_reo_dst_ind_kiwi - update reo dest indication
+ * in CMEM
+ * @hal_soc: HAL SOC handle
+ * @cmem_ba: CMEM base address
+ * @flow_idx: flow index for which CMEM update is needed
+ * @reo_dest_ind: reo destination indication
+ *
+ * Return: None
+ */
+static void
+hal_rx_flow_cmem_update_reo_dst_ind_kiwi(struct hal_soc *hal_soc,
+					 uint32_t cmem_ba,
+					 uint32_t flow_idx,
+					 uint8_t reo_dest_ind)
+{
+	uint32_t fse_offset;
+	uint32_t value;
+
+	fse_offset = cmem_ba + (flow_idx * HAL_RX_FST_ENTRY_SIZE);
+	value = HAL_CMEM_READ(hal_soc,
+			      fse_offset + HAL_OFFSET(RX_FLOW_SEARCH_ENTRY,
+						      L4_PROTOCOL));
+
+	value &= ~RX_FLOW_SEARCH_ENTRY_REO_DESTINATION_INDICATION_MASK;
+	value |= HAL_SET_FLD_SM(RX_FLOW_SEARCH_ENTRY,
+				REO_DESTINATION_INDICATION,
+				reo_dest_ind);
+	HAL_CMEM_WRITE(hal_soc, fse_offset + HAL_OFFSET(RX_FLOW_SEARCH_ENTRY,
+							L4_PROTOCOL), value);
+}
+
+/**
+ * hal_srng_dst_get_num_avail_words_kiwi - Get num available words
+ * @hal_ring_hdl: HAL ring handle
+ *
+ * Return: num available words
+ */
+static inline uint16_t
+hal_srng_dst_get_num_avail_words_kiwi(hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+	uint32_t ring_status = SRNG_DST_REG_READ(srng, STATUS);
+
+	return SRNG_MS(SRNG_DST_HW_FLD(STATUS, NUM_AVAIL_WORDS), ring_status);
+}
+
 static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 {
 	/* init and setup */
@@ -2169,10 +2381,17 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 					hal_rx_status_get_tlv_info_wrapper_be;
 	hal_soc->ops->hal_rx_wbm_err_info_get =
 					hal_rx_wbm_err_info_get_generic_be;
+#ifdef CONFIG_WORD_BASED_TLV
+	hal_soc->ops->hal_rx_priv_info_set_in_tlv =
+					hal_rx_priv_info_set_in_tlv_kiwi;
+	hal_soc->ops->hal_rx_priv_info_get_from_tlv =
+					hal_rx_priv_info_get_from_tlv_kiwi;
+#else
 	hal_soc->ops->hal_rx_priv_info_set_in_tlv =
 					hal_rx_priv_info_set_in_tlv_be;
 	hal_soc->ops->hal_rx_priv_info_get_from_tlv =
 					hal_rx_priv_info_get_from_tlv_be;
+#endif
 
 	hal_soc->ops->hal_tx_set_pcp_tid_map =
 					hal_tx_set_pcp_tid_map_generic_be;
@@ -2203,9 +2422,9 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_rx_get_mpdu_mac_ad4_valid =
 					hal_rx_get_mpdu_mac_ad4_valid_be;
 	hal_soc->ops->hal_rx_mpdu_start_sw_peer_id_get =
-		hal_rx_mpdu_start_sw_peer_id_get_be;
+		hal_rx_mpdu_start_sw_peer_id_get_kiwi;
 	hal_soc->ops->hal_rx_tlv_peer_meta_data_get =
-		hal_rx_mpdu_peer_meta_data_get_be;
+		hal_rx_peer_meta_data_get_kiwi;
 	hal_soc->ops->hal_rx_mpdu_get_to_ds = hal_rx_mpdu_get_to_ds_be;
 	hal_soc->ops->hal_rx_mpdu_get_fr_ds = hal_rx_mpdu_get_fr_ds_be;
 	hal_soc->ops->hal_rx_get_mpdu_frame_control_valid =
@@ -2291,6 +2510,8 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_rx_fst_get_fse_size = hal_rx_fst_get_fse_size_be;
 	hal_soc->ops->hal_compute_reo_remap_ix2_ix3 =
 					hal_compute_reo_remap_ix2_ix3_kiwi;
+	hal_soc->ops->hal_rx_flow_delete_cmem_fse =
+					hal_rx_flow_delete_cmem_fse_kiwi;
 	hal_soc->ops->hal_rx_flow_setup_cmem_fse =
 						hal_rx_flow_setup_cmem_fse_kiwi;
 	hal_soc->ops->hal_rx_flow_get_cmem_fse_ts =
@@ -2309,8 +2530,7 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 						hal_rx_tlv_get_is_decrypted_be;
 	hal_soc->ops->hal_rx_tlv_mic_err_get = hal_rx_tlv_mic_err_get_be;
 	hal_soc->ops->hal_rx_tlv_get_pkt_type = hal_rx_tlv_get_pkt_type_be;
-	hal_soc->ops->hal_rx_tlv_get_freq = hal_rx_tlv_get_freq_be;
-	hal_soc->ops->hal_rx_tlv_get_freq = hal_rx_tlv_get_freq_be;
+	hal_soc->ops->hal_rx_tlv_get_freq = hal_rx_tlv_get_freq_kiwi;
 	hal_soc->ops->hal_rx_tlv_mpdu_len_err_get =
 					hal_rx_tlv_mpdu_len_err_get_be;
 	hal_soc->ops->hal_rx_tlv_mpdu_fcs_err_get =
@@ -2348,7 +2568,7 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 #endif
 	hal_soc->ops->hal_compute_reo_remap_ix0 = NULL;
 
-	hal_soc->ops->hal_rx_tlv_l3_type_get = hal_rx_tlv_l3_type_get_be;
+	hal_soc->ops->hal_rx_tlv_l3_type_get = hal_rx_tlv_l3_type_get_kiwi;
 	hal_soc->ops->hal_tx_vdev_mismatch_routing_set =
 		hal_tx_vdev_mismatch_routing_set_generic_be;
 	hal_soc->ops->hal_tx_mcast_mlo_reinject_routing_set =
@@ -2382,7 +2602,13 @@ static void hal_hw_txrx_ops_attach_kiwi(struct hal_soc *hal_soc)
 				hal_txmon_status_parse_tlv_generic_be;
 	hal_soc->ops->hal_txmon_status_get_num_users =
 				hal_txmon_status_get_num_users_generic_be;
+	hal_soc->ops->hal_txmon_get_frame_timestamp =
+				hal_txmon_get_frame_timestamp_kiwi;
 #endif /* WLAN_PKT_CAPTURE_TX_2_0 */
+	hal_soc->ops->hal_rx_flow_cmem_update_reo_dst_ind =
+				hal_rx_flow_cmem_update_reo_dst_ind_kiwi;
+	hal_soc->ops->hal_srng_dst_get_num_avail_words =
+				hal_srng_dst_get_num_avail_words_kiwi;
 };
 
 struct hal_hw_srng_config hw_srng_table_kiwi[] = {
@@ -2686,7 +2912,8 @@ struct hal_hw_srng_config hw_srng_table_kiwi[] = {
 	},
 	{ /* RXDMA_BUF */
 		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA0_BUF0,
-#if defined(IPA_OFFLOAD) && defined(FEATURE_DIRECT_LINK)
+#if defined(IPA_OFFLOAD) && (defined(FEATURE_DIRECT_LINK) || \
+			     defined(IPA_WDI3_VLAN_SUPPORT))
 		.max_rings = 4,
 #elif defined(IPA_OFFLOAD) || defined(FEATURE_DIRECT_LINK)
 		.max_rings = 3,
@@ -2730,8 +2957,8 @@ struct hal_hw_srng_config hw_srng_table_kiwi[] = {
 		.max_size = HAL_RXDMA_MAX_RING_SIZE,
 	},
 	{ /* RXDMA_MONITOR_STATUS */
-		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA1_STATBUF,
-		.max_rings = 1,
+		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA0_STATBUF,
+		.max_rings = NUM_RXDMA_STATUS_RINGS_PER_PDEV,
 		.entry_size = sizeof(struct wbm_buffer_ring) >> 2,
 		.lmac_ring = TRUE,
 		.ring_dir = HAL_SRNG_SRC_RING,
@@ -2854,6 +3081,7 @@ static inline void hal_srng_hw_reg_offset_init_kiwi(struct hal_soc *hal_soc)
 	hw_reg_offset[DST_MSI2_DATA] = REG_OFFSET(DST, MSI2_DATA),
 	hw_reg_offset[DST_PRODUCER_INT2_SETUP] =
 					REG_OFFSET(DST, PRODUCER_INT2_SETUP);
+	hw_reg_offset[DST_STATUS] = REG_OFFSET(DST, STATUS);
 	hal_srng_hw_reg_offset_init_misc_1_kiwi(hal_soc);
 }
 

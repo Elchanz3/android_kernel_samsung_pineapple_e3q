@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -55,6 +55,8 @@
  *                                     Switch Announcement.
  * @mlme_unpunc_chan_switch:           After DFS unpuncture occurs send VDEV
  *                                     restart.
+ * @mlme_check_punc_sm_sanity:         MLME cb to check if puncturing SM can
+ *                                     be initialized.
  * @mlme_nol_timeout_notification:     NOL timeout notification.
  * @mlme_clist_update:                 Updates the channel list.
  * @mlme_is_opmode_sta:                Check if pdev opmode is STA.
@@ -69,6 +71,8 @@
  * @mlme_update_scan_channel_list:     Update the scan channel list sent to FW.
  * @mlme_bringdown_vaps:               Bringdown vaps if no chans is present.
  * @mlme_dfs_deliver_event:            Deliver DFS events to user space
+ * @mlme_dfs_alloc_nol:                Allocate a persistent memory for DFS NOL.
+ * @mlme_dfs_get_cc:                   Get current country code.
  * @mlme_is_inter_band_chan_switch_allowed: Check if switch between 5 GHz and
  *                                     6 GHz is allowed.
  * @mlme_acquire_radar_mode_switch_lock: Acquire lock for radar processing over
@@ -78,6 +82,8 @@
  * @mlme_proc_spoof_success:           Called when FW send spoof success event.
  * @mlme_set_tx_flag:                  Called when Radar is detected to
  *                                     indicate stop data traffic.
+ * @mlme_is_pdev_valid_for_curhwmode:  Validates if the given input pdev is
+ *                                     valid for the current HW mode.
  */
 struct dfs_to_mlme {
 	QDF_STATUS (*pdev_component_obj_attach)(struct wlan_objmgr_pdev *pdev,
@@ -172,6 +178,7 @@ struct dfs_to_mlme {
 	QDF_STATUS
 	    (*mlme_unpunc_chan_switch)(struct wlan_objmgr_pdev *pdev,
 				       uint16_t new_punc_pattern);
+	bool (*mlme_check_punc_sm_sanity)(struct wlan_objmgr_pdev *pdev);
 #endif
 	QDF_STATUS (*mlme_nol_timeout_notification)(
 			struct wlan_objmgr_pdev *pdev);
@@ -203,6 +210,12 @@ struct dfs_to_mlme {
 			(struct wlan_objmgr_pdev *pdev,
 			 uint16_t freq,
 			 enum WLAN_DFS_EVENTS event);
+	void (*mlme_dfs_alloc_nol)
+			(struct wlan_objmgr_pdev *pdev,
+			 struct dfsreq_nolinfo **dfs_mm_nolinfo);
+	void (*mlme_dfs_get_cc)
+			(struct wlan_objmgr_pdev *pdev,
+			 uint16_t *cc);
 	bool (*mlme_is_inter_band_chan_switch_allowed)
 			(struct wlan_objmgr_pdev *pdev);
 	void (*mlme_acquire_radar_mode_switch_lock)
@@ -215,6 +228,7 @@ struct dfs_to_mlme {
 #endif
 	QDF_STATUS (*mlme_set_tx_flag)(struct wlan_objmgr_pdev *pdev,
 				       bool is_tx_allowed);
+	bool (*mlme_is_pdev_valid_for_curhwmode)(struct wlan_objmgr_pdev *pdev);
 };
 
 extern struct dfs_to_mlme global_dfs_to_mlme;
@@ -305,13 +319,13 @@ QDF_STATUS ucfg_dfs_override_precac_timeout(struct wlan_objmgr_pdev *pdev,
 /**
  * ucfg_dfs_set_precac_enable() - Set precac enable flag.
  * @pdev: Pointer to DFS pdev object.
- * @value: input value for dfs_legacy_precac_ucfg flag.
+ * @precac_en: input value for dfs_legacy_precac_ucfg flag.
  *
  * Wrapper function for dfs_set_precac_enable().
  * This function called from outside of dfs component.
  */
 QDF_STATUS ucfg_dfs_set_precac_enable(struct wlan_objmgr_pdev *pdev,
-				      uint32_t value);
+				      bool precac_en);
 
 /**
  * ucfg_dfs_get_agile_precac_enable() - Get agile precac enable flag.

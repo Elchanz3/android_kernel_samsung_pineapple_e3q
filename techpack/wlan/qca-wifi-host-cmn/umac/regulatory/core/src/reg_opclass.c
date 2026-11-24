@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -735,6 +735,41 @@ reg_dmn_fill_cfis(const struct reg_dmn_op_class_map_t *op_class_tbl,
 }
 
 /**
+ * reg_is_opclass_not_80p80_supported() - Checks if the given opclass is 80p80
+ * supported or not.
+ * @pdev: Pointer to pdev.
+ * @op_class: Opclass number.
+ *
+ * Return: True if opclass is 80p80 supported, else false.
+ */
+static bool
+reg_is_opclass_not_80p80_supported(struct wlan_objmgr_pdev *pdev,
+				   uint8_t op_class)
+{
+	return ((op_class == GLOBAL_6G_OPCLASS_80P80) &&
+		(!reg_is_dev_supports_80p80(pdev)));
+}
+
+/**
+ * reg_is_opclass_not_11ax_supported() - Checks if the given opclass is not
+ * 11ax supported.
+ * @pdev: Pointer to pdev.
+ * @op_class: Opclass number.
+ *
+ * Return: True if opclass is not 11ax supported, else false.
+ */
+static bool
+reg_is_opclass_not_11ax_supported(struct wlan_objmgr_pdev *pdev,
+				  uint8_t op_class)
+{
+	uint16_t max_bw;
+
+	max_bw = reg_find_afc_max_bw_from_chip_cap(pdev);
+
+	return ((max_bw == AFC_BW_160) && (op_class == MAX_6GHZ_OPER_CLASS));
+}
+
+/**
  * reg_is_unsupported_opclass() - Checks if the given opclass is unsupported or
  * not.
  * @pdev: Pointer to pdev.
@@ -745,8 +780,8 @@ reg_dmn_fill_cfis(const struct reg_dmn_op_class_map_t *op_class_tbl,
 static bool
 reg_is_unsupported_opclass(struct wlan_objmgr_pdev *pdev, uint8_t op_class)
 {
-	return ((op_class == GLOBAL_6G_OPCLASS_80P80) &&
-		(!reg_is_dev_supports_80p80(pdev)));
+	return ((reg_is_opclass_not_80p80_supported(pdev, op_class)) ||
+		(reg_is_opclass_not_11ax_supported(pdev, op_class)));
 }
 
 /**
@@ -1431,7 +1466,6 @@ uint16_t reg_chan_opclass_to_freq(uint8_t chan,
 		}
 		op_class_tbl++;
 	}
-	reg_err_rl("Invalid opclass");
 	return 0;
 }
 
@@ -1497,6 +1531,22 @@ qdf_freq_t reg_country_chan_opclass_to_freq(struct wlan_objmgr_pdev *pdev,
 	reg_debug_rl("Got invalid freq 0 for ch %d", chan);
 
 	return 0;
+}
+
+qdf_freq_t
+reg_chan_opclass_to_freq_prefer_global(struct wlan_objmgr_pdev *pdev,
+				       const uint8_t *country, uint8_t chan_num,
+				       uint8_t opclass)
+{
+	qdf_freq_t freq;
+
+	freq = reg_chan_opclass_to_freq(chan_num, opclass, true);
+	if (!freq && country) {
+		freq = reg_country_chan_opclass_to_freq(pdev, country, chan_num,
+							opclass, true);
+	}
+
+	return freq;
 }
 #endif
 
@@ -1773,6 +1823,18 @@ static bool reg_is_cfi_supported(struct wlan_objmgr_pdev *pdev,
 }
 
 /**
+ * reg_is_opclass_entry_80p80() - Return true if the opclass entry is
+ * 80P80 false otherwise.
+ * @op_class_tbl: Pointer to struct reg_dmn_op_class_map_t
+ */
+static bool
+reg_is_opclass_entry_80p80(const struct reg_dmn_op_class_map_t *op_class_tbl)
+{
+	return (op_class_tbl->chan_spacing == BW_80_MHZ &&
+		op_class_tbl->behav_limit == BIT(BEHAV_BW80_PLUS));
+}
+
+/**
  * reg_get_cfis_from_opclassmap_for_6g()- Get channels from the opclass map
  * for 6GHz
  * @pdev: Pointer to pdev
@@ -1805,11 +1867,15 @@ static void reg_get_cfis_from_opclassmap_for_6g(
 		bool is_cfi_supported;
 
 		cfi_freq = start_freq + FREQ_TO_CHAN_SCALE * cfi;
-		is_cfi_supported = reg_is_cfi_supported(pdev,
-							cfi_freq,
-							bw,
-							op_class_tbl->op_class,
-							in_6g_pwr_mode);
+		/* 6 Ghz band does not support 80P80 mode of operation.*/
+		if (reg_is_opclass_entry_80p80(op_class_tbl))
+			is_cfi_supported = false;
+		else
+			is_cfi_supported = reg_is_cfi_supported(pdev,
+								cfi_freq,
+								bw,
+								op_class_tbl->op_class,
+								in_6g_pwr_mode);
 		if (is_cfi_supported &&
 		    (in_opclass_conf == OPCLASSES_SUPPORTED_BY_CUR_HWMODE ||
 		     in_opclass_conf == OPCLASSES_SUPPORTED_BY_DOMAIN)) {
@@ -1826,6 +1892,37 @@ static uint16_t reg_find_nearest_ieee_bw(uint16_t spacing)
 {
 	#define SMALLEST_BW 20
 	return (spacing / SMALLEST_BW) * SMALLEST_BW;
+}
+
+/**
+ * reg_is_freq_80p80_supported() - Return true if the given input frequency
+ * supports 80P80, false otherwise.
+ * @pdev: Pointer to struct wlan_objmgr_pdev
+ * @primary_freq: Primary frequency in MHz
+ *
+ * Return: True if the frequency supports 80P80 mode of operation, false
+ * otherwise.
+ */
+static bool
+reg_is_freq_80p80_supported(struct wlan_objmgr_pdev *pdev,
+			    qdf_freq_t primary_freq)
+{
+	struct wlan_lmac_if_reg_tx_ops *reg_tx_ops;
+	struct wlan_objmgr_psoc *psoc;
+
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc)
+		return false;
+
+	reg_tx_ops = reg_get_psoc_tx_ops(psoc);
+	if (!reg_tx_ops)
+		return false;
+
+	if (reg_tx_ops->is_freq_80p80_supported &&
+	    reg_tx_ops->is_freq_80p80_supported(pdev, primary_freq))
+		return true;
+
+	return false;
 }
 
 /**
@@ -1868,12 +1965,15 @@ static void reg_get_cfis_from_opclassmap_for_non6g(
 		pri_freq = reg_get_nearest_primary_freq(opcls_bw,
 							pri_freq,
 							op_class_tbl->op_class);
-		is_supported = reg_is_chan_supported(pdev,
-						     pri_freq,
-						     0,
-						     ch_width,
-						     in_6g_pwr_mode);
 
+		if (reg_is_opclass_entry_80p80(op_class_tbl))
+			is_supported = reg_is_freq_80p80_supported(pdev, pri_freq);
+		else
+			is_supported = reg_is_chan_supported(pdev,
+							     pri_freq,
+							     0,
+							     ch_width,
+							     in_6g_pwr_mode);
 		if (is_supported &&
 		    (in_opclass_conf == OPCLASSES_SUPPORTED_BY_CUR_HWMODE ||
 		     in_opclass_conf == OPCLASSES_SUPPORTED_BY_DOMAIN)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -308,6 +308,23 @@ target_if_dp_lro_config_cmd(struct wlan_objmgr_psoc *psoc,
 	return wmi_unified_lro_config_cmd(wmi_handle, &wmi_lro_cmd);
 }
 
+#ifdef WLAN_DP_FEATURE_STC
+static QDF_STATUS
+target_if_dp_send_opm_stats_cmd(struct wlan_objmgr_psoc *psoc,
+				uint8_t pdev_id)
+{
+	struct wmi_unified *wmi_handle;
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+	if (!wmi_handle) {
+		dp_err("wmi_handle is null");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return wmi_unified_send_opm_stats_cmd(wmi_handle, pdev_id);
+}
+#endif
+
 /**
  * target_if_dp_send_dhcp_ind() - process set arp stats request command to fw
  * @vdev_id: vdev id
@@ -355,6 +372,138 @@ target_if_dp_send_dhcp_ind(uint16_t vdev_id,
 	return status;
 }
 
+static QDF_STATUS
+target_if_dp_active_traffic_map(struct wlan_objmgr_psoc *psoc,
+				struct dp_active_traffic_map_params *req_buf)
+{
+	struct wmi_unified *wmi_handle;
+	struct wlan_objmgr_peer *peer;
+	struct peer_active_traffic_map_params cmd = {0};
+	QDF_STATUS status;
+
+	if (!psoc || !req_buf) {
+		target_if_err("Invalid params");
+		return -EINVAL;
+	}
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+	if (!wmi_handle) {
+		target_if_err("Invalid wmi handle");
+		return -EINVAL;
+	}
+
+	peer = wlan_objmgr_get_peer_by_mac(psoc, req_buf->mac.bytes,
+					   WLAN_DP_ID);
+	if (!peer) {
+		target_if_err("Peer not found in the list");
+		return -EINVAL;
+	}
+
+	cmd.vdev_id = req_buf->vdev_id;
+	qdf_mem_copy(cmd.peer_macaddr.bytes, req_buf->mac.bytes,
+		     QDF_MAC_ADDR_SIZE);
+	cmd.active_traffic_map = req_buf->active_traffic_map;
+
+	status = wmi_unified_peer_active_traffic_map_send(wmi_handle, &cmd);
+
+	if (peer)
+		wlan_objmgr_peer_release_ref(peer, WLAN_DP_ID);
+
+	return status;
+}
+
+#ifdef WLAN_DP_FEATURE_STC
+static inline void
+dp_register_tx_ops_opm_stats(struct wlan_dp_psoc_sb_ops *sb_ops)
+{
+	sb_ops->dp_send_opm_stats_cmd = target_if_dp_send_opm_stats_cmd;
+}
+#else
+static inline void
+dp_register_tx_ops_opm_stats(struct wlan_dp_psoc_sb_ops *sb_ops)
+{
+}
+#endif
+
+#ifdef IPA_WDI3_VLAN_SUPPORT
+/**
+ * target_if_dp_send_pdev_pkt_routing_vlan() - Send pdev_update_pkt_routing WMI
+ *					       to target for VLAN tagged packets
+ * @psoc: psoc objmgr handle
+ * @pdev_id: host pdev id
+ * @dest_ring: destination ring that VLAN tagged packets should be routed to
+ *
+ * Return: void
+ */
+static void
+target_if_dp_send_pdev_pkt_routing_vlan(struct wlan_objmgr_psoc *psoc,
+					uint8_t pdev_id,
+					uint32_t dest_ring)
+{
+	uint32_t len = sizeof(wmi_pdev_update_pkt_routing_cmd_fixed_param);
+	wmi_pdev_update_pkt_routing_cmd_fixed_param *cmd;
+	uint8_t target_pdev_id;
+	wmi_unified_t wmi_hdl;
+	QDF_STATUS status;
+	uint32_t tlvlen;
+	wmi_buf_t buf;
+	uint32_t tag;
+
+	wmi_hdl = (wmi_unified_t)get_wmi_unified_hdl_from_psoc(psoc);
+	if (qdf_unlikely(!wmi_hdl))
+		return;
+
+	buf = wmi_buf_alloc(wmi_hdl, len);
+	if (!buf) {
+		target_if_err("wmi_buf_alloc failed");
+		return;
+	}
+
+	cmd = (wmi_pdev_update_pkt_routing_cmd_fixed_param *)wmi_buf_data(buf);
+
+	tag = WMITLV_TAG_STRUC_wmi_pdev_update_pkt_routing_cmd_fixed_param;
+	tlvlen = WMITLV_GET_STRUCT_TLVLEN(
+			wmi_pdev_update_pkt_routing_cmd_fixed_param);
+	WMITLV_SET_HDR(&cmd->tlv_header, tag, tlvlen);
+
+	target_pdev_id = wmi_hdl->ops->convert_host_pdev_id_to_target(wmi_hdl,
+								      pdev_id);
+	cmd->pdev_id = target_pdev_id;
+	cmd->op_code = WMI_PDEV_ADD_PKT_ROUTING;
+	cmd->routing_type_bitmap = BIT(WMI_PDEV_ROUTING_TYPE_VLAN);
+	cmd->dest_ring = dest_ring;
+	cmd->meta_data = WMI_PDEV_ROUTING_TYPE_VLAN;
+	cmd->dest_ring_handler = WMI_PDEV_WIFIRXCCE_USE_CCE_E;
+
+	target_if_debug("Set RX PKT ROUTING TYPE pdev_id: %u opcode: %u",
+			cmd->pdev_id, cmd->op_code);
+	target_if_debug("routing_bitmap: %u, dest_ring: %u",
+			cmd->routing_type_bitmap, cmd->dest_ring);
+	target_if_debug("dest_ring_handler: %u, meta_data: 0x%x",
+			cmd->dest_ring_handler, cmd->meta_data);
+
+	wmi_mtrace(WMI_PDEV_UPDATE_PKT_ROUTING_CMDID, cmd->pdev_id, 0);
+	status = wmi_unified_cmd_send(wmi_hdl, buf, len,
+				      WMI_PDEV_UPDATE_PKT_ROUTING_CMDID);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wmi_buf_free(buf);
+		target_if_err("WMI_PDEV_UPDATE_PKT_ROUTING_CMDID failed");
+	}
+}
+
+static inline void
+target_if_dp_register_ipa_vlan_ops(struct wlan_dp_psoc_sb_ops *sb_ops)
+{
+	sb_ops->dp_send_pdev_pkt_routing_vlan =
+		target_if_dp_send_pdev_pkt_routing_vlan;
+}
+#else /* !IPA_WDI3_VLAN_SUPPORT */
+static inline void
+target_if_dp_register_ipa_vlan_ops(struct wlan_dp_psoc_sb_ops *sb_ops)
+{
+}
+#endif /* IPA_WDI3_VLAN_SUPPORT */
+
 void target_if_dp_register_tx_ops(struct wlan_dp_psoc_sb_ops *sb_ops)
 {
 	sb_ops->dp_arp_stats_register_event_handler =
@@ -368,6 +517,9 @@ void target_if_dp_register_tx_ops(struct wlan_dp_psoc_sb_ops *sb_ops)
 	sb_ops->dp_lro_config_cmd = target_if_dp_lro_config_cmd;
 	sb_ops->dp_send_dhcp_ind =
 		target_if_dp_send_dhcp_ind;
+	sb_ops->dp_send_active_traffic_map = target_if_dp_active_traffic_map;
+	dp_register_tx_ops_opm_stats(sb_ops);
+	target_if_dp_register_ipa_vlan_ops(sb_ops);
 }
 
 void target_if_dp_register_rx_ops(struct wlan_dp_psoc_nb_ops *nb_ops)

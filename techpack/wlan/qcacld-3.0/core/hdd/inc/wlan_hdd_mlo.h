@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -256,11 +256,13 @@ void hdd_adapter_set_ml_adapter(struct hdd_adapter *adapter);
  * start.
  * @vdev: VDEV on which link switch will happen
  * @non_trans_vdev_id: VDEV not part of link switch.
+ * @is_start_notify: Set to %true if notify is due to start else set to %false
  *
  * Return: QDF_STATUS.
  */
 QDF_STATUS hdd_adapter_link_switch_notification(struct wlan_objmgr_vdev *vdev,
-						uint8_t non_trans_vdev_id);
+						uint8_t non_trans_vdev_id,
+						bool is_start_notify);
 
 /**
  * hdd_mlo_t2lm_register_callback() - Register T2LM callback
@@ -280,6 +282,7 @@ void hdd_mlo_t2lm_unregister_callback(struct wlan_objmgr_vdev *vdev);
 
 /**
  * wlan_handle_mlo_link_state_operation() - mlo link state operation
+ * @adapter: HDD adapter
  * @wiphy: wiphy pointer
  * @vdev: vdev handler
  * @hdd_ctx: hdd context
@@ -290,7 +293,8 @@ void hdd_mlo_t2lm_unregister_callback(struct wlan_objmgr_vdev *vdev);
  *
  * Return: 0 on success and error number otherwise.
  */
-int wlan_handle_mlo_link_state_operation(struct wiphy *wiphy,
+int wlan_handle_mlo_link_state_operation(struct hdd_adapter *adapter,
+					 struct wiphy *wiphy,
 					 struct wlan_objmgr_vdev *vdev,
 					 struct hdd_context *hdd_ctx,
 					 const void *data, int data_len);
@@ -323,6 +327,13 @@ QDF_STATUS wlan_hdd_send_t2lm_event(struct wlan_objmgr_vdev *vdev,
 int wlan_hdd_cfg80211_process_ml_link_state(struct wiphy *wiphy,
 					    struct wireless_dev *wdev,
 					    const void *data, int data_len);
+/**
+ * hdd_update_link_state_cached_timestamp() - update link state cached timestamp
+ * @adapter: HDD adapter
+ *
+ * Return: none
+ */
+void hdd_update_link_state_cached_timestamp(struct hdd_adapter *adapter);
 
 /**
  * hdd_derive_link_address_from_mld() - Function to derive link address from
@@ -347,6 +358,22 @@ QDF_STATUS hdd_derive_link_address_from_mld(struct wlan_objmgr_psoc *psoc,
 
 #ifdef WLAN_HDD_MULTI_VDEV_SINGLE_NDEV
 /**
+ * hdd_adapter_restore_link_vdev_map() - Change the VDEV to link info mapping
+ * in adapter.
+ * @adapter: HDD adapter pointer
+ * @same_vdev_mac_map: Maintain VDEV to MAC address mapping during the restore.
+ *
+ * This API restores the VDEV to HDD link info mapping to its initial order
+ * which could have got remapped in the process of link switch. If
+ * @same_vdev_mac_map is set to %true then the MAC address to VDEV mapping is
+ * preserved.
+ *
+ * Returns: %true if any mapping changes or %false otherwise.
+ */
+bool hdd_adapter_restore_link_vdev_map(struct hdd_adapter *adapter,
+				       bool same_vdev_mac_map);
+
+/**
  * hdd_mlo_mgr_register_osif_ops() - Register OSIF ops with global MLO manager
  * for callback to notify.
  *
@@ -367,6 +394,13 @@ QDF_STATUS hdd_mlo_mgr_register_osif_ops(void);
  */
 QDF_STATUS hdd_mlo_mgr_unregister_osif_ops(void);
 #else
+static inline bool
+hdd_adapter_restore_link_vdev_map(struct hdd_adapter *adapter,
+				  bool same_vdev_mac_map)
+{
+	return false;
+}
+
 static inline QDF_STATUS hdd_mlo_mgr_register_osif_ops(void)
 {
 	return QDF_STATUS_SUCCESS;
@@ -404,7 +438,8 @@ void hdd_mlo_t2lm_unregister_callback(struct wlan_objmgr_vdev *vdev)
 }
 
 static inline int
-wlan_handle_mlo_link_state_operation(struct wiphy *wiphy,
+wlan_handle_mlo_link_state_operation(struct hdd_adapter *adapter,
+				     struct wiphy *wiphy,
 				     struct wlan_objmgr_vdev *vdev,
 				     struct hdd_context *hdd_ctx,
 				     const void *data, int data_len)
@@ -435,6 +470,12 @@ QDF_STATUS wlan_hdd_send_t2lm_event(struct wlan_objmgr_vdev *vdev,
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }
+
+static inline
+void hdd_update_link_state_cached_timestamp(struct hdd_adapter *adapter)
+{
+}
+
 #define FEATURE_ML_LINK_STATE_COMMANDS
 #endif
 #endif

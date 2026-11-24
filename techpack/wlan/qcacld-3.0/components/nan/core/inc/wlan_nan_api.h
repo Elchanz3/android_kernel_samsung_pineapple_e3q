@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -27,6 +27,8 @@
 #include "wlan_objmgr_peer_obj.h"
 #include "wlan_policy_mgr_public_struct.h"
 #include "qdf_status.h"
+#include <nan_public_structs.h>
+#include <wlan_cp_stats_chipset_stats.h>
 
 #ifdef WLAN_FEATURE_NAN
 
@@ -186,12 +188,32 @@ wlan_nan_get_connection_info(struct wlan_objmgr_psoc *psoc,
 			     struct policy_mgr_vdev_entry_info *conn_info);
 
 /**
+ * wlan_nan_get_disc_24g_ch_freq: Get NAN Disc 2.4GHz channel frequency
+ * @psoc: pointer to psoc object
+ *
+ * Return: NAN Disc 2.4GHz channel frequency
+ */
+qdf_freq_t wlan_nan_get_disc_24g_ch_freq(struct wlan_objmgr_psoc *psoc);
+
+/**
  * wlan_nan_get_disc_5g_ch_freq: Get NAN Disc 5G channel frequency
  * @psoc: pointer to psoc object
  *
  * Return: NAN Disc 5G channel frequency
  */
 uint32_t wlan_nan_get_disc_5g_ch_freq(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * wlan_nan_get_5ghz_social_ch_freq(): Get NAN 5GHz social channel
+ * @pdev: PDEV object
+ *
+ * This API returns 5745(channel-149) if it's valid as per regulatory rules
+ * and returns 5220(channel-44) otherwise.
+ *
+ * Return: NAN social channel frequency
+ */
+qdf_freq_t
+wlan_nan_get_5ghz_social_ch_freq(struct wlan_objmgr_pdev *pdev);
 
 /**
  * wlan_nan_get_sap_conc_support: Get NAN+SAP conc support
@@ -238,6 +260,44 @@ bool wlan_is_nan_allowed_on_freq(struct wlan_objmgr_pdev *pdev, uint32_t freq);
  */
 void nan_handle_emlsr_concurrency(struct wlan_objmgr_psoc *psoc,
 				  bool nan_enable);
+
+/**
+ * wlan_nan_is_sta_sap_nan_allowed() - Check if STA + SAP + NAN allowed
+ * @psoc: pointer to psoc object
+ *
+ * Return true if STA + SAP + NAN allowed
+ */
+bool wlan_nan_is_sta_sap_nan_allowed(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * wlan_nan_sap_override_freq() - Return frequency of NAN 2GHz channel
+ * @psoc: pointer to psoc object
+ * @vdev_id: Vdev Id
+ * @chan_freq: current frequency
+ *
+ * Return: valid NAN frequency
+ */
+qdf_freq_t wlan_nan_sap_override_freq(struct wlan_objmgr_psoc *psoc,
+				      uint32_t vdev_id,
+				      qdf_freq_t chan_freq);
+
+/**
+ * wlan_get_nan_config: NAN capability configuration
+ * @psoc: Pointer to PSOC object
+ *
+ * Return: NAN capability bitmap
+ */
+static inline uint32_t wlan_get_nan_config(struct wlan_objmgr_psoc *psoc)
+{
+	struct nan_psoc_priv_obj *nan_obj = nan_get_psoc_priv_obj(psoc);
+
+	if (!nan_obj) {
+		nan_err("nan psoc priv object is NULL");
+		return 0;
+	}
+
+	return nan_obj->cfg_param.nan_config;
+}
 #else /* WLAN_FEATURE_NAN */
 static inline QDF_STATUS nan_init(void)
 {
@@ -266,8 +326,20 @@ wlan_nan_get_connection_info(struct wlan_objmgr_psoc *psoc,
 	return QDF_STATUS_E_FAILURE;
 }
 
+static inline qdf_freq_t
+wlan_nan_get_disc_24g_ch_freq(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+
 static inline uint32_t
 wlan_nan_get_disc_5g_ch_freq(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+
+static inline
+qdf_freq_t wlan_nan_get_5ghz_social_ch_freq(struct wlan_objmgr_pdev *pdev)
 {
 	return 0;
 }
@@ -299,6 +371,25 @@ bool wlan_is_nan_allowed_on_freq(struct wlan_objmgr_pdev *pdev, uint32_t freq)
 static inline void
 nan_handle_emlsr_concurrency(struct wlan_objmgr_psoc *psoc, bool nan_enable)
 {}
+
+static inline
+bool wlan_nan_is_sta_sap_nan_allowed(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline
+qdf_freq_t wlan_nan_sap_override_freq(struct wlan_objmgr_psoc *psoc,
+				      uint32_t vdev_id,
+				      qdf_freq_t chan_freq)
+{
+	return chan_freq;
+}
+
+static inline uint32_t wlan_get_nan_config(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
 #endif /* WLAN_FEATURE_NAN */
 
 #if defined(WLAN_FEATURE_NAN) && defined(WLAN_FEATURE_11BE_MLO)
@@ -317,4 +408,40 @@ wlan_is_mlo_sta_nan_ndi_allowed(struct wlan_objmgr_psoc *psoc)
 	return false;
 }
 #endif
+
+#if defined(WLAN_FEATURE_NAN) && defined(WLAN_CHIPSET_STATS)
+/**
+ * nan_cstats_log_nan_enable_resp_evt() - Chipset stats NAN enable
+ * response event
+ *
+ * @nan_event: pointer to nan_event_params object
+ *
+ * Return: void
+ */
+void nan_cstats_log_nan_enable_resp_evt(struct nan_event_params *nan_event);
+
+/**
+ * nan_cstats_log_nan_disable_resp_evt() - Chipset stats NAN disable
+ * response event
+ *
+ * @vdev_id: vdev ID
+ * @psoc: pointer to psoc object
+ *
+ * Return: void
+ */
+void
+nan_cstats_log_nan_disable_resp_evt(uint8_t vdev_id,
+				    struct wlan_objmgr_psoc *psoc);
+#else
+static inline void
+nan_cstats_log_nan_enable_resp_evt(struct nan_event_params *nan_event)
+{
+}
+
+static inline void
+nan_cstats_log_nan_disable_resp_evt(uint8_t vdev_id,
+				    struct wlan_objmgr_psoc *psoc)
+{
+}
+#endif /* WLAN_FEATURE_NAN && WLAN_CHIPSET_STATS */
 #endif /* _WLAN_NAN_API_H_ */

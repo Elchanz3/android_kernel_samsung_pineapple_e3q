@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2015, 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +28,7 @@
 #include "wlan_osif_priv.h"
 #include "osif_cm_util.h"
 #include "wlan_mlo_mgr_sta.h"
+#include "wlan_scan_api.h"
 
 #define DRIVER_DISCONNECT_REASON \
 	QCA_WLAN_VENDOR_ATTR_GET_STATION_INFO_DRIVER_DISCONNECT_REASON
@@ -168,7 +169,8 @@ static struct wlan_objmgr_vdev *osif_cm_get_anchor_vdev(
 		return NULL;
 }
 
-#if (LINUX_VERSION_CODE == KERNEL_VERSION(5, 4, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 213)) && \
+	(LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
 /**
  * osif_cm_indicate_disconnect_for_non_assoc_link() - Wrapper API to clear
  * current bss param of non-assoc link
@@ -198,6 +200,46 @@ static void osif_cm_indicate_disconnect_for_non_assoc_link(
 }
 #endif
 
+#ifdef ENABLE_CFG80211_BACKPORTS_MLO
+void
+osif_cm_indicate_disconnect(struct wlan_objmgr_vdev *vdev,
+			    struct net_device *dev,
+			    enum ieee80211_reasoncode reason,
+			    bool locally_generated, const u8 *ie,
+			    size_t ie_len, int link_id, gfp_t gfp)
+{
+	struct net_device *netdev = dev;
+	struct wlan_objmgr_vdev *anchor_vdev;
+
+	if (!wlan_vdev_mlme_is_mlo_vdev(vdev) || (link_id != -1)) {
+		osif_cm_indicate_disconnect_result(
+				netdev, reason, ie, ie_len,
+				locally_generated, link_id, gfp);
+		return;
+	}
+
+	anchor_vdev = osif_cm_get_anchor_vdev(vdev);
+
+	if (vdev != anchor_vdev)
+		osif_cm_indicate_disconnect_for_non_assoc_link(netdev, vdev);
+
+	if (anchor_vdev && ucfg_mlo_is_mld_disconnected(vdev)) {
+		/**
+		 * Kernel maintains some extra state on the assoc netdev.
+		 * If the assoc vdev exists, send disconnected event on the
+		 * assoc netdev so that kernel cleans up the extra state.
+		 * If the assoc vdev was already removed, kernel would have
+		 * already cleaned up the extra state while processing the
+		 * disconnected event sent as part of the link removal.
+		 */
+		netdev = osif_cm_get_mld_netdev(anchor_vdev);
+		osif_cm_indicate_disconnect_result(
+				netdev, reason,
+				ie, ie_len,
+				locally_generated, link_id, gfp);
+	}
+}
+#else
 void
 osif_cm_indicate_disconnect(struct wlan_objmgr_vdev *vdev,
 			    struct net_device *dev,
@@ -239,6 +281,7 @@ osif_cm_indicate_disconnect(struct wlan_objmgr_vdev *vdev,
 				locally_generated, link_id, gfp);
 	}
 }
+#endif /* ENABLE_CFG80211_BACKPORTS_MLO */
 #endif /* WLAN_FEATURE_11BE_MLO_ADV_FEATURE */
 #else /* WLAN_FEATURE_11BE_MLO */
 void
@@ -353,7 +396,6 @@ QDF_STATUS osif_disconnect_handler(struct wlan_objmgr_vdev *vdev,
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	enum qca_disconnect_reason_codes qca_reason;
 	int link_id = -1;
-
 	qca_reason = osif_cm_mac_to_qca_reason(rsp->req.req.reason_code);
 	ieee80211_reason =
 		osif_cm_get_disconnect_reason(osif_priv,
@@ -374,7 +416,11 @@ QDF_STATUS osif_disconnect_handler(struct wlan_objmgr_vdev *vdev,
 
 	/* Unlink bss if disconnect is from peer or south bound */
 	if (rsp->req.req.source == CM_PEER_DISCONNECT ||
-	    rsp->req.req.source == CM_SB_DISCONNECT)
+	    rsp->req.req.source == CM_SB_DISCONNECT ||
+	    ((wlan_scan_flush_locally_generated_entry(
+		    wlan_vdev_get_pdev(vdev),
+		    &rsp->req.req.bssid)) &&
+	    rsp->req.req.source != CM_MLO_LINK_SWITCH_DISCONNECT))
 		osif_cm_unlink_bss(vdev, &rsp->req.req.bssid);
 
 	status = osif_validate_disconnect_and_reset_src_id(osif_priv, rsp);

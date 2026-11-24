@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -27,6 +27,9 @@
 
 #ifndef _I_QDF_NBUF_M_H
 #define _I_QDF_NBUF_M_H
+
+#include "i_qdf_page_pool.h"
+
 /**
  * struct qdf_nbuf_cb - network buffer control block contents (skb->cb)
  *                    - data passed between layers of the driver.
@@ -74,6 +77,7 @@
  * @u.rx.dev.priv_cb_m.fr_ds: from DS bit in RX packet
  * @u.rx.dev.priv_cb_m.to_ds: to DS bit in RX packet
  * @u.rx.dev.priv_cb_m.logical_link_id: link id of RX packet
+ * @u.rx.dev.priv_cb_m.audio_smmu_map: audio smmu map
  * @u.rx.dev.priv_cb_m.reserved1: reserved bits
  * @u.rx.dev.priv_cb_m.dp_ext: Union of tcp and ext structs
  * @u.rx.dev.priv_cb_m.dp_ext.tcp: TCP structs
@@ -226,7 +230,8 @@ struct qdf_nbuf_cb {
 						 to_ds:1,
 						 logical_link_id:4,
 						 band:3,
-						 reserved1:7;
+						 audio_smmu_map:1,
+						 reserved1:6;
 					union {
 						struct {
 							uint32_t tcp_seq_num;
@@ -234,8 +239,10 @@ struct qdf_nbuf_cb {
 						} tcp;
 						struct {
 							uint32_t mpdu_seq:12,
-								 reserved:20;
-							uint32_t reserved1;
+								 rx_flow_id:8,
+								 track_flow:1,
+								 reserved:11;
+							uint32_t rx_flow_mdata;
 						} ext;
 					} dp_ext;
 					union {
@@ -576,6 +583,15 @@ QDF_COMPILE_TIME_ASSERT(qdf_nbuf_cb_size,
 #define QDF_NBUF_CB_RX_MPDU_SEQ_NUM(skb) \
 	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
 	 dp_ext.ext.mpdu_seq)
+#define QDF_NBUF_CB_EXT_RX_FLOW_ID(skb) \
+	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
+	 dp_ext.ext.rx_flow_id)
+#define QDF_NBUF_CB_RX_TRACK_FLOW(skb) \
+	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
+	 dp_ext.ext.track_flow)
+#define QDF_NBUF_CB_RX_FLOW_METADATA(skb) \
+	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
+	 dp_ext.ext.rx_flow_mdata)
 
 #define QDF_NBUF_CB_RX_LRO_CTX(skb) \
 	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m.lro_ctx)
@@ -650,6 +666,14 @@ QDF_COMPILE_TIME_ASSERT(qdf_nbuf_cb_size,
 	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
 	band)
 
+#define  QDF_NBUF_CB_RX_PACKET_IPA_SMMU_MAP_CALLER(skb) \
+	 (((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
+	reserved1)
+
+#define QDF_NBUF_CB_RX_AUDIO_SMMU_MAP(skb) \
+	(((struct qdf_nbuf_cb *)((skb)->cb))->u.rx.dev.priv_cb_m. \
+	audio_smmu_map)
+
 #define __qdf_nbuf_ipa_owned_get(skb) \
 	QDF_NBUF_CB_TX_IPA_OWNED(skb)
 
@@ -716,6 +740,14 @@ static inline QDF_STATUS __qdf_nbuf_map_nbytes_single(
 	qdf_dma_addr_t paddr;
 	QDF_STATUS ret;
 
+	if (((dir == QDF_DMA_TO_DEVICE && osdev->no_dma_map) ||
+	     dir == QDF_DMA_FROM_DEVICE || dir == QDF_DMA_BIDIRECTIONAL) &&
+	    __qdf_is_pp_nbuf(buf)) {
+		dma_sync_single_for_device(osdev->dev, QDF_NBUF_CB_PADDR(buf),
+					   nbytes, __qdf_dma_dir_to_os(dir));
+		return QDF_STATUS_SUCCESS;
+	}
+
 	/* assume that the OS only provides a single fragment */
 	QDF_NBUF_CB_PADDR(buf) = paddr =
 		dma_map_single(osdev->dev, buf->data,
@@ -750,6 +782,15 @@ __qdf_nbuf_unmap_nbytes_single(qdf_device_t osdev, struct sk_buff *buf,
 			       qdf_dma_dir_t dir, int nbytes)
 {
 	qdf_dma_addr_t paddr = QDF_NBUF_CB_PADDR(buf);
+
+	/* Sync the DMA buffer for CPU instead of unmap
+	 * for page pool buffers since these are recyclable.
+	 */
+	if (((dir == QDF_DMA_TO_DEVICE && osdev->no_dma_map) ||
+	     dir == QDF_DMA_FROM_DEVICE || dir == QDF_DMA_BIDIRECTIONAL) &&
+	    __qdf_is_pp_nbuf(buf))
+		return dma_sync_single_for_cpu(osdev->dev, paddr, nbytes,
+					       __qdf_dma_dir_to_os(dir));
 
 	if (qdf_likely(paddr)) {
 		__qdf_record_nbuf_nbytes(

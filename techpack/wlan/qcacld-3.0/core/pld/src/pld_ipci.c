@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -33,11 +33,13 @@
 #include "pld_internal.h"
 #include "pld_ipci.h"
 #include "osif_psoc_sync.h"
+#include "cds_api.h"
 
 #ifdef CONFIG_PLD_IPCI_ICNSS
 
 #define WCN6750_DEVICE_ID 0x6750
 #define WCN6450_DEVICE_ID 0x6450
+#define WCN7750_DEVICE_ID 0x7750
 /**
  * pld_ipci_probe() - Probe function for platform driver
  * @dev: device
@@ -84,6 +86,8 @@ static void pld_ipci_remove(struct device *dev)
 	int errno;
 	struct osif_psoc_sync *psoc_sync;
 
+	cds_set_driver_loaded(false);
+	cds_set_unload_in_progress(true);
 	errno = osif_psoc_sync_trans_start_wait(dev, &psoc_sync);
 	if (errno)
 		return;
@@ -397,6 +401,31 @@ out:
 }
 #endif
 
+#ifdef WLAN_FEATURE_SSR_DRIVER_DUMP
+static int
+pld_ipci_collect_driver_dump(struct device *dev,
+			     struct cnss_ssr_driver_dump_entry *input_array,
+			     size_t *num_entries)
+{
+	struct pld_context *pld_context;
+	struct pld_driver_ops *ops;
+	int ret = -EINVAL;
+
+	pld_context = pld_get_global_context();
+
+	if (!pld_context)
+		return ret;
+
+	ops = pld_context->ops;
+	if (ops->collect_driver_dump)
+		ret =  ops->collect_driver_dump(dev,
+						PLD_BUS_TYPE_IPCI,
+						input_array,
+						num_entries);
+	return ret;
+}
+#endif
+
 /**
  * pld_ipci_idle_restart_cb() - Perform idle restart
  * @dev: platform device
@@ -487,6 +516,8 @@ static struct device_info pld_ipci_dev_info[] = {
 	{ "wcn6750", WCN6750_DEVICE_ID },
 #elif defined(QCA_WIFI_WCN6450)
 	{ "wcn6450", WCN6450_DEVICE_ID },
+#elif defined(QCA_WIFI_WCN7750)
+	{ "wcn7750", WCN7750_DEVICE_ID },
 #endif
 	{ { 0 } }
 };
@@ -511,6 +542,9 @@ struct icnss_driver_ops pld_ipci_ops = {
 	.uevent = pld_ipci_uevent,
 	.idle_restart = pld_ipci_idle_restart_cb,
 	.idle_shutdown = pld_ipci_idle_shutdown_cb,
+#ifdef WLAN_FEATURE_SSR_DRIVER_DUMP
+	.collect_driver_dump = pld_ipci_collect_driver_dump,
+#endif
 	.set_therm_cdev_state = pld_ipci_set_thermal_state,
 };
 
@@ -537,6 +571,25 @@ pld_ipci_populate_shadow_v3_cfg(struct icnss_wlan_enable_cfg *cfg,
 static inline void
 pld_ipci_populate_shadow_v3_cfg(struct icnss_wlan_enable_cfg *cfg,
 				struct pld_wlan_enable_cfg *config)
+{
+}
+#endif
+
+#ifdef CE_CMN_REG_CFG_QMI
+static inline void
+pld_ipci_populate_ce_cmn_reg_cfg(struct icnss_wlan_enable_cfg *cfg,
+				 struct pld_wlan_enable_cfg *config)
+{
+	if (config->num_ce_cmn_reg_config) {
+		cfg->num_ce_cmn_reg_config = config->num_ce_cmn_reg_config;
+		cfg->ce_cmn_reg_cfg = (struct icnss_ce_cmn_register_config *)
+				       config->ce_cmn_reg_cfg;
+	}
+}
+#else
+static inline void
+pld_ipci_populate_ce_cmn_reg_cfg(struct icnss_wlan_enable_cfg *cfg,
+				 struct pld_wlan_enable_cfg *config)
 {
 }
 #endif
@@ -571,6 +624,7 @@ int pld_ipci_wlan_enable(struct device *dev, struct pld_wlan_enable_cfg *config,
 	}
 
 	pld_ipci_populate_shadow_v3_cfg(&cfg, config);
+	pld_ipci_populate_ce_cmn_reg_cfg(&cfg, config);
 
 	switch (mode) {
 	case PLD_FTM:
@@ -616,7 +670,7 @@ static void pld_ipci_populate_hw_cap_info(struct icnss_soc_info *icnss_info,
 
 int pld_ipci_get_soc_info(struct device *dev, struct pld_soc_info *info)
 {
-	int errno;
+	int errno = 0, i = 0;
 	struct icnss_soc_info icnss_info = {0};
 
 	if (!info || !dev)
@@ -633,13 +687,17 @@ int pld_ipci_get_soc_info(struct device *dev, struct pld_soc_info *info)
 	info->board_id = icnss_info.board_id;
 	info->soc_id = icnss_info.soc_id;
 	info->fw_version = icnss_info.fw_version;
-	strlcpy(info->fw_build_timestamp, icnss_info.fw_build_timestamp,
+	strscpy(info->fw_build_timestamp, icnss_info.fw_build_timestamp,
 		sizeof(info->fw_build_timestamp));
-	strlcpy(info->fw_build_id, icnss_info.fw_build_id,
+	strscpy(info->fw_build_id, icnss_info.fw_build_id,
 		sizeof(info->fw_build_id));
 
 	pld_ipci_populate_hw_cap_info(&icnss_info, info);
 
+	for (i = 0; i < PLD_MAX_DEV_MEM_NUM; i++) {
+		info->dev_mem_info[i].start = icnss_info.dev_mem_info[i].start;
+		info->dev_mem_info[i].size = icnss_info.dev_mem_info[i].size;
+	}
 	return 0;
 }
 

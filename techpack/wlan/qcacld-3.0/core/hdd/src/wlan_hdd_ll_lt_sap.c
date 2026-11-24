@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -25,6 +25,7 @@
 #include "osif_sync.h"
 #include "wlan_hdd_cfg80211.h"
 #include "os_if_ll_sap.h"
+#include "wlan_ll_sap_public_structs.h"
 
 const struct nla_policy
 	wlan_hdd_ll_lt_sap_transport_switch_policy
@@ -33,6 +34,17 @@ const struct nla_policy
 						.type = NLA_U8},
 		[QCA_WLAN_VENDOR_ATTR_AUDIO_TRANSPORT_SWITCH_STATUS] = {
 						.type = NLA_U8},
+};
+
+const struct nla_policy
+	wlan_hdd_ll_lt_sap_high_ap_availability_policy
+	[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_MAX + 1] = {
+		[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_OPERATION] = {
+						.type = NLA_U8},
+		[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_COOKIE] = {
+						.type = NLA_U16},
+		[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_DURATION] = {
+						.type = NLA_U32},
 };
 
 /**
@@ -152,3 +164,168 @@ int wlan_hdd_cfg80211_ll_lt_sap_transport_switch(struct wiphy *wiphy,
 
 	return errno;
 }
+
+/**
+ * __wlan_hdd_cfg80211_ll_lt_sap_high_ap_availability() - Request for high ap
+ * availability
+ * @wiphy:   pointer to wireless wiphy structure.
+ * @wdev:    pointer to wireless_dev structure.
+ * @data:    Pointer to the data to be passed via vendor interface
+ * @data_len:Length of the data to be passed
+ *
+ * Return:   Return the Success or Failure code.
+ */
+static int
+__wlan_hdd_cfg80211_ll_lt_sap_high_ap_availability(struct wiphy *wiphy,
+						   struct wireless_dev *wdev,
+						   const void *data,
+						   int data_len)
+{
+	struct net_device *dev = wdev->netdev;
+	struct hdd_context *hdd_ctx = wiphy_priv(wiphy);
+	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+	struct wlan_objmgr_vdev *vdev;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_MAX + 1];
+	enum qca_high_ap_availability_operation operation;
+	uint16_t cookie = LL_SAP_INVALID_COOKIE;
+	uint32_t duration = 0;
+	QDF_STATUS status = QDF_STATUS_E_INVAL;
+	uint8_t reject_vdev_id = INVALID_VDEV_ID;
+	enum scan_reject_states reject_reason = SCAN_REJECT_DEFAULT;
+	struct wlan_serialization_command cmd = {0};
+
+	hdd_enter_dev(dev);
+
+	if (wlan_hdd_validate_context(hdd_ctx))
+		return -EINVAL;
+
+	if (hdd_validate_adapter(adapter))
+		return -EINVAL;
+
+	if (wlan_hdd_validate_vdev_id(adapter->deflink->vdev_id))
+		return -EINVAL;
+
+	if (!policy_mgr_is_vdev_ll_lt_sap(hdd_ctx->psoc,
+					  adapter->deflink->vdev_id)) {
+		hdd_err_rl("Command not allowed on vdev %d",
+			   adapter->deflink->vdev_id);
+		return -EINVAL;
+	}
+
+	if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
+		hdd_err("Command not allowed in FTM mode");
+		return -EPERM;
+	}
+
+	if (hdd_is_chan_switch_in_progress())
+		return -EAGAIN;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(hdd_ctx->psoc,
+						    adapter->deflink->vdev_id,
+						    WLAN_LL_SAP_ID);
+	if (!vdev) {
+		hdd_err("vdev %d not found", adapter->deflink->vdev_id);
+		return -EINVAL;
+	}
+	cmd.cmd_type = WLAN_SER_CMD_HIGH_AP_AVAILABILITY;
+	cmd.cmd_id = 0;
+	cmd.vdev = vdev;
+	cmd.is_high_priority = false;
+
+	if (wlan_serialization_is_cmd_present_in_active_queue(hdd_ctx->psoc,
+							      &cmd)) {
+		/*
+		 * One Command is already in active queue dont check for
+		 * connection in progress, just allow it, there could be a
+		 * scenario where one EB has already requested for high AP
+		 * availability and before second EB requests, connection starts
+		 * at the station, now if second EB sends high AP availability
+		 * request, HS should not reject it.
+		 */
+	} else if (hdd_is_connection_in_progress(&reject_vdev_id,
+						 &reject_reason)) {
+		if (!policy_mgr_is_vdev_ll_lt_sap(hdd_ctx->psoc,
+						  reject_vdev_id)) {
+			hdd_err_rl("connection in progress vdev %d reason %d",
+				   reject_vdev_id, reject_reason);
+			status = QDF_STATUS_E_BUSY;
+			goto err;
+		}
+	}
+
+	if (wlan_cfg80211_nla_parse(
+			tb, QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_MAX,
+			data, data_len,
+			wlan_hdd_ll_lt_sap_high_ap_availability_policy)) {
+		hdd_err("vdev %d Invalid attribute", adapter->deflink->vdev_id);
+		status = QDF_STATUS_E_INVAL;
+		goto err;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_OPERATION]) {
+		hdd_err("Vdev %d attr high ap availability operation failed",
+			adapter->deflink->vdev_id);
+		status = QDF_STATUS_E_INVAL;
+		goto err;
+	}
+
+	operation = nla_get_u8(
+			tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_OPERATION]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_DURATION]) {
+		duration = nla_get_u32(
+			tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_DURATION]);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_COOKIE]) {
+		cookie = nla_get_u32(
+			tb[QCA_WLAN_VENDOR_ATTR_HIGH_AP_AVAILABILITY_COOKIE]);
+	}
+
+	status = osif_ll_lt_sap_high_ap_availability(vdev, operation, duration,
+						     cookie);
+err:
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_LL_SAP_ID);
+
+	return qdf_status_to_os_return(status);
+}
+
+int wlan_hdd_cfg80211_ll_lt_sap_high_ap_availability(struct wiphy *wiphy,
+						     struct wireless_dev *wdev,
+						     const void *data,
+						     int data_len)
+{
+	int errno;
+	struct osif_vdev_sync *vdev_sync;
+
+	errno = osif_vdev_sync_op_start(wdev->netdev, &vdev_sync);
+	if (errno)
+		return errno;
+
+	errno = __wlan_hdd_cfg80211_ll_lt_sap_high_ap_availability(wiphy, wdev,
+								   data,
+								   data_len);
+
+	osif_vdev_sync_op_stop(vdev_sync);
+
+	return errno;
+}
+
+#ifdef WLAN_FEATURE_LL_LT_SAP
+int wlan_hdd_ll_lt_sap_get_csa_timestamp(struct wlan_objmgr_psoc *psoc,
+					 struct wlan_objmgr_vdev *vdev,
+					 uint64_t *target_tsf)
+{
+	uint8_t vdev_id = WLAN_INVALID_VDEV_ID;
+
+	psoc = wlan_vdev_get_psoc(vdev);
+
+	vdev_id = wlan_vdev_get_id(vdev);
+	if (!policy_mgr_is_vdev_ll_lt_sap(psoc, vdev_id))
+		return -EINVAL;
+
+	ucfg_ll_lt_sap_get_target_tsf(vdev, target_tsf);
+
+	return 0;
+}
+#endif

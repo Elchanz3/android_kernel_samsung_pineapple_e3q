@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -31,6 +31,7 @@
 #include <qca_vendor.h>
 #include <wlan_scan_public_structs.h>
 #include <qdf_list.h>
+#include <qdf_util.h>
 #include <qdf_types.h>
 #include <wlan_scan_ucfg_api.h>
 #include <wlan_mgmt_txrx_utils_api.h>
@@ -57,6 +58,10 @@ extern const struct nla_policy cfg80211_scan_policy[
 #define SCAN_WAKE_LOCK_CONNECT_DURATION (1 * 1000) /* in msec */
 #define SCAN_WAKE_LOCK_SCAN_DURATION (5 * 1000) /* in msec */
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+#define SCAN_CACHE_REPORT_TIMEOUT_MS (10 * 1000) /* in msec */
+#endif
+
 /**
  * struct osif_scan_pdev - OS scan private structure
  * @scan_req_q: Scan request queue
@@ -64,6 +69,10 @@ extern const struct nla_policy cfg80211_scan_policy[
  * @req_id: Scan request Id
  * @runtime_pm_lock: Runtime suspend lock
  * @scan_wake_lock: Scan wake lock
+ * @cache_scan_report_req_cnt: Current count of requests for cache scan report
+ * @cache_scan_report_event: Event to wait for on cache scan report request
+ * @cache_scan_report: Contains cached scan report extracted from FW via
+ * WMI_SCAN_CACHE_RESULT_EVENTID.
  */
 struct osif_scan_pdev{
 	qdf_list_t scan_req_q;
@@ -71,6 +80,11 @@ struct osif_scan_pdev{
 	wlan_scan_requester req_id;
 	qdf_runtime_lock_t runtime_pm_lock;
 	qdf_wake_lock_t scan_wake_lock;
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+	qdf_atomic_t cache_scan_report_req_cnt;
+	qdf_event_t cache_scan_report_event;
+	struct wlan_scan_cache_scan_report *cache_scan_report;
+#endif
 };
 
 /*
@@ -124,6 +138,7 @@ struct scan_req {
  * @scan_f_2ghz: Scan only 2GHz channels
  * @scan_f_5ghz: Scan only 5+6GHz channels
  * @mld_id: MLD ID of the requested BSS within ML probe request
+ * @opmode: Interface type from where this scan request is initiated
  */
 struct scan_params {
 	uint8_t source;
@@ -142,6 +157,7 @@ struct scan_params {
 	bool scan_f_2ghz;
 	bool scan_f_5ghz;
 	uint8_t mld_id;
+	enum QDF_OPMODE opmode;
 };
 
 /**
@@ -441,4 +457,29 @@ enum scan_priority convert_nl_scan_priority_to_internal(
  * Return: True if current scan can be allowed
  */
 bool wlan_is_scan_allowed(struct wlan_objmgr_vdev *vdev);
+
+#ifdef ENABLE_CFG80211_BACKPORTS_MLO
+/**
+ * struct osif_scan_ops - OS scan ops
+ * @get_scan_status: call back to get the status of the cfg80211 scan
+ * @update_scan_status: call back to set the cfg80211 scan status
+ */
+struct osif_scan_ops {
+	QDF_STATUS (*get_scan_status)(struct net_device *netdev,
+				      struct cfg80211_scan_request **req,
+				      struct pdev_osif_priv *osif_priv);
+	void (*update_scan_status)(struct net_device *netdev,
+				   struct cfg80211_scan_request **req,
+				   struct pdev_osif_priv *osif_priv,
+				   bool suspend);
+};
+
+/**
+ * osif_scan_set_ops() - Set global_osif_scan_ops with ops
+ * @ops: ops structure holding pointers to osif scan callback APIs
+ *
+ * Retuen: none
+ */
+void osif_scan_set_ops(struct osif_scan_ops *ops);
+#endif /* ENABLE_CFG80211_BACKPORTS_MLO */
 #endif

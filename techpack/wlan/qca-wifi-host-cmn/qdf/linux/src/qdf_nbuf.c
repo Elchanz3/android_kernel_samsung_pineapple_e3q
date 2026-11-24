@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -24,6 +24,9 @@
 #include <linux/hashtable.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0))
+#include <linux/skbuff_ref.h>
+#endif
 #include <linux/skbuff.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
@@ -44,6 +47,7 @@
 #include <qdf_crypto.h>
 #include <linux/igmp.h>
 #include <net/mld.h>
+#include <qdf_page_pool.h>
 
 #if defined(FEATURE_TSO)
 #include <net/ipv6.h>
@@ -105,6 +109,9 @@
 #define RADIOTAP_CCK_CHANNEL 0x0020
 #define RADIOTAP_OFDM_CHANNEL 0x0040
 
+/* Max valid user info supported in EHT */
+#define MAX_NUM_EHT_USER_INFO_VALID 4
+
 #ifdef FEATURE_NBUFF_REPLENISH_TIMER
 #include <qdf_mc_timer.h>
 
@@ -162,17 +169,55 @@ static inline uint8_t __qdf_nbuf_get_ip_offset(uint8_t *data)
 	return QDF_NBUF_TRAC_IP_OFFSET;
 }
 
-/**
- *  __qdf_nbuf_get_ether_type() - Get the ether type
- * @data: Pointer to network data buffer
- *
- * Get the ether type in case of 8021Q and 8021AD tag
- * is present in L2 header, e.g for the returned ether type
- * value, if IPV4 data ether type 0x0800, return 0x0008.
- *
- * Return ether type.
- */
-static inline uint16_t __qdf_nbuf_get_ether_type(uint8_t *data)
+uint8_t *__qdf_nbuf_nonlinear_data(struct sk_buff *skb)
+{
+	if (__qdf_nbuf_get_nr_frags(skb))
+		return __qdf_nbuf_get_frag_addr(skb, 0);
+
+	if (__qdf_nbuf_has_fraglist(skb)) {
+		__qdf_nbuf_t buf;
+
+		buf = __qdf_nbuf_get_ext_list(skb);
+		if (buf)
+			return __qdf_nbuf_data(buf);
+	}
+	return __qdf_nbuf_data(skb);
+}
+
+static inline uint8_t
+__qdf_nbuf_calc_80211_hdr_len(uint8_t *data)
+{
+	uint8_t subtype;
+	struct qdf_dot11_frame *dot11hdr;
+	uint8_t hdr_len = 0;
+
+	dot11hdr = (struct qdf_dot11_frame *)data;
+	subtype = dot11hdr->i_fc[0] & QDF_IEEE80211_FC0_SUBTYPE_MASK;
+	hdr_len += sizeof(struct qdf_dot11_frame);
+
+	if (subtype & QDF_IEEE80211_FC0_SUBTYPE_QOS) {
+		uint8_t qos_ctrl = *(uint8_t *)(data +
+						sizeof(struct qdf_dot11_frame));
+		if (qos_ctrl & QDF_IEEE80211_QOS_AMSDU) {
+			hdr_len += QDF_IEEE80211_QOS_CTRL_LEN +
+				QDF_NET_MAC_ADDR_MAX_LEN +
+				QDF_NET_MAC_ADDR_MAX_LEN +
+				QDF_IEEE80211_QOS_AMSDU_LEN;
+		} else {
+			hdr_len += QDF_IEEE80211_QOS_CTRL_LEN;
+		}
+	}
+
+	if (dot11hdr->i_fc[1] & QDF_IEEE80211_HTC_CTRL)
+		hdr_len += QDF_IEEE80211_HTC_CTRL_LEN;
+
+	if (dot11hdr->i_fc[1] & QDF_IEEE80211_CCMP_PARAM)
+		hdr_len += QDF_IEEE80211_CCMP_PARAM_LEN;
+
+	return hdr_len;
+}
+
+uint16_t __qdf_nbuf_get_ether_type(uint8_t *data)
 {
 	uint16_t ether_type;
 
@@ -188,6 +233,21 @@ static inline uint16_t __qdf_nbuf_get_ether_type(uint8_t *data)
 
 	return ether_type;
 }
+
+qdf_export_symbol(__qdf_nbuf_get_ether_type);
+
+uint16_t __qdf_nbuf_get_dot11_type(uint8_t *data)
+{
+	uint16_t dot11_type;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	dot11_type = *(uint16_t *)(data + dot11_hdr_offset +
+				   QDF_NBUF_TRAC_DOT11_TYPE_OFFSET);
+
+	return dot11_type;
+}
+
+qdf_export_symbol(__qdf_nbuf_get_dot11_type);
 
 void qdf_nbuf_tx_desc_count_display(void)
 {
@@ -585,18 +645,8 @@ struct sk_buff *__qdf_nbuf_alloc(qdf_device_t osdev, size_t size, int reserve,
 	if (align)
 		size += (align - 1);
 
-	if (in_interrupt() || irqs_disabled() || in_atomic()) {
+	if (in_interrupt() || irqs_disabled() || in_atomic())
 		flags = GFP_ATOMIC;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
-		/*
-		 * Observed that kcompactd burns out CPU to make order-3 page.
-		 *__netdev_alloc_skb has 4k page fallback option just in case of
-		 * failing high order page allocation so we don't need to be
-		 * hard. Make kcompactd rest in piece.
-		 */
-		flags = flags & ~__GFP_KSWAPD_RECLAIM;
-#endif
-	}
 
 	skb =  alloc_skb(size, flags);
 
@@ -722,7 +772,11 @@ void __qdf_nbuf_free(struct sk_buff *skb)
 	if (nbuf_free_cb)
 		nbuf_free_cb(skb);
 	else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+		dev_consume_skb_any(skb);
+#else
 		dev_kfree_skb_any(skb);
+#endif
 }
 
 qdf_export_symbol(__qdf_nbuf_free);
@@ -797,6 +851,55 @@ skb_alloc:
 }
 
 qdf_export_symbol(__qdf_nbuf_page_frag_alloc);
+
+#if defined(DP_FEATURE_RX_BUFFER_RECYCLE) || defined(DP_FEATURE_TX_PAGE_POOL)
+struct sk_buff *
+__qdf_nbuf_page_pool_alloc(qdf_device_t osdev, size_t size, int reserve,
+			   int align, __qdf_page_pool_t pp, uint32_t *offset,
+			   const char *func, uint32_t line)
+{
+	struct sk_buff *skb;
+	struct page *page;
+
+	if (align)
+		size += (align - 1);
+
+	size = SKB_DATA_ALIGN(size) +
+		SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+
+	*offset = 0;
+
+	page = qdf_page_pool_alloc_frag(pp, offset, size);
+	if (!page) {
+		qdf_rl_nofl_err("failed to alloc page pool buffer %zuB @ %s:%d",
+				size, func, line);
+		return NULL;
+	}
+
+	skb = napi_build_skb(page_address(page) + *offset, size);
+	if (!skb) {
+		qdf_page_pool_put_page(pp, page, false);
+		qdf_rl_nofl_err("failed to build skb %zuB @ %s:%d",
+				size, func, line);
+		return NULL;
+	}
+
+	skb_mark_for_recycle(skb);
+	qdf_nbuf_set_defaults(skb, align, reserve);
+
+	return skb;
+}
+#else
+struct sk_buff *
+__qdf_nbuf_page_pool_alloc(qdf_device_t osdev, size_t size, int reserve,
+			   int align, __qdf_page_pool_t pp, uint32_t *offset,
+			   const char *func, uint32_t line)
+{
+	return NULL;
+}
+#endif
+
+qdf_export_symbol(__qdf_nbuf_page_pool_alloc);
 
 #ifdef QCA_DP_TX_NBUF_LIST_FREE
 void
@@ -1091,6 +1194,11 @@ void qdf_nbuf_map_check_for_leaks(void)
 	qdf_tracker_check_for_leaks(&qdf_nbuf_map_tracker);
 }
 
+void qdf_nbuf_detect_track_list_corruption(void *ptr, uint32_t size)
+{
+	qdf_tracker_check_list_corruption(&qdf_nbuf_map_tracker, ptr, size);
+}
+
 QDF_STATUS qdf_nbuf_map_debug(qdf_device_t osdev,
 			      qdf_nbuf_t buf,
 			      qdf_dma_dir_t dir,
@@ -1251,6 +1359,25 @@ void qdf_nbuf_unmap_nbytes_single_debug(qdf_device_t osdev,
 
 qdf_export_symbol(qdf_nbuf_unmap_nbytes_single_debug);
 
+QDF_STATUS qdf_nbuf_track_map_single_debug(qdf_device_t osdev, qdf_nbuf_t buf,
+					   qdf_dma_dir_t dir, const char *func,
+					   uint32_t line)
+{
+	QDF_STATUS status;
+
+	status = qdf_nbuf_track_map(buf, func, line);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+
+	if (!is_initial_mem_debug_disabled)
+		qdf_nbuf_history_add(buf, func, line, QDF_NBUF_MAP);
+	qdf_net_buf_debug_update_map_node(buf, func, line);
+
+	return status;
+}
+
+qdf_export_symbol(qdf_nbuf_track_map_single_debug);
+
 void qdf_nbuf_unmap_nbytes_single_paddr_debug(qdf_device_t osdev,
 					      qdf_nbuf_t buf,
 					      qdf_dma_addr_t phy_addr,
@@ -1259,7 +1386,13 @@ void qdf_nbuf_unmap_nbytes_single_paddr_debug(qdf_device_t osdev,
 {
 	qdf_nbuf_untrack_map(buf, func, line);
 	__qdf_record_nbuf_nbytes(__qdf_nbuf_get_end_offset(buf), dir, false);
-	__qdf_mem_unmap_nbytes_single(osdev, phy_addr, dir, nbytes);
+
+	if (qdf_skip_dma_map_unmap(osdev, buf, dir))
+		dma_sync_single_for_cpu(osdev->dev, phy_addr,
+					nbytes, __qdf_dma_dir_to_os(dir));
+	else
+		__qdf_mem_unmap_nbytes_single(osdev, phy_addr, dir, nbytes);
+
 	qdf_net_buf_debug_update_unmap_node(buf, func, line);
 }
 
@@ -1358,17 +1491,28 @@ QDF_STATUS
 __qdf_nbuf_map_single(qdf_device_t osdev, qdf_nbuf_t buf, qdf_dma_dir_t dir)
 {
 	qdf_dma_addr_t paddr;
+	QDF_STATUS ret;
+
+	if (qdf_skip_dma_map_unmap(osdev, buf, dir)) {
+		dma_sync_single_for_device(osdev->dev, QDF_NBUF_CB_PADDR(buf),
+					   skb_end_pointer(buf) - buf->data,
+					   __qdf_dma_dir_to_os(dir));
+		return QDF_STATUS_SUCCESS;
+	}
 
 	/* assume that the OS only provides a single fragment */
 	QDF_NBUF_CB_PADDR(buf) = paddr =
 		dma_map_single(osdev->dev, buf->data,
 				skb_end_pointer(buf) - buf->data,
 				__qdf_dma_dir_to_os(dir));
-	__qdf_record_nbuf_nbytes(
-		__qdf_nbuf_get_end_offset(buf), dir, true);
-	return dma_mapping_error(osdev->dev, paddr)
+
+	ret = dma_mapping_error(osdev->dev, paddr)
 		? QDF_STATUS_E_FAILURE
 		: QDF_STATUS_SUCCESS;
+	if (QDF_IS_STATUS_SUCCESS(ret))
+		__qdf_record_nbuf_nbytes(
+			__qdf_nbuf_get_end_offset(buf), dir, true);
+	return ret;
 }
 qdf_export_symbol(__qdf_nbuf_map_single);
 #endif
@@ -1382,6 +1526,12 @@ void __qdf_nbuf_unmap_single(qdf_device_t osdev, qdf_nbuf_t buf,
 void __qdf_nbuf_unmap_single(qdf_device_t osdev, qdf_nbuf_t buf,
 					qdf_dma_dir_t dir)
 {
+	if (qdf_skip_dma_map_unmap(osdev, buf, dir))
+		return dma_sync_single_for_cpu(osdev->dev,
+					       QDF_NBUF_CB_PADDR(buf),
+					       skb_end_pointer(buf) - buf->data,
+					       __qdf_dma_dir_to_os(dir));
+
 	if (QDF_NBUF_CB_PADDR(buf)) {
 		__qdf_record_nbuf_nbytes(
 			__qdf_nbuf_get_end_offset(buf), dir, false);
@@ -1498,6 +1648,9 @@ __qdf_nbuf_data_get_dhcp_subtype(uint8_t *data)
 	return subtype;
 }
 
+qdf_export_symbol(__qdf_nbuf_data_get_dhcp_subtype);
+
+#define EAPOL_WPA_KEY_INFO_KEY_TYPE BIT(3)
 #define EAPOL_WPA_KEY_INFO_ACK BIT(7)
 #define EAPOL_WPA_KEY_INFO_MIC BIT(8)
 #define EAPOL_WPA_KEY_INFO_ENCR_KEY_DATA BIT(12) /* IEEE 802.11i/RSN only */
@@ -1526,6 +1679,7 @@ __qdf_nbuf_data_get_eapol_key(uint8_t *data)
 	uint16_t key_info, key_data_length;
 	enum qdf_proto_subtype subtype;
 	uint64_t *key_nonce;
+	bool pairwise;
 
 	key_info = qdf_ntohs((uint16_t)(*(uint16_t *)
 			(data + EAPOL_KEY_INFO_OFFSET)));
@@ -1533,18 +1687,21 @@ __qdf_nbuf_data_get_eapol_key(uint8_t *data)
 	key_data_length = qdf_ntohs((uint16_t)(*(uint16_t *)
 				(data + EAPOL_KEY_DATA_LENGTH_OFFSET)));
 	key_nonce = (uint64_t *)(data + EAPOL_WPA_KEY_NONCE_OFFSET);
+	pairwise = key_info & EAPOL_WPA_KEY_INFO_KEY_TYPE;
 
 	if (key_info & EAPOL_WPA_KEY_INFO_ACK)
 		if (key_info &
 		    (EAPOL_WPA_KEY_INFO_MIC | EAPOL_WPA_KEY_INFO_ENCR_KEY_DATA))
-			subtype = QDF_PROTO_EAPOL_M3;
+			subtype = pairwise ?
+				  QDF_PROTO_EAPOL_M3 : QDF_PROTO_EAPOL_G1;
 		else
 			subtype = QDF_PROTO_EAPOL_M1;
 	else
 		if (key_data_length == 0 ||
 		    !((*key_nonce) || (*(key_nonce + 1)) ||
 		      (*(key_nonce + 2)) || (*(key_nonce + 3))))
-			subtype = QDF_PROTO_EAPOL_M4;
+			subtype = pairwise ?
+				  QDF_PROTO_EAPOL_M4 : QDF_PROTO_EAPOL_G2;
 		else
 			subtype = QDF_PROTO_EAPOL_M2;
 
@@ -1788,6 +1945,15 @@ __qdf_nbuf_is_ipv4_last_fragment(struct sk_buff *skb)
 	return false;
 }
 
+bool
+__qdf_nbuf_is_ipv4_fragment(struct sk_buff *skb)
+{
+	if (ntohs(ip_hdr(skb)->frag_off) & IP_MF)
+		return true;
+
+	return false;
+}
+
 void
 __qdf_nbuf_data_set_ipv4_tos(uint8_t *data, uint8_t tos)
 {
@@ -1813,6 +1979,8 @@ __qdf_nbuf_data_get_ipv4_proto(uint8_t *data)
 				QDF_NBUF_TRAC_IPV4_PROTO_TYPE_OFFSET));
 	return proto_type;
 }
+
+qdf_export_symbol(__qdf_nbuf_data_get_ipv4_proto);
 
 uint8_t
 __qdf_nbuf_data_get_ipv6_tc(uint8_t *data)
@@ -1856,6 +2024,98 @@ bool __qdf_nbuf_data_is_ipv4_pkt(uint8_t *data)
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv4_pkt);
 
+bool __qdf_nbuf_dot11_data_is_ipv4_pkt(uint8_t *data)
+{
+	uint16_t dot11_type;
+
+	dot11_type = __qdf_nbuf_get_dot11_type(data);
+
+	if (dot11_type == QDF_SWAP_U16(QDF_NBUF_TRAC_IPV4_ETH_TYPE))
+		return true;
+
+	return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv4_pkt);
+
+bool __qdf_nbuf_sock_is_valid_fullsock(struct sk_buff *skb)
+{
+	if (skb->sk && sk_fullsock(skb->sk))
+		return true;
+
+	return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_sock_is_valid_fullsock);
+
+/**
+ * __qdf_nbuf_sock_is_ipv4_pkt() - check if it is a ipv4 sock
+ * @skb: Pointer to network buffer
+ *
+ * User needs to take care for NULL sk pointer.
+ *
+ * Return: true if it is ipv4 sock
+ *	   false otherwise or in case of NULL sk
+ */
+bool __qdf_nbuf_sock_is_ipv4_pkt(struct sk_buff *skb)
+{
+	if (skb->sk && skb->sk->sk_family == AF_INET)
+		return true;
+	else
+		return false;
+}
+qdf_export_symbol(__qdf_nbuf_sock_is_ipv4_pkt);
+
+/**
+ * __qdf_nbuf_sock_is_ipv6_pkt() - check if it is a ipv6 sock
+ * @skb: Pointer to network buffer
+ *
+ * User needs to take care for NULL sk pointer.
+ *
+ * Return: true if it is a ipv6 sock
+ *	   false otherwise or in case of NULL sk
+ */
+bool __qdf_nbuf_sock_is_ipv6_pkt(struct sk_buff *skb)
+{
+	if (skb->sk && skb->sk->sk_family == AF_INET6)
+		return true;
+	else
+		return false;
+}
+qdf_export_symbol(__qdf_nbuf_sock_is_ipv6_pkt);
+
+/**
+ * __qdf_nbuf_sock_is_udp_pkt() - check if it is a udp sock
+ * @skb: Pointer to network buffer
+ *
+ * Return: true if it is a udp sock
+ *	   false otherwise
+ */
+bool __qdf_nbuf_sock_is_udp_pkt(struct sk_buff *skb)
+{
+	if (skb->sk->sk_protocol == QDF_NBUF_TRAC_UDP_TYPE)
+		return true;
+	else
+		return false;
+}
+qdf_export_symbol(__qdf_nbuf_sock_is_udp_pkt);
+
+/**
+ * __qdf_nbuf_sock_is_tcp_pkt() - check if it is a tcp sock
+ * @skb: Pointer to network buffer
+ *
+ * Return: true if it is a tcp sock
+ *	   false otherwise
+ */
+bool __qdf_nbuf_sock_is_tcp_pkt(struct sk_buff *skb)
+{
+	if (skb->sk->sk_protocol == QDF_NBUF_TRAC_TCP_TYPE)
+		return true;
+	else
+		return false;
+}
+qdf_export_symbol(__qdf_nbuf_sock_is_tcp_pkt);
+
 bool __qdf_nbuf_data_is_ipv4_dhcp_pkt(uint8_t *data)
 {
 	uint16_t sport;
@@ -1885,6 +2145,40 @@ bool __qdf_nbuf_data_is_ipv4_dhcp_pkt(uint8_t *data)
 		return false;
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv4_dhcp_pkt);
+
+bool __qdf_nbuf_dot11_data_is_ipv4_dhcp_pkt(uint8_t *data)
+{
+	uint16_t sport;
+	uint16_t dport;
+	uint8_t ipv4_offset;
+	uint8_t ipv4_hdr_len;
+	struct iphdr *iphdr;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	if (__qdf_nbuf_get_dot11_type(data) !=
+		QDF_SWAP_U16(QDF_NBUF_TRAC_IPV4_ETH_TYPE))
+		return false;
+
+	ipv4_offset = dot11_hdr_offset + QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+					 QDF_NBUF_TRAC_IP_OFFSET);
+
+	iphdr = (struct iphdr *)(data + ipv4_offset);
+	ipv4_hdr_len = iphdr->ihl * QDF_NBUF_IPV4_HDR_SIZE_UNIT;
+
+	sport = *(uint16_t *)(data + ipv4_offset + ipv4_hdr_len);
+	dport = *(uint16_t *)(data + ipv4_offset + ipv4_hdr_len +
+			      sizeof(uint16_t));
+
+	if (((sport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP_SRV_PORT)) &&
+	     (dport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP_CLI_PORT))) ||
+	    ((sport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP_CLI_PORT)) &&
+	     (dport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP_SRV_PORT))))
+		return true;
+	else
+		return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv4_dhcp_pkt);
 
 /**
  * qdf_is_eapol_type() - check if packet is EAPOL
@@ -1916,6 +2210,17 @@ bool __qdf_nbuf_data_is_ipv4_eapol_pkt(uint8_t *data)
 	return qdf_is_eapol_type(ether_type);
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv4_eapol_pkt);
+
+bool __qdf_nbuf_dot11_data_is_ipv4_eapol_pkt(uint8_t *data)
+{
+	uint16_t dot11_type;
+
+	dot11_type = __qdf_nbuf_get_dot11_type(data);
+
+	return qdf_is_eapol_type(dot11_type);
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv4_eapol_pkt);
 
 bool __qdf_nbuf_is_ipv4_wapi_pkt(struct sk_buff *skb)
 {
@@ -2215,6 +2520,20 @@ bool __qdf_nbuf_data_is_ipv4_arp_pkt(uint8_t *data)
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv4_arp_pkt);
 
+bool __qdf_nbuf_dot11_data_is_ipv4_arp_pkt(uint8_t *data)
+{
+	uint16_t dot11_type;
+
+	dot11_type = __qdf_nbuf_get_dot11_type(data);
+
+	if (dot11_type == QDF_SWAP_U16(QDF_NBUF_TRAC_ARP_ETH_TYPE))
+		return true;
+
+	return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv4_arp_pkt);
+
 bool __qdf_nbuf_data_is_arp_req(uint8_t *data)
 {
 	uint16_t op_code;
@@ -2286,6 +2605,33 @@ bool __qdf_nbuf_data_is_dns_query(uint8_t *data)
 	return false;
 }
 
+qdf_export_symbol(__qdf_nbuf_data_is_dns_query);
+
+bool __qdf_nbuf_dot11_data_is_dns_query(uint8_t *data)
+{
+	uint16_t op_code;
+	uint16_t tgt_port;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	tgt_port = (uint16_t)(*(uint16_t *)(data + dot11_hdr_offset +
+					    QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+					    QDF_NBUF_PKT_DNS_DST_PORT_OFFSET)));
+
+	/* Standard DNS query always happen on Dest Port 53. */
+	if (tgt_port == QDF_SWAP_U16(QDF_NBUF_PKT_DNS_STANDARD_PORT)) {
+		op_code = (uint16_t)(*(uint16_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_DNS_OVER_UDP_OPCODE_OFFSET)));
+
+		if ((QDF_SWAP_U16(op_code) & QDF_NBUF_PKT_DNSOP_BITMAP) ==
+				QDF_NBUF_PKT_DNSOP_STANDARD_QUERY)
+			return true;
+	}
+	return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_dns_query);
+
 bool __qdf_nbuf_data_is_dns_response(uint8_t *data)
 {
 	uint16_t op_code;
@@ -2305,12 +2651,54 @@ bool __qdf_nbuf_data_is_dns_response(uint8_t *data)
 	return false;
 }
 
+qdf_export_symbol(__qdf_nbuf_data_is_dns_response);
+
+bool __qdf_nbuf_dot11_data_is_dns_response(uint8_t *data)
+{
+	uint16_t op_code;
+	uint16_t src_port;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	src_port = (uint16_t)(*(uint16_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_DNS_SRC_PORT_OFFSET)));
+
+	/* Standard DNS response always comes on Src Port 53. */
+	if (src_port == QDF_SWAP_U16(QDF_NBUF_PKT_DNS_STANDARD_PORT)) {
+		op_code = (uint16_t)(*(uint16_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_DNS_OVER_UDP_OPCODE_OFFSET)));
+
+		if ((QDF_SWAP_U16(op_code) & QDF_NBUF_PKT_DNSOP_BITMAP) ==
+				QDF_NBUF_PKT_DNSOP_STANDARD_RESPONSE)
+			return true;
+	}
+	return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_dns_response);
+
 bool __qdf_nbuf_data_is_tcp_fin(uint8_t *data)
 {
 	uint8_t op_code;
 
 	op_code = (uint8_t)(*(uint8_t *)(data +
 				QDF_NBUF_PKT_TCP_OPCODE_OFFSET));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_FIN)
+		return true;
+
+	return false;
+}
+
+bool __qdf_nbuf_dot11_data_is_tcp_fin(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
 
 	if (op_code == QDF_NBUF_PKT_TCPOP_FIN)
 		return true;
@@ -2331,6 +2719,21 @@ bool __qdf_nbuf_data_is_tcp_fin_ack(uint8_t *data)
 	return false;
 }
 
+bool __qdf_nbuf_dot11_data_is_tcp_fin_ack(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_FIN_ACK)
+		return true;
+
+	return false;
+}
+
 bool __qdf_nbuf_data_is_tcp_syn(uint8_t *data)
 {
 	uint8_t op_code;
@@ -2343,12 +2746,40 @@ bool __qdf_nbuf_data_is_tcp_syn(uint8_t *data)
 	return false;
 }
 
+bool __qdf_nbuf_dot11_data_is_tcp_syn(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_SYN)
+		return true;
+	return false;
+}
+
 bool __qdf_nbuf_data_is_tcp_syn_ack(uint8_t *data)
 {
 	uint8_t op_code;
 
 	op_code = (uint8_t)(*(uint8_t *)(data +
 				QDF_NBUF_PKT_TCP_OPCODE_OFFSET));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_SYN_ACK)
+		return true;
+	return false;
+}
+
+bool __qdf_nbuf_dot11_data_is_tcp_syn_ack(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
 
 	if (op_code == QDF_NBUF_PKT_TCPOP_SYN_ACK)
 		return true;
@@ -2368,12 +2799,41 @@ bool __qdf_nbuf_data_is_tcp_rst(uint8_t *data)
 	return false;
 }
 
+bool __qdf_nbuf_dot11_data_is_tcp_rst(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_RST)
+		return true;
+
+	return false;
+}
+
 bool __qdf_nbuf_data_is_tcp_ack(uint8_t *data)
 {
 	uint8_t op_code;
 
 	op_code = (uint8_t)(*(uint8_t *)(data +
 				QDF_NBUF_PKT_TCP_OPCODE_OFFSET));
+
+	if (op_code == QDF_NBUF_PKT_TCPOP_ACK)
+		return true;
+	return false;
+}
+
+bool __qdf_nbuf_dot11_data_is_tcp_ack(uint8_t *data)
+{
+	uint8_t op_code;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	op_code = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_PKT_TCP_OPCODE_OFFSET)));
 
 	if (op_code == QDF_NBUF_PKT_TCPOP_ACK)
 		return true;
@@ -2412,6 +2872,8 @@ bool __qdf_nbuf_data_is_icmpv4_req(uint8_t *data)
 	return false;
 }
 
+qdf_export_symbol(__qdf_nbuf_data_is_icmpv4_req);
+
 bool __qdf_nbuf_data_is_icmpv4_rsp(uint8_t *data)
 {
 	uint8_t op_code;
@@ -2423,6 +2885,8 @@ bool __qdf_nbuf_data_is_icmpv4_rsp(uint8_t *data)
 		return true;
 	return false;
 }
+
+qdf_export_symbol(__qdf_nbuf_data_is_icmpv4_rsp);
 
 bool __qdf_nbuf_data_is_icmpv4_redirect(uint8_t *data)
 {
@@ -2485,6 +2949,20 @@ bool __qdf_nbuf_data_is_ipv6_pkt(uint8_t *data)
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv6_pkt);
 
+bool __qdf_nbuf_dot11_data_is_ipv6_pkt(uint8_t *data)
+{
+	uint16_t dot11_type;
+
+	dot11_type = __qdf_nbuf_get_dot11_type(data);
+
+	if (dot11_type == QDF_SWAP_U16(QDF_NBUF_TRAC_IPV6_ETH_TYPE))
+		return true;
+	else
+		return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv6_pkt);
+
 bool __qdf_nbuf_data_is_ipv6_dhcp_pkt(uint8_t *data)
 {
 	uint16_t sport;
@@ -2510,6 +2988,35 @@ bool __qdf_nbuf_data_is_ipv6_dhcp_pkt(uint8_t *data)
 		return false;
 }
 qdf_export_symbol(__qdf_nbuf_data_is_ipv6_dhcp_pkt);
+
+bool __qdf_nbuf_dot11_data_is_ipv6_dhcp_pkt(uint8_t *data)
+{
+	uint16_t sport;
+	uint16_t dport;
+	uint8_t ipv6_offset;
+	uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+	if (!__qdf_nbuf_dot11_data_is_ipv6_pkt(data))
+		return false;
+
+	ipv6_offset = QDF_ADJUST_OFFSET_DOT3_TO_DOT11(QDF_NBUF_TRAC_IP_OFFSET);
+
+	sport = *(uint16_t *)(data + dot11_hdr_offset + ipv6_offset +
+			      (QDF_NBUF_TRAC_IPV6_HEADER_SIZE));
+	dport = *(uint16_t *)(data + dot11_hdr_offset + ipv6_offset +
+			      (QDF_NBUF_TRAC_IPV6_HEADER_SIZE) +
+			      sizeof(uint16_t));
+
+	if (((sport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP6_SRV_PORT)) &&
+	     (dport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP6_CLI_PORT))) ||
+	    ((sport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP6_CLI_PORT)) &&
+	     (dport == QDF_SWAP_U16(QDF_NBUF_TRAC_DHCP6_SRV_PORT))))
+		return true;
+	else
+		return false;
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_ipv6_dhcp_pkt);
 
 bool __qdf_nbuf_data_is_ipv6_mdns_pkt(uint8_t *data)
 {
@@ -2541,8 +3048,9 @@ bool __qdf_nbuf_data_is_ipv4_mcast_pkt(uint8_t *data)
 		 * Check first word of the IPV4 address and if it is
 		 * equal to 0xE then it represents multicast IP.
 		 */
-		if ((*dst_addr & QDF_NBUF_TRAC_IPV4_ADDR_BCAST_MASK) ==
-				QDF_NBUF_TRAC_IPV4_ADDR_MCAST_MASK)
+		if ((*dst_addr &
+		     QDF_SWAP_U32(QDF_NBUF_TRAC_IPV4_ADDR_BCAST_MASK)) ==
+		     QDF_SWAP_U32(QDF_NBUF_TRAC_IPV4_ADDR_MCAST_MASK))
 			return true;
 		else
 			return false;
@@ -2560,10 +3068,10 @@ bool __qdf_nbuf_data_is_ipv6_mcast_pkt(uint8_t *data)
 
 		/*
 		 * Check first byte of the IP address and if it
-		 * 0xFF00 then it is a IPV6 mcast packet.
+		 * 0xFF then it is a IPV6 mcast packet.
 		 */
-		if (*dst_addr ==
-		     QDF_SWAP_U16(QDF_NBUF_TRAC_IPV6_DEST_ADDR))
+		if ((*dst_addr & QDF_SWAP_U16(QDF_NBUF_TRAC_IPV6_DEST_ADDR)) ==
+		    QDF_SWAP_U16(QDF_NBUF_TRAC_IPV6_DEST_ADDR))
 			return true;
 		else
 			return false;
@@ -2589,6 +3097,27 @@ bool __qdf_nbuf_data_is_icmp_pkt(uint8_t *data)
 
 qdf_export_symbol(__qdf_nbuf_data_is_icmp_pkt);
 
+bool __qdf_nbuf_dot11_data_is_icmp_pkt(uint8_t *data)
+{
+	if (__qdf_nbuf_dot11_data_is_ipv4_pkt(data)) {
+		uint8_t pkt_type;
+		uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+		pkt_type = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_TRAC_IPV4_PROTO_TYPE_OFFSET)));
+
+		if (pkt_type == QDF_NBUF_TRAC_ICMP_TYPE)
+			return true;
+		else
+			return false;
+	} else {
+		return false;
+	}
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_icmp_pkt);
+
 bool __qdf_nbuf_data_is_icmpv6_pkt(uint8_t *data)
 {
 	if (__qdf_nbuf_data_is_ipv6_pkt(data)) {
@@ -2606,6 +3135,27 @@ bool __qdf_nbuf_data_is_icmpv6_pkt(uint8_t *data)
 }
 
 qdf_export_symbol(__qdf_nbuf_data_is_icmpv6_pkt);
+
+bool __qdf_nbuf_dot11_data_is_icmpv6_pkt(uint8_t *data)
+{
+	if (__qdf_nbuf_dot11_data_is_ipv6_pkt(data)) {
+		uint8_t pkt_type;
+		uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+		pkt_type = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+				QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+				QDF_NBUF_TRAC_IPV6_PROTO_TYPE_OFFSET)));
+
+		if (pkt_type == QDF_NBUF_TRAC_ICMPV6_TYPE)
+			return true;
+		else
+			return false;
+	} else {
+		return false;
+	}
+}
+
+qdf_export_symbol(__qdf_nbuf_dot11_data_is_icmpv6_pkt);
 
 bool __qdf_nbuf_data_is_ipv4_udp_pkt(uint8_t *data)
 {
@@ -2637,6 +3187,25 @@ bool __qdf_nbuf_data_is_ipv4_tcp_pkt(uint8_t *data)
 			return false;
 	} else
 		return false;
+}
+
+bool __qdf_nbuf_dot11_data_is_ipv4_tcp_pkt(uint8_t *data)
+{
+	if (__qdf_nbuf_dot11_data_is_ipv4_pkt(data)) {
+		uint8_t pkt_type;
+		uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+		pkt_type = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+					QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+					QDF_NBUF_TRAC_IPV4_PROTO_TYPE_OFFSET)));
+
+		if (pkt_type == QDF_NBUF_TRAC_TCP_TYPE)
+			return true;
+		else
+			return false;
+	} else {
+		return false;
+	}
 }
 
 bool __qdf_nbuf_data_is_ipv6_udp_pkt(uint8_t *data)
@@ -2671,6 +3240,25 @@ bool __qdf_nbuf_data_is_ipv6_tcp_pkt(uint8_t *data)
 		return false;
 }
 
+bool __qdf_nbuf_dot11_data_is_ipv6_tcp_pkt(uint8_t *data)
+{
+	if (__qdf_nbuf_dot11_data_is_ipv6_pkt(data)) {
+		uint8_t pkt_type;
+		uint8_t dot11_hdr_offset = __qdf_nbuf_calc_80211_hdr_len(data);
+
+		pkt_type = (uint8_t)(*(uint8_t *)(data + dot11_hdr_offset +
+					QDF_ADJUST_OFFSET_DOT3_TO_DOT11(
+					QDF_NBUF_TRAC_IPV6_PROTO_TYPE_OFFSET)));
+
+		if (pkt_type == QDF_NBUF_TRAC_TCP_TYPE)
+			return true;
+		else
+			return false;
+	} else {
+		return false;
+	}
+}
+
 bool __qdf_nbuf_is_bcast_pkt(qdf_nbuf_t nbuf)
 {
 	struct ethhdr *eh = (struct ethhdr *)qdf_nbuf_data(nbuf);
@@ -2692,43 +3280,25 @@ bool __qdf_nbuf_is_mcast_replay(qdf_nbuf_t nbuf)
 	return false;
 }
 
-bool __qdf_nbuf_is_arp_local(struct sk_buff *skb)
+bool __qdf_nbuf_is_arp_local(struct sk_buff *skb, uint8_t *local_ip)
 {
 	struct arphdr *arp;
-	struct in_ifaddr **ifap = NULL;
-	struct in_ifaddr *ifa = NULL;
-	struct in_device *in_dev;
 	unsigned char *arp_ptr;
-	__be32 tip;
 
 	arp = (struct arphdr *)skb->data;
-	if (arp->ar_op == htons(ARPOP_REQUEST)) {
-		/* if fail to acquire rtnl lock, assume it's local arp */
-		if (!rtnl_trylock())
+	if (arp->ar_op == htons(ARPOP_REQUEST) && local_ip) {
+		arp_ptr = (unsigned char *)(arp + 1);
+		arp_ptr += (QDF_IPV4_ADDR_SIZE + ETH_ALEN + ETH_ALEN);
+
+		qdf_debug("ARP packet: local IP: " QDF_IPV4_ADDR_STR
+			  " dest IP:" QDF_IPV4_ADDR_STR,
+			  QDF_IPV4_ADDR_ARRAY(local_ip),
+			  QDF_IPV4_ADDR_ARRAY(arp_ptr));
+
+		if (qdf_mem_cmp(arp_ptr, local_ip, QDF_IPV4_ADDR_SIZE))
+			return false;
+		else
 			return true;
-
-		in_dev = __in_dev_get_rtnl(skb->dev);
-		if (in_dev) {
-			for (ifap = &in_dev->ifa_list; (ifa = *ifap) != NULL;
-				ifap = &ifa->ifa_next) {
-				if (!strcmp(skb->dev->name, ifa->ifa_label))
-					break;
-			}
-		}
-
-		if (ifa && ifa->ifa_local) {
-			arp_ptr = (unsigned char *)(arp + 1);
-			arp_ptr += (skb->dev->addr_len + 4 +
-					skb->dev->addr_len);
-			memcpy(&tip, arp_ptr, 4);
-			qdf_debug("ARP packet: local IP: %x dest IP: %x",
-				  ifa->ifa_local, tip);
-			if (ifa->ifa_local == tip) {
-				rtnl_unlock();
-				return true;
-			}
-		}
-		rtnl_unlock();
 	}
 
 	return false;
@@ -3636,6 +4206,12 @@ free_buf:
 }
 qdf_export_symbol(qdf_nbuf_free_debug);
 
+#ifdef QCA_DP_NBUF_FAST_RECYCLE_CHECK
+#define __qdf_nbuf_netdev_alloc(d, s, f) __netdev_alloc_skb_fast(d, s, f)
+#else
+#define __qdf_nbuf_netdev_alloc(d, s, f) __netdev_alloc_skb(d, s, f)
+#endif
+
 struct sk_buff *__qdf_nbuf_alloc_simple(qdf_device_t osdev, size_t size,
 					const char *func, uint32_t line)
 {
@@ -3655,8 +4231,7 @@ struct sk_buff *__qdf_nbuf_alloc_simple(qdf_device_t osdev, size_t size,
 #endif
 	}
 
-	skb = __netdev_alloc_skb(NULL, size, flags);
-
+	skb = __qdf_nbuf_netdev_alloc(NULL, size, flags);
 
 	if (qdf_likely(is_initial_mem_debug_disabled)) {
 		if (qdf_likely(skb))
@@ -3682,7 +4257,11 @@ void qdf_nbuf_free_debug_simple(qdf_nbuf_t nbuf, const char *func,
 {
 	if (qdf_likely(nbuf)) {
 		if (is_initial_mem_debug_disabled) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+			dev_consume_skb_any(nbuf);
+#else
 			dev_kfree_skb_any(nbuf);
+#endif
 		} else {
 			qdf_nbuf_free_debug(nbuf, func, line);
 		}
@@ -3896,6 +4475,33 @@ qdf_nbuf_dev_kfree_list_debug(__qdf_nbuf_queue_head_t *nbuf_queue_head,
 }
 
 qdf_export_symbol(qdf_nbuf_dev_kfree_list_debug);
+
+qdf_nbuf_t
+qdf_nbuf_page_pool_alloc_debug(qdf_device_t osdev, qdf_size_t size, int reserve,
+			       int align, qdf_page_pool_t pp, uint32_t *offset,
+			       const char *func, uint32_t line)
+{
+	qdf_nbuf_t nbuf;
+
+	if (is_initial_mem_debug_disabled)
+		return __qdf_nbuf_page_pool_alloc(osdev, size, reserve, align,
+						  pp, offset, func, line);
+
+	nbuf = __qdf_nbuf_page_pool_alloc(osdev, size, reserve, align,
+					  pp, offset, func, line);
+
+	/* Store SKB in internal QDF tracking table */
+	if (qdf_likely(nbuf)) {
+		qdf_net_buf_debug_add_node(nbuf, size, func, line);
+		qdf_nbuf_history_add(nbuf, func, line, QDF_NBUF_ALLOC);
+	} else {
+		qdf_nbuf_history_add(nbuf, func, line, QDF_NBUF_ALLOC_FAILURE);
+	}
+
+	return nbuf;
+}
+
+qdf_export_symbol(qdf_nbuf_page_pool_alloc_debug);
 #endif /* NBUF_MEMORY_DEBUG */
 
 #if defined(QCA_DP_NBUF_FAST_PPEDS)
@@ -4240,6 +4846,245 @@ static inline void __qdf_nbuf_fill_tso_cmn_seg_info(
 		   curr_seg->seg.total_len);
 	qdf_tso_seg_dbg_record(curr_seg, TSOSEG_LOC_FILLCMNSEG);
 }
+
+#ifdef DP_FEATURE_TX_PAGE_POOL
+static struct sk_buff*
+qdf_tx_page_pool_nbuf_alloc_map(qdf_device_t osdev, qdf_page_pool_t tx_pp,
+				qdf_size_t size)
+{
+	struct sk_buff *skb;
+	qdf_page_t page;
+	uint32_t offset;
+
+	if (!(tx_pp && !qdf_page_pool_empty(tx_pp)))
+		return NULL;
+
+	skb = qdf_nbuf_page_pool_alloc(osdev, size,
+				       0, 0, tx_pp, &offset);
+	if (!skb)
+		return skb;
+
+	page = qdf_virt_to_head_page(skb->data);
+	QDF_NBUF_CB_PADDR(skb) = qdf_page_pool_get_dma_addr(page) + offset +
+				 qdf_nbuf_headroom(skb);
+
+	return skb;
+}
+#else
+static inline struct sk_buff*
+qdf_tx_page_pool_nbuf_alloc_map(qdf_device_t osdev, qdf_page_pool_t tx_pp,
+				uint32_t size)
+{
+	return NULL;
+}
+#endif
+
+#ifdef WLAN_DP_ENABLE_SW_TSO
+/**
+ * __qdf_nbuf_sw_tso_prepare_nbuf_list () - prepare nbuf list from the given TCP
+ * jumbo packet.
+ *
+ * This API prepares the nbuf list by splitting the given TCP jumbo packet into
+ * multiple segments of gso size and attach EIT header for each segment. update
+ * the skb header and TCP headers as the nbus in the formed list are going to
+ * transmitted as a normal packet instead of tso packet.
+ *
+ * @osdev: qdf device handle
+ * @skb: TCP jumbo packet
+ * @head_skb: formed skb list
+ * @tx_pp: TX page pool reference
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS __qdf_nbuf_sw_tso_prepare_nbuf_list(qdf_device_t osdev,
+					       struct sk_buff *skb,
+					       struct sk_buff **head_skb,
+					       qdf_page_pool_t tx_pp)
+{
+	qdf_nbuf_t tail_skb = NULL;
+	qdf_nbuf_t new_skb;
+	skb_frag_t *frag = NULL;
+	void *frag_vaddr;
+	uint32_t ori_gso_size = skb_shinfo(skb)->gso_size;
+	int num_seg = qdf_nbuf_get_tso_num_seg(skb);
+	uint32_t skb_proc = skb->len;
+	uint32_t skb_frag_len = 0;
+	uint32_t gso_size = ori_gso_size;
+	uint32_t frag_len;
+	uint32_t tcp_seq_num;
+	int i = 0;
+	int eit_hdr_len;
+	uint16_t ethproto = vlan_get_protocol(skb);
+	uint16_t ip_id = 0;
+	uint16_t copied_len;
+	uint8_t more_frags;
+	uint8_t pack_more_data = 0;
+	qdf_dma_addr_t paddr;
+
+	*head_skb = NULL;
+
+	if (num_seg == 0) {
+		qdf_err("sw tso: failed to prepare skb list for tso packet");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	eit_hdr_len = (skb_transport_header(skb) -
+		       skb_mac_header(skb)) + tcp_hdrlen(skb);
+
+	skb_frag_len = skb_headlen(skb);
+	skb_frag_len -= eit_hdr_len;
+	skb_proc -= eit_hdr_len;
+
+	frag_vaddr = skb->data + eit_hdr_len;
+	frag_len = min(skb_frag_len, gso_size);
+
+	if (ethproto == htons(ETH_P_IP))
+		ip_id = ntohs(ip_hdr(skb)->id);
+
+	tcp_seq_num = ntohl(tcp_hdr(skb)->seq);
+
+	while (num_seg) {
+		more_frags = 1;
+		copied_len = 0;
+		new_skb = qdf_tx_page_pool_nbuf_alloc_map(osdev, tx_pp,
+							  ori_gso_size + eit_hdr_len);
+		if (!new_skb)
+			new_skb = qdf_nbuf_alloc_simple(osdev,
+							ori_gso_size + eit_hdr_len,
+							0, 0, FALSE);
+
+		if (qdf_unlikely(!new_skb)) {
+			qdf_err("sw tso: failed to allocate buffer");
+			qdf_nbuf_list_free(*head_skb);
+			return QDF_STATUS_E_NOMEM;
+		}
+
+		/* Set magic value to identify the packet is a SW TSO packet */
+		qdf_nbuf_set_dev_scratch(new_skb,
+					 QDF_NBUF_SW_TSO_DEV_SCRATCH_VAL);
+		paddr = QDF_NBUF_CB_PADDR(new_skb);
+		memcpy(new_skb->cb, skb->cb, sizeof(skb->cb));
+		QDF_NBUF_CB_PADDR(new_skb) = paddr;
+
+		if (!(*head_skb)) {
+			*head_skb = new_skb;
+			tail_skb = new_skb;
+			qdf_nbuf_set_next(new_skb, NULL);
+		} else {
+			qdf_nbuf_set_next(tail_skb, new_skb);
+			qdf_nbuf_set_next(new_skb, NULL);
+			tail_skb = new_skb;
+		}
+
+		/* copy EIT header */
+		memcpy(new_skb->data, skb->data, eit_hdr_len);
+		/* copy data */
+		memcpy(new_skb->data + eit_hdr_len, frag_vaddr, frag_len);
+
+		skb_put(new_skb, eit_hdr_len + frag_len);
+		copied_len = eit_hdr_len + frag_len;
+		skb_proc -= frag_len;
+
+		skb_set_transport_header(new_skb,
+					 (skb_transport_header(skb) -
+					  skb_mac_header(skb)));
+		skb_set_network_header(new_skb,
+				       (skb_network_header(skb) -
+					skb_mac_header(skb)));
+		skb_set_mac_header(new_skb, 0);
+
+		tcp_hdr(new_skb)->seq = htonl(tcp_seq_num);
+		tcp_seq_num += frag_len;
+		new_skb->protocol = skb->protocol;
+		new_skb->ip_summed = CHECKSUM_PARTIAL;
+		tcp_hdr(new_skb)->psh = 0;
+		tcp_hdr(new_skb)->fin = 0;
+
+		if (ethproto == htons(ETH_P_IP)) {
+			ip_hdr(new_skb)->id = htons(ip_id);
+			ip_hdr(new_skb)->tot_len = htons(copied_len -
+						 skb_mac_header_len(new_skb));
+			ip_id++;
+		} else if (ethproto == htons(ETH_P_IPV6)) {
+			ipv6_hdr(new_skb)->payload_len =
+				htons(copied_len -
+				      (skb_mac_header_len(new_skb) +
+				       skb_network_header_len(new_skb)));
+		}
+
+
+		/* if PSH and FIN flags are set in jumbo packet, set them for
+		 * the last segment.
+		 */
+		if (num_seg == 1) {
+			tcp_hdr(new_skb)->psh = tcp_hdr(skb)->psh;
+			tcp_hdr(new_skb)->fin = tcp_hdr(skb)->fin;
+		}
+
+		while (more_frags) {
+			if (unlikely(skb_proc == 0))
+				return QDF_STATUS_SUCCESS;
+
+			if (frag_len < gso_size) {
+				pack_more_data = 1;
+				gso_size = gso_size - frag_len;
+			} else {
+				more_frags = 0;
+				gso_size = ori_gso_size;
+			}
+
+			/* if the next fragment is contiguous */
+			if ((frag_len != 0) && (frag_len < skb_frag_len)) {
+				frag_vaddr = frag_vaddr + frag_len;
+				skb_frag_len = skb_frag_len - frag_len;
+				frag_len = min(skb_frag_len, gso_size);
+			} else {
+				if (skb_shinfo(skb)->nr_frags == 0) {
+					qdf_assert(0);
+					qdf_nbuf_list_free(*head_skb);
+					return QDF_STATUS_E_FAILURE;
+				}
+
+				if (i >= skb_shinfo(skb)->nr_frags) {
+					qdf_assert(0);
+					qdf_nbuf_list_free(*head_skb);
+					return QDF_STATUS_E_FAILURE;
+				}
+
+				frag = &skb_shinfo(skb)->frags[i];
+				skb_frag_len = skb_frag_size(frag);
+				frag_len = min(skb_frag_len, gso_size);
+				frag_vaddr = skb_frag_address_safe(frag);
+				i++;
+			}
+			if (pack_more_data) {
+				memcpy(new_skb->data + copied_len,
+				       frag_vaddr, frag_len);
+				copied_len += frag_len;
+				skb_put(new_skb, frag_len);
+				skb_proc -= frag_len;
+				pack_more_data = 0;
+				tcp_seq_num += frag_len;
+				if (ethproto == htons(ETH_P_IP))
+					ip_hdr(new_skb)->tot_len =
+					htons(copied_len -
+					      skb_mac_header_len(new_skb));
+				else if (ethproto == htons(ETH_P_IPV6))
+					ipv6_hdr(new_skb)->payload_len =
+					htons(copied_len -
+					      (skb_mac_header_len(new_skb) +
+					       skb_network_header_len(new_skb)));
+			}
+		}
+
+		num_seg--;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
+qdf_export_symbol(__qdf_nbuf_sw_tso_prepare_nbuf_list);
+#endif
 
 uint32_t __qdf_nbuf_get_tso_info(qdf_device_t osdev, struct sk_buff *skb,
 		struct qdf_tso_info_t *tso_info)
@@ -4831,12 +5676,14 @@ qdf_export_symbol(__qdf_nbuf_dma_map_info);
 void
 __qdf_nbuf_frag_info(struct sk_buff *skb, qdf_sglist_t  *sg)
 {
+	int i;
+
 	qdf_assert(skb);
 	sg->sg_segs[0].vaddr = skb->data;
 	sg->sg_segs[0].len   = skb->len;
 	sg->nsegs            = 1;
 
-	for (int i = 1; i <= sh->nr_frags; i++) {
+	for (i = 1; i <= sh->nr_frags; i++) {
 		skb_frag_t    *f        = &sh->frags[i - 1];
 
 		sg->sg_segs[i].vaddr    = (uint8_t *)(page_address(f->page) +
@@ -5090,26 +5937,53 @@ qdf_nbuf_update_radiotap_he_flags(struct mon_rx_status *rx_status,
 	 * IEEE80211_RADIOTAP_HE u16, u16, u16, u16, u16, u16
 	 * Enable all "known" HE radiotap flags for now
 	 */
+	struct mon_rx_user_status *rx_user_status = rx_status->rx_user_status;
 
 	rtap_len = qdf_align(rtap_len, 2);
 
-	put_unaligned_le16(rx_status->he_data1, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+	if (!rx_user_status) {
+		put_unaligned_le16(rx_status->he_data1, &rtap_buf[rtap_len]);
+		rtap_len += 2;
 
-	put_unaligned_le16(rx_status->he_data2, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+		put_unaligned_le16(rx_status->he_data2, &rtap_buf[rtap_len]);
+		rtap_len += 2;
 
-	put_unaligned_le16(rx_status->he_data3, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+		put_unaligned_le16(rx_status->he_data3, &rtap_buf[rtap_len]);
+		rtap_len += 2;
 
-	put_unaligned_le16(rx_status->he_data4, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+		put_unaligned_le16(rx_status->he_data4, &rtap_buf[rtap_len]);
+		rtap_len += 2;
 
-	put_unaligned_le16(rx_status->he_data5, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+		put_unaligned_le16(rx_status->he_data5, &rtap_buf[rtap_len]);
+		rtap_len += 2;
 
-	put_unaligned_le16(rx_status->he_data6, &rtap_buf[rtap_len]);
-	rtap_len += 2;
+		put_unaligned_le16(rx_status->he_data6, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+	} else {
+		put_unaligned_le16(rx_user_status->he_data1 |
+				   rx_status->he_data1, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+
+		put_unaligned_le16(rx_user_status->he_data2 |
+				   rx_status->he_data2, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+
+		put_unaligned_le16(rx_user_status->he_data3 |
+				   rx_status->he_data3, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+
+		put_unaligned_le16(rx_user_status->he_data4 |
+				   rx_status->he_data4, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+
+		put_unaligned_le16(rx_user_status->he_data5 |
+				   rx_status->he_data5, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+
+		put_unaligned_le16(rx_user_status->he_data6 |
+				   rx_status->he_data6, &rtap_buf[rtap_len]);
+		rtap_len += 2;
+	}
 
 	return rtap_len;
 }
@@ -5156,31 +6030,65 @@ qdf_nbuf_update_radiotap_he_mu_flags(struct mon_rx_status *rx_status,
 
 		rtap_buf[rtap_len] = rx_status->he_RU[3];
 		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_status->he_RU[4];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_status->he_RU[5];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_status->he_RU[6];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_status->he_RU[7];
+		rtap_len += 1;
 	} else {
-		put_unaligned_le16(rx_user_status->he_flags1,
-				   &rtap_buf[rtap_len]);
+		put_unaligned_le16(rx_user_status->he_flags1 |
+				   rx_status->he_flags1, &rtap_buf[rtap_len]);
 		rtap_len += 2;
 
-		put_unaligned_le16(rx_user_status->he_flags2,
-				   &rtap_buf[rtap_len]);
+		put_unaligned_le16(rx_user_status->he_flags2 |
+				   rx_status->he_flags2, &rtap_buf[rtap_len]);
 		rtap_len += 2;
 
-		rtap_buf[rtap_len] = rx_user_status->he_RU[0];
+		rtap_buf[rtap_len] = rx_user_status->he_RU[0] |
+					rx_status->he_RU[0];
 		rtap_len += 1;
 
-		rtap_buf[rtap_len] = rx_user_status->he_RU[1];
+		rtap_buf[rtap_len] = rx_user_status->he_RU[1] |
+					rx_status->he_RU[1];
 		rtap_len += 1;
 
-		rtap_buf[rtap_len] = rx_user_status->he_RU[2];
+		rtap_buf[rtap_len] = rx_user_status->he_RU[2] |
+					rx_status->he_RU[2];
 		rtap_len += 1;
 
-		rtap_buf[rtap_len] = rx_user_status->he_RU[3];
+		rtap_buf[rtap_len] = rx_user_status->he_RU[3] |
+					rx_status->he_RU[3];
 		rtap_len += 1;
-		qdf_debug("he_flags %x %x he-RU %x %x %x %x",
-			  rx_user_status->he_flags1,
-			  rx_user_status->he_flags2, rx_user_status->he_RU[0],
-			  rx_user_status->he_RU[1], rx_user_status->he_RU[2],
-			  rx_user_status->he_RU[3]);
+
+		rtap_buf[rtap_len] = rx_user_status->he_RU[4] |
+					rx_status->he_RU[4];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_user_status->he_RU[5] |
+					rx_status->he_RU[5];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_user_status->he_RU[6] |
+					rx_status->he_RU[6];
+		rtap_len += 1;
+
+		rtap_buf[rtap_len] = rx_user_status->he_RU[7] |
+					rx_status->he_RU[7];
+		rtap_len += 1;
+		qdf_rl_debug("he_flags %x %x he-RU %x %x %x %x",
+			     rx_user_status->he_flags1,
+			     rx_user_status->he_flags2,
+			     rx_user_status->he_RU[0],
+			     rx_user_status->he_RU[1],
+			     rx_user_status->he_RU[2],
+			     rx_user_status->he_RU[3]);
 	}
 
 	return rtap_len;
@@ -5247,6 +6155,7 @@ qdf_nbuf_update_radiotap_he_mu_other_flags(struct mon_rx_status *rx_status,
  * @rx_status: Pointer to rx_status.
  * @rtap_buf: buffer to which radiotap has to be updated
  * @rtap_len: radiotap length
+ * @it_present_val: flag to update EHT and Using flags
  *
  * API update Extra High Throughput (11be) fields in the radiotap header
  *
@@ -5254,28 +6163,34 @@ qdf_nbuf_update_radiotap_he_mu_other_flags(struct mon_rx_status *rx_status,
  */
 static unsigned int
 qdf_nbuf_update_radiotap_usig_flags(struct mon_rx_status *rx_status,
-				    int8_t *rtap_buf, uint32_t rtap_len)
+				    int8_t *rtap_buf, uint32_t rtap_len,
+				    uint32_t *it_present_val)
 {
-	/*
-	 * IEEE80211_RADIOTAP_USIG:
-	 *		u32, u32, u32
-	 */
+	qdf_radiotap_eht_usig_t *usig;
+	qdf_radiotap_tlv_t *tlv;
+	uint32_t len;
+	uint32_t usig_len = sizeof(qdf_radiotap_eht_usig_t);
+
 	rtap_len = qdf_align(rtap_len, 4);
+	*it_present_val |= (1 << IEEE80211_RADIOTAP_TLV);
+	len = sizeof(qdf_radiotap_tlv_t) + qdf_align(usig_len, 4);
 
-	put_unaligned_le32(rx_status->usig_common, &rtap_buf[rtap_len]);
-	rtap_len += 4;
+	tlv = (qdf_radiotap_tlv_t *)(&rtap_buf[rtap_len]);
+	qdf_mem_set(tlv, len, 0);
 
-	put_unaligned_le32(rx_status->usig_value, &rtap_buf[rtap_len]);
-	rtap_len += 4;
+	tlv->type = cpu_to_le16(IEEE80211_RADIOTAP_EHT_USIG);
+	tlv->len = cpu_to_le16(usig_len);
 
-	put_unaligned_le32(rx_status->usig_mask, &rtap_buf[rtap_len]);
-	rtap_len += 4;
+	usig = (qdf_radiotap_eht_usig_t *)tlv->data;
+	usig->common = cpu_to_le32(rx_status->usig_common);
+	usig->value = cpu_to_le32(rx_status->usig_value);
+	usig->mask = cpu_to_le32(rx_status->usig_mask);
 
 	qdf_rl_debug("U-SIG data %x %x %x",
 		     rx_status->usig_common, rx_status->usig_value,
 		     rx_status->usig_mask);
 
-	return rtap_len;
+	return (rtap_len + len);
 }
 
 /**
@@ -5284,6 +6199,7 @@ qdf_nbuf_update_radiotap_usig_flags(struct mon_rx_status *rx_status,
  * @rx_status: Pointer to rx_status.
  * @rtap_buf: buffer to which radiotap has to be updated
  * @rtap_len: radiotap length
+ * @it_present_val: flag to update EHT and Using flags
  *
  * API update Extra High Throughput (11be) fields in the radiotap header
  *
@@ -5291,52 +6207,65 @@ qdf_nbuf_update_radiotap_usig_flags(struct mon_rx_status *rx_status,
  */
 static unsigned int
 qdf_nbuf_update_radiotap_eht_flags(struct mon_rx_status *rx_status,
-				   int8_t *rtap_buf, uint32_t rtap_len)
+				   int8_t *rtap_buf, uint32_t rtap_len,
+				   uint32_t *it_present_val)
 {
-	uint32_t user;
+	qdf_radiotap_tlv_t *tlv;
+	qdf_radiotap_eht_t *eht;
+	uint32_t len = 0, user;
+	uint32_t eht_len = sizeof(qdf_radiotap_eht_t);
+	struct mon_rx_user_status *rx_user_status = rx_status->rx_user_status;
 
-	/*
-	 * IEEE80211_RADIOTAP_EHT:
-	 *		u32, u32, u32, u32, u32, u32, u32, u16, [u32, u32, u32]
-	 */
 	rtap_len = qdf_align(rtap_len, 4);
+	*it_present_val |= (1 << IEEE80211_RADIOTAP_TLV);
+	if (rx_user_status)
+		eht_len += sizeof(uint32_t);
+	else
+		eht_len += (sizeof(uint32_t) * EHT_USER_INFO_LEN);
 
-	put_unaligned_le32(rx_status->eht_known, &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[0], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[1], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[2], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[3], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[4], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	put_unaligned_le32(rx_status->eht_data[5], &rtap_buf[rtap_len]);
-	rtap_len += 4;
-
-	for (user = 0; user < EHT_USER_INFO_LEN &&
-	     rx_status->num_eht_user_info_valid &&
-	     user < rx_status->num_eht_user_info_valid; user++) {
-		put_unaligned_le32(rx_status->eht_user_info[user],
-				   &rtap_buf[rtap_len]);
-		rtap_len += 4;
+	len = sizeof(qdf_radiotap_tlv_t) + qdf_align(eht_len, 4);
+	tlv = (qdf_radiotap_tlv_t *)(&rtap_buf[rtap_len]);
+	qdf_mem_set(tlv, len, 0);
+	tlv->type = cpu_to_le16(IEEE80211_RADIOTAP_EHT);
+	tlv->len = cpu_to_le16(eht_len);
+	eht = (qdf_radiotap_eht_t *)tlv->data;
+	if (!rx_user_status) {
+		eht->known = cpu_to_le32(rx_status->eht_known);
+		eht->data[0] = cpu_to_le32(rx_status->eht_data[0]);
+		eht->data[1] = cpu_to_le32(rx_status->eht_data[1]);
+	} else {
+		eht->known = cpu_to_le32(rx_status->eht_known |
+					 rx_user_status->eht_known);
+		eht->data[0] = cpu_to_le32(rx_status->eht_data[0] |
+					   rx_user_status->eht_data[0]);
+		eht->data[1] = cpu_to_le32(rx_status->eht_data[1] |
+					   rx_user_status->eht_data[1]);
 	}
-
-	qdf_rl_debug("EHT data %x %x %x %x %x %x %x",
-		     rx_status->eht_known, rx_status->eht_data[0],
-		     rx_status->eht_data[1], rx_status->eht_data[2],
-		     rx_status->eht_data[3], rx_status->eht_data[4],
-		     rx_status->eht_data[5]);
-
-	return rtap_len;
+	eht->data[2] = cpu_to_le32(rx_status->eht_data[2]);
+	eht->data[3] = cpu_to_le32(rx_status->eht_data[3]);
+	eht->data[4] = cpu_to_le32(rx_status->eht_data[4]);
+	eht->data[5] = cpu_to_le32(rx_status->eht_data[5]);
+	if (!rx_user_status) {
+		for (user = 0; user < rx_status->num_eht_user_info_valid &&
+		     user < EHT_USER_INFO_LEN; user++)
+			eht->user_info[user] = cpu_to_le32(rx_status->eht_user_info[user]);
+		qdf_rl_debug("EHT data %x %x %x %x %x %x %x",
+			     rx_status->eht_known, rx_status->eht_data[0],
+			     rx_status->eht_data[1], rx_status->eht_data[2],
+			     rx_status->eht_data[3], rx_status->eht_data[4],
+			     rx_status->eht_data[5]);
+	} else {
+		eht->user_info[0] = cpu_to_le32(rx_user_status->eht_user_info);
+		qdf_rl_debug("EHT data %x %x %x %x %x %x %x",
+			     rx_status->eht_known | rx_user_status->eht_known,
+			     rx_status->eht_data[0] |
+			     rx_user_status->eht_data[0],
+			     rx_status->eht_data[1] |
+			     rx_user_status->eht_data[1],
+			     rx_status->eht_data[2], rx_status->eht_data[3],
+			     rx_status->eht_data[4], rx_status->eht_data[5]);
+	}
+	return (len + rtap_len);
 }
 
 #define IEEE80211_RADIOTAP_TX_STATUS 0
@@ -5468,6 +6397,9 @@ unsigned int qdf_nbuf_update_radiotap(struct mon_rx_status *rx_status,
 
 	if (rx_status->rs_fcs_err)
 		rx_status->rtap_flags |= IEEE80211_RADIOTAP_F_BADFCS;
+
+	if (rx_status->mon_fcs_cap)
+		rx_status->rtap_flags |= IEEE80211_RADIOTAP_F_FCS;
 
 	rtap_buf[rtap_len] = rx_status->rtap_flags;
 	rtap_len += 1;
@@ -5703,25 +6635,23 @@ unsigned int qdf_nbuf_update_radiotap(struct mon_rx_status *rx_status,
 
 	if (rx_status->usig_flags) {
 		length = rtap_len;
-		/* IEEE80211_RADIOTAP_USIG */
-		it_present_val |= (1 << IEEE80211_RADIOTAP_EXT1_USIG);
 		rtap_len = qdf_nbuf_update_radiotap_usig_flags(rx_status,
 							       rtap_buf,
-							       rtap_len);
+							       rtap_len,
+							       &it_present_val);
 
-		if ((rtap_len - length) > RADIOTAP_EHT_FLAGS_LEN) {
-			qdf_print("length is greater than RADIOTAP_EHT_FLAGS_LEN");
+		if ((rtap_len - length) > RADIOTAP_U_SIG_FLAGS_LEN) {
+			qdf_print("length is greater than RADIOTAP_U_SIG_FLAGS_LEN");
 			return 0;
 		}
 	}
 
 	if (rx_status->eht_flags) {
 		length = rtap_len;
-		/* IEEE80211_RADIOTAP_EHT */
-		it_present_val |= (1 << IEEE80211_RADIOTAP_EXT1_EHT);
 		rtap_len = qdf_nbuf_update_radiotap_eht_flags(rx_status,
 							      rtap_buf,
-							      rtap_len);
+							      rtap_len,
+							      &it_present_val);
 
 		if ((rtap_len - length) > RADIOTAP_EHT_FLAGS_LEN) {
 			qdf_print("length is greater than RADIOTAP_EHT_FLAGS_LEN");
@@ -5932,24 +6862,6 @@ void __qdf_nbuf_add_rx_frag(__qdf_frag_t buf, __qdf_nbuf_t nbuf,
 
 qdf_export_symbol(__qdf_nbuf_add_rx_frag);
 
-void __qdf_nbuf_ref_frag(__qdf_frag_t buf)
-{
-	struct page *page;
-	skb_frag_t frag = {0};
-
-	page = virt_to_head_page(buf);
-	__skb_frag_set_page(&frag, page);
-
-	/*
-	 * since __skb_frag_ref() just use page to increase ref
-	 * we just decode page alone
-	 */
-	qdf_frag_count_inc(QDF_NBUF_FRAG_DEBUG_COUNT_ONE);
-	__skb_frag_ref(&frag);
-}
-
-qdf_export_symbol(__qdf_nbuf_ref_frag);
-
 #ifdef NBUF_FRAG_MEMORY_DEBUG
 
 QDF_STATUS qdf_nbuf_move_frag_page_offset_debug(qdf_nbuf_t nbuf, uint8_t idx,
@@ -6008,19 +6920,6 @@ void qdf_nbuf_add_rx_frag_debug(qdf_frag_t buf, qdf_nbuf_t nbuf,
 }
 
 qdf_export_symbol(qdf_nbuf_add_rx_frag_debug);
-
-void qdf_nbuf_ref_frag_debug(qdf_frag_t buf, const char *func, uint32_t line)
-{
-	__qdf_nbuf_ref_frag(buf);
-
-	if (qdf_likely(is_initial_mem_debug_disabled))
-		return;
-
-	/* Update frag refcount in frag debug tracking table */
-	qdf_frag_debug_refcount_inc(buf, func, line);
-}
-
-qdf_export_symbol(qdf_nbuf_ref_frag_debug);
 
 void qdf_net_buf_debug_acquire_frag(qdf_nbuf_t buf, const char *func,
 				    uint32_t line)

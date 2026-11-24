@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -164,6 +164,11 @@ void dp_peer_get_reo_hash_rh(struct dp_vdev *vdev,
 			     bool *hash_based,
 			     uint8_t *lmac_peer_id_msb)
 {
+	struct dp_soc *soc = vdev->pdev->soc;
+
+	*hash_based = wlan_cfg_is_rx_hash_enabled(soc->wlan_cfg_ctx);
+	/* CE1 is the default ring in Evros which is mapped to 1 */
+	*reo_dest = 1;
 }
 
 static inline
@@ -200,7 +205,7 @@ void dp_rx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
  * dp_peer_rx_reorder_queue_setup_rh() - NOP for RH arch implementation
  * @soc: Handle to HAL Soc structure
  * @peer: DP peer structure
- * @tid: tid id
+ * @tid_bitmap: tids to be set up
  * @ba_window_size: BA window size
  *
  * Return: None
@@ -208,7 +213,7 @@ void dp_rx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
 static inline
 QDF_STATUS dp_peer_rx_reorder_queue_setup_rh(struct dp_soc *soc,
 					     struct dp_peer *peer,
-					     int tid,
+					     uint32_t tid_bitmap,
 					     uint32_t ba_window_size)
 {
 	return QDF_STATUS_SUCCESS;

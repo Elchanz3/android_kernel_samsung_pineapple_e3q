@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -77,6 +77,23 @@
 #define spectral_debug_rl_nofl(format, args...) \
 	QDF_TRACE_DEBUG_RL_NO_FL(QDF_MODULE_ID_SPECTRAL, format, ## args)
 
+#ifdef WLAN_SPECTRAL_STREAMFS
+/** pdev_spectral_streamfs - Radio specific spectral streamfs object
+ * @dir_ptr:              Directory pointer for streamfs channel
+ * @chan_ptr:             Pointer to streamfs channel
+ * @n_subbuf:             Num of sub-buffers present inside the channel
+ * @subbuf_size:          Size of each sub-buffer in bytes
+ * @streamfs_buf:         Pointer within the sub-buffer in a streamfs channel
+ */
+struct pdev_spectral_streamfs {
+	qdf_dentry_t dir_ptr;
+	qdf_streamfs_chan_t chan_ptr;
+	uint32_t n_subbuf;
+	uint32_t subbuf_size;
+	void *streamfs_buf[SPECTRAL_MSG_TYPE_MAX];
+};
+#endif
+
 /**
  * struct pdev_spectral - Radio specific spectral object
  * @psptrl_pdev:          Back-pointer to struct wlan_objmgr_pdev
@@ -85,6 +102,8 @@
  * @psptrl_target_handle: reference to spectral lmac object
  * @skb:                  Socket buffer for sending samples to applications
  * @spectral_pid :        Spectral port ID
+ * @streamfs_obj :        Spectral streamfs channel information structure
+ * @transport_mode :      Spectral data transport mechanism
  */
 struct pdev_spectral {
 	struct wlan_objmgr_pdev *psptrl_pdev;
@@ -92,6 +111,10 @@ struct pdev_spectral {
 	void *psptrl_target_handle;
 	struct sk_buff *skb[SPECTRAL_MSG_TYPE_MAX];
 	uint32_t spectral_pid;
+#ifdef WLAN_SPECTRAL_STREAMFS
+	struct pdev_spectral_streamfs streamfs_obj;
+#endif
+	enum spectral_data_transport_mode transport_mode;
 };
 
 struct spectral_wmi_ops;
@@ -122,11 +145,13 @@ struct spectral_tgt_ops;
  * @sptrlc_get_spectral_diagstats: Get spectral diag status
  * @sptrlc_register_spectral_wmi_ops: Register Spectral WMI operations
  * @sptrlc_register_spectral_tgt_ops: Register Spectral target operations
- * @sptrlc_register_netlink_cb: Register Netlink callbacks
- * @sptrlc_use_nl_bcast: Check whether to use Netlink broadcast/unicast
- * @sptrlc_deregister_netlink_cb: De-register Netlink callbacks
+ * @sptrlc_register_buffer_cb: Register Spectral buffer callbacks
+ * @sptrlc_use_broadcast: Set whether to use broadcast/unicast while
+ *                        sending messages to the application layer
+ * @sptrlc_deregister_buffer_cb: De-register Spectral buffer callbacks
  * @sptrlc_process_spectral_report: Process spectral report
  * @sptrlc_set_dma_debug: Set DMA debug
+ * @sptrlc_scan_complete_event: Trigger spectral scan complete event
  */
 struct spectral_context {
 	struct wlan_objmgr_psoc *psoc_obj;
@@ -177,11 +202,12 @@ struct spectral_context {
 	QDF_STATUS (*sptrlc_register_spectral_tgt_ops)(
 					struct wlan_objmgr_psoc *psoc,
 					struct spectral_tgt_ops *tgt_ops);
-	void (*sptrlc_register_netlink_cb)(
+	void (*sptrlc_register_buffer_cb)(
 			struct wlan_objmgr_pdev *pdev,
-			struct spectral_nl_cb *nl_cb);
-	bool (*sptrlc_use_nl_bcast)(struct wlan_objmgr_pdev *pdev);
-	void (*sptrlc_deregister_netlink_cb)(struct wlan_objmgr_pdev *pdev);
+			struct spectral_buffer_cb *spectral_buf_cb);
+	QDF_STATUS (*sptrlc_use_broadcast)(struct wlan_objmgr_pdev *pdev,
+					   bool use_bcast);
+	void (*sptrlc_deregister_buffer_cb)(struct wlan_objmgr_pdev *pdev);
 	int (*sptrlc_process_spectral_report)(
 			struct wlan_objmgr_pdev *pdev,
 			void *payload);
@@ -189,6 +215,9 @@ struct spectral_context {
 			struct wlan_objmgr_pdev *pdev,
 			enum spectral_dma_debug dma_debug_type,
 			bool dma_debug_enable);
+	QDF_STATUS (*sptrlc_scan_complete_event)(
+			struct wlan_objmgr_pdev *pdev,
+			struct spectral_scan_event *sptrl_event);
 };
 
 #endif /* _SPECTRAL_DEFS_I_H_ */

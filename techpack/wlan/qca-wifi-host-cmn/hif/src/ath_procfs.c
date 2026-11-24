@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2014, 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -119,15 +119,18 @@ static ssize_t ath_procfs_diag_read_legacy(struct file *file,
 	     (tgt_info->target_type == TARGET_TYPE_QCN6122) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCN9160) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCN6432) ||
+	     (tgt_info->target_type == TARGET_TYPE_QCA5424) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCA5018) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCA5332) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCA6018) ||
 	     (tgt_info->target_type == TARGET_TYPE_QCN7605) ||
 	     (tgt_info->target_type == TARGET_TYPE_KIWI) ||
 	     (tgt_info->target_type == TARGET_TYPE_MANGO) ||
-	     (tgt_info->target_type == TARGET_TYPE_PEACH))) ||
+	     (tgt_info->target_type == TARGET_TYPE_PEACH) ||
+	     (tgt_info->target_type == TARGET_TYPE_QCC2072))) ||
 	    (scn->bus_type ==  QDF_BUS_TYPE_IPCI &&
-	     (tgt_info->target_type == TARGET_TYPE_QCA6750)) ||
+	     (tgt_info->target_type == TARGET_TYPE_QCA6750 ||
+	      tgt_info->target_type == TARGET_TYPE_WCN7750)) ||
 	    ((scn->bus_type ==  QDF_BUS_TYPE_USB) &&
 	     (tgt_info->target_type == TARGET_TYPE_QCN7605))) {
 		memtype = ((uint32_t)(*pos) & 0xff000000) >> 24;
@@ -206,15 +209,18 @@ static ssize_t ath_procfs_diag_write_legacy(struct file *file,
 	      (tgt_info->target_type == TARGET_TYPE_QCN6122) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCN9160) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCN6432) ||
+	      (tgt_info->target_type == TARGET_TYPE_QCA5424) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCA5018) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCA5332) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCA6018) ||
 	      (tgt_info->target_type == TARGET_TYPE_QCN7605) ||
 	      (tgt_info->target_type == TARGET_TYPE_KIWI) ||
 	      (tgt_info->target_type == TARGET_TYPE_MANGO) ||
-	      (tgt_info->target_type == TARGET_TYPE_PEACH))) ||
+	      (tgt_info->target_type == TARGET_TYPE_PEACH) ||
+	      (tgt_info->target_type == TARGET_TYPE_QCC2072))) ||
 	    (scn->bus_type ==  QDF_BUS_TYPE_IPCI &&
-	     (tgt_info->target_type == TARGET_TYPE_QCA6750)) ||
+	     ((tgt_info->target_type == TARGET_TYPE_QCA6750) ||
+	     (tgt_info->target_type == TARGET_TYPE_WCN7750))) ||
 	    ((scn->bus_type ==  QDF_BUS_TYPE_USB) &&
 	     (tgt_info->target_type == TARGET_TYPE_QCN7605))) {
 		memtype = ((uint32_t)(*pos) & 0xff000000) >> 24;
@@ -355,12 +361,16 @@ static ssize_t ath_procfs_diag_read_ext(struct file *file, char __user *buf,
 	tgt_info = hif_get_target_info_handle(GET_HIF_OPAQUE_HDL(hif_hdl));
 	switch (scn->bus_type) {
 	case QDF_BUS_TYPE_PCI:
+	case QDF_BUS_TYPE_IPCI:
 		switch (tgt_info->target_type) {
 		case TARGET_TYPE_QCA6390:
 		case TARGET_TYPE_QCA6490:
 		case TARGET_TYPE_KIWI:
 		case TARGET_TYPE_PEACH:
 		case TARGET_TYPE_MANGO:
+		case TARGET_TYPE_WCN6450:
+		case TARGET_TYPE_WCN7750:
+		case TARGET_TYPE_QCC2072:
 			if (op_type == OP_TYPE_EXT_DIRECT)
 				rv = ath_procfs_direct_read(scn,
 							    offset,
@@ -432,12 +442,16 @@ static ssize_t ath_procfs_diag_write_ext(struct file *file,
 
 	switch (scn->bus_type) {
 	case QDF_BUS_TYPE_PCI:
+	case QDF_BUS_TYPE_IPCI:
 		switch (tgt_info->target_type) {
 		case TARGET_TYPE_QCA6390:
 		case TARGET_TYPE_QCA6490:
 		case TARGET_TYPE_KIWI:
 		case TARGET_TYPE_MANGO:
 		case TARGET_TYPE_PEACH:
+		case TARGET_TYPE_WCN6450:
+		case TARGET_TYPE_WCN7750:
+		case TARGET_TYPE_QCC2072:
 			if (op_type == OP_TYPE_EXT_DIRECT)
 				rv = ath_procfs_direct_write(scn,
 							     offset,
@@ -587,11 +601,8 @@ int athdiag_procfs_init(void *scn)
 		return -ENOMEM;
 	}
 
-#ifdef CONFIG_SEC
-	proc_file = proc_create_data(PROCFS_NAME, 0666, proc_dir, &athdiag_fops, (void *)scn);
-#else
-	proc_file = proc_create_data(PROCFS_NAME, 0600, proc_dir, &athdiag_fops, (void *)scn);
-#endif
+	proc_file = proc_create_data(PROCFS_NAME, 0600, proc_dir,
+				     &athdiag_fops, (void *)scn);
 	if (!proc_file) {
 		remove_proc_entry(PROCFS_NAME, proc_dir);
 		hif_err("Could not initialize /proc/%s", PROCFS_NAME);

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017, 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -126,6 +126,9 @@
 
 #define KDE_OUI_TYPE   "\x00\x0F\xAC"
 #define KDE_OUI_TYPE_SIZE  3
+#define KDE_TYPE 0xdd
+#define KDE_TYPE_SIZE 1
+#define KDE_LEN_SIZE 1
 
 #define SINGLE_ELEMENT_HASH_CNT 1
 
@@ -254,6 +257,13 @@ struct mac_ft_ie {
 	struct mac_ft_igtk_ie igtk_ie;
 };
 
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+#define FILS_GTK_LEN 16
+#define FILS_GMK_LEN 32
+#define FILS_GNONCE_LEN 32
+#define FILS_TK_INDEX 0
+#define FILS_GTK_INDEX 2
+#endif
 #define FILS_PMK_LEN 48
 #define FILS_PMK_NAME_LEN 16
 #define FILS_FT_MAX_LEN 48

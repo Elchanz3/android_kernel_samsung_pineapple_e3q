@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -27,6 +27,10 @@
 #ifdef WLAN_POLICY_MGR_ENABLE
 #include <wlan_policy_mgr_api.h>
 #include "wlan_policy_mgr_public_struct.h"
+#endif
+
+#ifdef WLAN_AUX_SUPPORT
+#include "wlan_mlme_api.h"
 #endif
 
 void wlan_scan_cfg_get_passive_dwelltime(struct wlan_objmgr_psoc *psoc,
@@ -328,7 +332,8 @@ QDF_STATUS
 wlan_scan_process_bcn_probe_rx_sync(struct wlan_objmgr_psoc *psoc,
 				    qdf_nbuf_t buf,
 				    struct mgmt_rx_event_params *rx_param,
-				    enum mgmt_frame_type frm_type)
+				    enum mgmt_frame_type frm_type,
+				    bool is_gen_entry)
 {
 	struct scan_bcn_probe_event *bcn = NULL;
 	QDF_STATUS status;
@@ -365,6 +370,17 @@ wlan_scan_process_bcn_probe_rx_sync(struct wlan_objmgr_psoc *psoc,
 
 	bcn->psoc = psoc;
 	bcn->buf = buf;
+
+	/*
+	 * Save the rnr entries from the frame into rnr db.
+	 * The RNR entry would have the partner links as well.
+	 * If the partner link is a non-tx profile, and if there
+	 * is no MBSSID info for that partner link, then look up
+	 * into the rnr db will help to identify if that partner
+	 * is a non-tx profile.
+	 */
+	bcn->save_rnr_info = true;
+	bcn->is_gen_entry = is_gen_entry;
 	qdf_mem_copy(bcn->rx_data, rx_param, sizeof(*rx_param));
 
 	return __scm_handle_bcn_probe(bcn);
@@ -835,7 +851,8 @@ void wlan_scan_update_low_latency_profile_chnlist(
 		return;
 	}
 
-	ll_sap_freq = policy_mgr_get_ll_sap_freq(psoc);
+	ll_sap_freq = policy_mgr_get_ll_ht_sap_freq(psoc);
+
 	if (!ll_sap_freq)
 		return;
 
@@ -885,6 +902,27 @@ wlan_scan_get_entry_by_bssid(struct wlan_objmgr_pdev *pdev,
 	return scm_scan_get_entry_by_bssid(pdev, bssid);
 }
 
+bool wlan_scan_flush_locally_generated_entry(struct wlan_objmgr_pdev *pdev,
+					     struct qdf_mac_addr *bssid)
+{
+	struct scan_cache_entry *entry = NULL;
+	bool status = true;
+
+	/* check if scan entry locally generated */
+	entry = wlan_scan_get_entry_by_bssid(pdev, bssid);
+	if (!entry)
+		return false;
+
+	if (!entry->is_gen_entry)
+		status = false;
+	else
+		scm_debug(QDF_MAC_ADDR_FMT ": Flushing the candidate scan entry",
+			  QDF_MAC_ADDR_REF(bssid->bytes));
+	util_scan_free_cache_entry(entry);
+
+	return status;
+}
+
 QDF_STATUS
 wlan_scan_get_mld_addr_by_link_addr(struct wlan_objmgr_pdev *pdev,
 				    struct qdf_mac_addr *link_addr,
@@ -901,20 +939,57 @@ wlan_scan_get_scan_entry_by_mac_freq(struct wlan_objmgr_pdev *pdev,
 	return scm_scan_get_scan_entry_by_mac_freq(pdev, bssid, freq);
 }
 
+struct scan_cache_entry *
+wlan_scan_entry_by_bssid_and_security(struct wlan_objmgr_pdev *pdev,
+				      struct qdf_mac_addr *bssid,
+				      uint8_t vdev_id)
+{
+	return scm_scan_get_entry_by_bssid_and_security(pdev, bssid, vdev_id);
+}
+
+#ifdef WLAN_AUX_SUPPORT
 bool wlan_scan_get_aux_support(struct wlan_objmgr_psoc *psoc)
 
 {
-	struct wlan_scan_obj *scan_obj;
+	bool aux_scan;
 
-	scan_obj = wlan_psoc_get_scan_obj(psoc);
-	if (!scan_obj)
-		return false;
+	aux_scan = wlan_mlme_is_aux_scan_support(psoc);
 
-	if (scan_obj->aux_mac_support)
-		scm_debug("aux mac support: %d", scan_obj->aux_mac_support);
-	else
-		scm_debug("aux mac not supported");
+	scm_debug("aux scan is %s", aux_scan ? "supported" : "not supported");
 
-	return scan_obj->aux_mac_support;
+	return aux_scan;
+}
+#endif
+
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+void wlan_scan_register_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+	struct pdev_scan_ev_handler *pdev_ev_handler;
+
+	pdev_ev_handler = wlan_pdev_get_pdev_scan_ev_handlers(pdev);
+	if (!pdev_ev_handler) {
+		scm_debug("null pdev_ev_handler");
+		return;
+	}
+
+	pdev_ev_handler->cached_scan_ev_handler =
+				scm_scan_cached_scan_report_ev_handler;
 }
 
+void wlan_scan_deregister_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+	struct pdev_scan_ev_handler *pdev_ev_handler;
+
+	pdev_ev_handler = wlan_pdev_get_pdev_scan_ev_handlers(pdev);
+	if (!pdev_ev_handler)
+		return;
+
+	if (pdev_ev_handler->cached_scan_ev_handler)
+		pdev_ev_handler->cached_scan_ev_handler = NULL;
+}
+#endif
+
+void wlan_scan_set_obss_scan_enable(struct wlan_objmgr_vdev *vdev)
+{
+	scm_set_obss_scan_enable(vdev);
+}

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -159,6 +159,17 @@ struct wlan_objmgr_peer *wlan_mlo_peer_get_assoc_peer(
 					struct wlan_mlo_peer_context *ml_peer);
 
 /**
+ * wlan_mlo_peer_get_first_active_peer() - Get first active peer
+ * @ml_peer: MLO peer
+ *
+ * This function returns the first active peer
+ *
+ * Return: first active peer, if it is found, otherwise NULL
+ */
+struct wlan_objmgr_peer *wlan_mlo_peer_get_first_active_peer(
+					struct wlan_mlo_peer_context *ml_peer);
+
+/**
  * wlan_mlo_peer_get_primary_link_vdev() - Get primary link vdev
  * @ml_peer: MLO peer
  *
@@ -180,6 +191,18 @@ wlan_mlo_peer_get_primary_link_vdev(struct wlan_mlo_peer_context *ml_peer);
  */
 struct wlan_objmgr_peer *wlan_mlo_peer_get_bridge_peer(
 					struct wlan_mlo_peer_context *ml_peer);
+
+/**
+ * wlan_mlo_peer_get_primary_peer() - get primary peer
+ * @ml_peer: MLO peer
+ *
+ * This function returns primary peer of MLO peer
+ *
+ * Return: primary peer, if it is found, otherwise NULL
+ */
+struct wlan_objmgr_peer *wlan_mlo_peer_get_primary_peer(
+					struct wlan_mlo_peer_context *ml_peer);
+
 /**
  * mlo_peer_is_assoc_peer() - check whether the peer is assoc peer
  * @ml_peer: MLO peer
@@ -724,6 +747,46 @@ static inline void wlan_peer_clear_mlo(struct wlan_objmgr_peer *peer)
 	return wlan_peer_mlme_flag_ext_clear(peer, WLAN_PEER_FEXT_MLO);
 }
 
+/**
+ * wlan_peer_is_assoc_rejected() - check whether peer is assoc rejected
+ * @peer: link peer object
+ *
+ * API to check partner link peer is association rejected
+ *
+ * Return: true if it assoc rejected peer
+ *         false, if it is not assoc rejected
+ */
+static inline uint8_t wlan_peer_is_assoc_rejected(struct wlan_objmgr_peer *peer)
+{
+	return wlan_peer_mlme_flag_ext_get(peer, WLAN_PEER_FEXT_ASSOC_REJ);
+}
+
+/**
+ * wlan_peer_set_assoc_rejected() - Set peer as assoc rejected peer
+ * @peer: link peer object
+ *
+ * API to set assoc rejected flag in partner link peer
+ *
+ * Return: void
+ */
+static inline void wlan_peer_set_assoc_rejected(struct wlan_objmgr_peer *peer)
+{
+	return wlan_peer_mlme_flag_ext_set(peer, WLAN_PEER_FEXT_ASSOC_REJ);
+}
+
+/**
+ * wlan_peer_clear_assoc_rejected() - clear peer as assoc rejected peer
+ * @peer: link peer object
+ *
+ * API to clear partner peer assoc rejected flag in link peer
+ *
+ * Return: void
+ */
+static inline void wlan_peer_clear_assoc_rejected(struct wlan_objmgr_peer *peer)
+{
+	return wlan_peer_mlme_flag_ext_clear(peer, WLAN_PEER_FEXT_ASSOC_REJ);
+}
+
 #if defined(MESH_MODE_SUPPORT) && defined(WLAN_FEATURE_11BE_MLO)
 /**
  * wlan_mlo_peer_is_mesh() - Check if ml_peer is configured to operate as MESH
@@ -826,15 +889,18 @@ void wlan_objmgr_mlo_update_primary_info(struct wlan_objmgr_peer *peer);
  * @link_vdevs: list of vdevs from which new primary link is to be selected
  * @allow_all_links: Flag to allow all links to be able to get selected as
  * primary. This flag will be used to override primary_umac_skip ini
+ * @rssi_data: RSSI data of all the HW links
  *
  * API to get primary umac using rssi
  *
  * Return: primary umac psoc id
  */
 uint8_t
-wlan_mld_get_best_primary_umac_w_rssi(struct wlan_mlo_peer_context *ml_peer,
-				      struct wlan_objmgr_vdev *link_vdevs[],
-				      bool allow_all_links);
+wlan_mld_get_best_primary_umac_w_rssi(
+	struct wlan_mlo_peer_context *ml_peer,
+	struct wlan_objmgr_vdev *link_vdevs[],
+	bool allow_all_links,
+	const struct mlo_all_link_rssi *rssi_data);
 
 /**
  * wlan_mlo_wsi_link_info_send_cmd() - Send WSI stats to FW
@@ -918,4 +984,13 @@ void wlan_mlo_ap_vdev_del_assoc_entry(struct wlan_objmgr_vdev *vdev,
 struct wlan_mlo_sta_entry *
 wlan_mlo_ap_vdev_find_assoc_entry(struct wlan_objmgr_vdev *vdev,
 				  struct qdf_mac_addr *mld_addr);
+/**
+ * wlan_mlo_ap_delete_assoc_list_entries() - Delete mld mac address
+ * @ctx: pointer to wlan_mlo_sta_assoc_pending_list structure
+ *
+ * API to delete mld mac address from the list
+ *
+ * Return: void
+ */
+void wlan_mlo_ap_delete_assoc_list_entries(void *ctx);
 #endif

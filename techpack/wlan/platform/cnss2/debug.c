@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016-2021, The Linux Foundation. All rights reserved. */
-/* Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved. */
+/* Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved. */
 
 
 #include <linux/err.h>
@@ -13,12 +13,7 @@
 
 #define MMIO_REG_ACCESS_MEM_TYPE		0xFF
 #define MMIO_REG_RAW_ACCESS_MEM_TYPE		0xFE
-// The print type has been temporarily changed to Warning for debugging purpose
-#if 0
-#define DEFAULT_KERNEL_LOG_LEVEL               INFO_LOG
-#else
-#define DEFAULT_KERNEL_LOG_LEVEL               MAX_LOG
-#endif
+#define DEFAULT_KERNEL_LOG_LEVEL		INFO_LOG
 #define DEFAULT_IPC_LOG_LEVEL			DEBUG_LOG
 
 enum log_level cnss_kernel_log_level = DEFAULT_KERNEL_LOG_LEVEL;
@@ -78,6 +73,15 @@ static const struct file_operations cnss_pin_connect_fops = {
 	.llseek		= seq_lseek,
 };
 
+static u64 cnss_get_serial_id(struct cnss_plat_data *plat_priv)
+{
+	u32 msb = plat_priv->serial_id.serial_id_msb;
+	u32 lsb = plat_priv->serial_id.serial_id_lsb;
+
+	msb &= 0xFFFF;
+	return (((u64)msb << 32) | lsb);
+}
+
 static int cnss_stats_show_state(struct seq_file *s,
 				 struct cnss_plat_data *plat_priv)
 {
@@ -85,6 +89,8 @@ static int cnss_stats_show_state(struct seq_file *s,
 	int skip = 0;
 	unsigned long state;
 
+	seq_printf(s, "\nSerial Number: 0x%llx",
+		   cnss_get_serial_id(plat_priv));
 	seq_printf(s, "\nState: 0x%lx(", plat_priv->driver_state);
 	for (i = 0, state = plat_priv->driver_state; state != 0;
 	     state >>= 1, i++) {
@@ -179,6 +185,18 @@ static int cnss_stats_show_state(struct seq_file *s,
 		case CNSS_DRIVER_REGISTERED:
 			seq_puts(s, "DRIVER REGISTERED");
 			continue;
+		case CNSS_POWER_OFF:
+			seq_puts(s, "POWER OFF");
+			continue;
+		case CNSS_SHUTDOWN_DEVICE:
+			seq_puts(s, "SHUTDOWN DEVICE");
+			continue;
+		case CNSS_POWERING_ON:
+			seq_puts(s, "POWERING ON");
+			continue;
+		case CNSS_SEC_DOWNLOAD:
+			seq_puts(s, "DOWNLOAD SEC_IN_BOOTUP");
+			continue;
 		}
 
 		seq_printf(s, "UNKNOWN-%d", i);
@@ -193,6 +211,8 @@ static int cnss_stats_show_gpio_state(struct seq_file *s,
 {
 	seq_printf(s, "\nHost SOL: %d", cnss_get_host_sol_value(plat_priv));
 	seq_printf(s, "\nDev SOL: %d", cnss_get_dev_sol_value(plat_priv));
+	seq_printf(s, "\nDirect CX Host SOL: %d",
+		   cnss_get_direct_cx_host_sol_value(plat_priv));
 
 	return 0;
 }
@@ -233,6 +253,7 @@ static ssize_t cnss_dev_boot_debug_write(struct file *fp,
 	char *sptr, *token;
 	const char *delim = " ";
 	int ret = 0;
+	struct cnss_xdump_cap *xdump_bt_cap;
 
 	if (!plat_priv)
 		return -ENODEV;
@@ -267,6 +288,8 @@ static ssize_t cnss_dev_boot_debug_write(struct file *fp,
 					     0, NULL);
 		clear_bit(CNSS_DRIVER_DEBUG, &plat_priv->driver_state);
 	} else if (sysfs_streq(cmd, "assert_host_sol")) {
+		pci_priv = plat_priv->bus_priv;
+		cnss_auto_resume(&pci_priv->pci_dev->dev);
 		ret = cnss_set_host_sol_value(plat_priv, 1);
 	} else if (sysfs_streq(cmd, "deassert_host_sol")) {
 		ret = cnss_set_host_sol_value(plat_priv, 0);
@@ -278,6 +301,19 @@ static ssize_t cnss_dev_boot_debug_write(struct file *fp,
 		cnss_wlan_hw_disable_check(plat_priv);
 	} else if (sysfs_streq(cmd, "dev_enable")) {
 		cnss_wlan_hw_enable();
+	} else if (sysfs_streq(cmd, "xdump_bt_over_wl")) {
+		xdump_bt_cap = kzalloc(sizeof(*xdump_bt_cap), GFP_KERNEL);
+		if (!xdump_bt_cap)
+			return -ENOMEM;
+
+		xdump_bt_cap->wl_over_bt = 1;
+		xdump_bt_cap->bt_over_wl = 1;
+		cnss_driver_event_post(plat_priv,
+				       CNSS_DRIVER_EVENT_XDUMP_BT_ARRIVAL,
+				       0, xdump_bt_cap);
+		cnss_driver_event_post(plat_priv,
+				       CNSS_DRIVER_EVENT_XDUMP_BT_OVER_WL_REQ,
+				       0, NULL);
 	} else {
 		pci_priv = plat_priv->bus_priv;
 		if (!pci_priv)
@@ -323,6 +359,7 @@ static int cnss_dev_boot_debug_show(struct seq_file *s, void *data)
 	seq_puts(s, "shutdown: full power off sequence to shutdown device\n");
 	seq_puts(s, "assert: trigger firmware assert\n");
 	seq_puts(s, "set_cbc_done: Set cold boot calibration done status\n");
+	seq_puts(s, "xdump_bt_over_wl: request to collect BT dump over WLAN\n");
 	seq_puts(s, "\npdc_update usage:");
 	seq_puts(s, "1. echo pdc_update {class: wlan_pdc ss: <pdc_ss>, res: <vreg>.<mode>, <seq>: <val>} > <debugfs_path>/cnss/dev_boot\n");
 	seq_puts(s, "2. echo pdc_update {class: wlan_pdc ss: <pdc_ss>, res: pdc, enable: <val>} > <debugfs_path>/cnss/dev_boot\n");
@@ -854,6 +891,9 @@ static int cnss_show_quirks_state(struct seq_file *s,
 		case FORCE_ONE_MSI:
 			seq_puts(s, "FORCE_ONE_MSI");
 			continue;
+		case PREVENT_PCI_LINK_RESUME:
+			seq_puts(s, "PREVENT_PCI_LINK_RESUME");
+			continue;
 		default:
 			continue;
 		}
@@ -929,6 +969,89 @@ static ssize_t cnss_dynamic_feature_write(struct file *fp,
 	return count;
 }
 
+static ssize_t direct_cx_sdam_debug_write(struct file *fp,
+					  const char __user *user_buf,
+					  size_t count, loff_t *off)
+{
+	struct cnss_plat_data *plat_priv =
+		((struct seq_file *)fp->private_data)->private;
+	char buf[64];
+	char *sptr, *token;
+	u32 val;
+	unsigned int len = 0;
+	const char *delim = " ";
+	u8 *reg_buf;
+	u8 cx_debug_val;
+
+	cnss_pr_info("Entering direct_cx_sdam_debug_write\n");
+
+	reg_buf = cnss_debug_direct_cx(plat_priv);
+	if (!reg_buf) {
+		cnss_pr_err("reg_buf is null\n");
+		goto out;
+	}
+
+	if (IS_ERR(reg_buf)) {
+		cnss_pr_err("Failed to read wlan_seq_debug: %d\n",
+			    PTR_ERR(reg_buf));
+		goto out;
+	}
+
+	cx_debug_val = *reg_buf;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, user_buf, len))
+		goto out;
+
+	buf[len] = '\0';
+	sptr = buf;
+
+	token = strsep(&sptr, delim);
+	if (!token)
+		goto out;
+	if (kstrtou32(token, 0, &val))
+		goto out;
+
+	cnss_pr_info("wlan_seq_debug register val: 0x%x\n", cx_debug_val);
+	cnss_pr_info("wlan_seq_debug register val: %d\n", cx_debug_val);
+
+	switch (cx_debug_val) {
+	case 0:
+		cx_debug_val = cx_debug_val << 7;
+		cx_debug_val = cx_debug_val >> 7;
+		break;
+	case 1:
+		cx_debug_val = cx_debug_val << 4;
+		cx_debug_val = cx_debug_val >> 5;
+		break;
+	case 2:
+		cx_debug_val = cx_debug_val << 3;
+		cx_debug_val = cx_debug_val >> 7;
+		break;
+	case 3:
+		cx_debug_val = cx_debug_val << 1;
+		cx_debug_val = cx_debug_val >> 6;
+		break;
+	case 4:
+		cx_debug_val = cx_debug_val >> 7;
+		break;
+	default:
+		break;
+	}
+
+	cnss_pr_info("wlan_seq_debug register val: 0x%x\n", cx_debug_val);
+	cnss_pr_info("wlan_seq_debug register val: %d\n", cx_debug_val);
+
+	kfree(reg_buf);
+
+	return count;
+
+out:
+	kfree(reg_buf);
+
+	return -EINVAL;
+}
+
 static int cnss_dynamic_feature_show(struct seq_file *s, void *data)
 {
 	struct cnss_plat_data *cnss_priv = s->private;
@@ -986,6 +1109,32 @@ static const struct file_operations cnss_smmu_fault_timestamp_fops = {
 	.llseek = seq_lseek,
 };
 
+static int direct_cx_sdam_debug_show(struct seq_file *s, void *data)
+{
+	struct cnss_plat_data *plat_priv = s->private;
+
+	if (!plat_priv)
+		cnss_pr_info("plat_priv is null\n");
+
+	return 0;
+}
+
+static int direct_cx_sdam_debug_open(struct inode *inode, struct file *file)
+{
+	cnss_pr_info("Entering direct_cx_sdam_debug_open\n");
+	return single_open(file, direct_cx_sdam_debug_show,
+			   inode->i_private);
+}
+
+static const struct file_operations direct_cx_gpio_test_fops = {
+	.read = seq_read,
+	.release = single_release,
+	.write = direct_cx_sdam_debug_write,
+	.open = direct_cx_sdam_debug_open,
+	.owner = THIS_MODULE,
+	.llseek = seq_lseek,
+};
+
 #ifdef CONFIG_DEBUG_FS
 #ifdef CONFIG_CNSS2_DEBUG
 static int cnss_create_debug_only_node(struct cnss_plat_data *plat_priv)
@@ -1006,6 +1155,8 @@ static int cnss_create_debug_only_node(struct cnss_plat_data *plat_priv)
 			    &cnss_dynamic_feature_fops);
 	debugfs_create_file("cnss_smmu_fault_timestamp", 0600, root_dentry,
 			    plat_priv, &cnss_smmu_fault_timestamp_fops);
+	debugfs_create_file("direct_cx_gpio_test", 0600, root_dentry, plat_priv,
+			    &direct_cx_gpio_test_fops);
 
 	return 0;
 }
@@ -1093,8 +1244,6 @@ void cnss_debug_ipc_log_print(void *log_ctx, char *process, const char *fn,
 		case WARNING_LOG:
 			pr_warn("cnss: %pV", &vaf);
 			break;
-// The print type has been temporarily changed to Warning for debugging purpose
-#if 0
 		case NOTICE_LOG:
 			pr_notice("cnss: %pV", &vaf);
 			break;
@@ -1105,20 +1254,6 @@ void cnss_debug_ipc_log_print(void *log_ctx, char *process, const char *fn,
 		case DEBUG_HI_LOG:
 			pr_debug("cnss: %pV", &vaf);
 			break;
-#else
-		case NOTICE_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-		case INFO_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-		case DEBUG_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-		case DEBUG_HI_LOG:
-			pr_debug("cnss: %pV", &vaf);
-			break;
-#endif
 		default:
 			break;
 		}
@@ -1193,8 +1328,6 @@ void cnss_debug_ipc_log_print(void *log_ctx, char *process, const char *fn,
 		case WARNING_LOG:
 			pr_warn("cnss: %pV", &vaf);
 			break;
-// The print type has been temporarily changed to Warning for debugging purpose
-#if 0
 		case NOTICE_LOG:
 			pr_notice("cnss: %pV", &vaf);
 			break;
@@ -1205,18 +1338,6 @@ void cnss_debug_ipc_log_print(void *log_ctx, char *process, const char *fn,
 		case DEBUG_HI_LOG:
 			pr_debug("cnss: %pV", &vaf);
 			break;
-#else
-		case NOTICE_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-		case INFO_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-		case DEBUG_LOG:
-		case DEBUG_HI_LOG:
-			pr_warn("cnss: %pV", &vaf);
-			break;
-#endif
 		default:
 			break;
 		}

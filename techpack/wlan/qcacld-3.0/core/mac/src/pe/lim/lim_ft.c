@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -535,6 +535,7 @@ static QDF_STATUS lim_fill_session_power_info(
 	struct vdev_mlme_obj *mlme_obj;
 	enum reg_6g_ap_type power_type_6g;
 	QDF_STATUS status;
+	int8_t rf_mode_force_pwr_type;
 
 	mlme_obj = wlan_vdev_mlme_get_cmpt_obj(pe_session->vdev);
 	if (!mlme_obj) {
@@ -551,11 +552,20 @@ static QDF_STATUS lim_fill_session_power_info(
 	mlme_obj->reg_tpc_obj.is_power_constraint_abs = !is_pwr_constraint;
 
 	if (wlan_reg_is_6ghz_chan_freq(pbssDescription->chan_freq)) {
+		status = wlan_mlme_get_rf_mode_force_pwr_type(
+						mac->psoc,
+						&rf_mode_force_pwr_type);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			pe_err("Get rf test mode force power type failed");
+			return status;
+		}
+
 		status = wlan_reg_get_best_6g_power_type(
 				mac->psoc, mac->pdev,
 				&power_type_6g,
 				ft_session->ap_defined_power_type_6g,
-				pbssDescription->chan_freq);
+				pbssDescription->chan_freq,
+				rf_mode_force_pwr_type);
 		if (QDF_IS_STATUS_ERROR(status))
 			return status;
 
@@ -620,7 +630,7 @@ lim_fill_ft_session(struct mac_context *mac,
 {
 	uint8_t bss_chan_id;
 	tSchBeaconStruct *pBeaconStruct;
-	ePhyChanBondState cbEnabledMode;
+	uint8_t cb_mode;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 
 	pBeaconStruct = qdf_mem_malloc(sizeof(tSchBeaconStruct));
@@ -691,7 +701,7 @@ lim_fill_ft_session(struct mac_context *mac,
 	}
 	if (IS_DOT11_MODE_EHT(ft_session->dot11mode) &&
 	    pBeaconStruct->eht_cap.present) {
-		lim_update_session_eht_capable(mac, ft_session);
+		lim_update_session_eht_capable(ft_session, true);
 		lim_copy_join_req_eht_cap(ft_session);
 	}
 	/* Assign default configured nss value in the new session */
@@ -702,14 +712,12 @@ lim_fill_ft_session(struct mac_context *mac,
 
 	ft_session->nss = ft_session ->vdev_nss;
 
-	if (ft_session->limRFBand == REG_BAND_2G) {
-		cbEnabledMode = mac->roam.configParam.channelBondingMode24GHz;
-	} else {
-		cbEnabledMode = mac->roam.configParam.channelBondingMode5GHz;
-	}
+	cb_mode = lim_get_cb_mode_for_freq(mac, ft_session,
+					   ft_session->curr_op_freq);
+
 	ft_session->htSupportedChannelWidthSet =
 	    (pBeaconStruct->HTInfo.present) ?
-	    (cbEnabledMode && pBeaconStruct->HTInfo.recommendedTxWidthSet &&
+	    (cb_mode && pBeaconStruct->HTInfo.recommendedTxWidthSet &&
 	     pBeaconStruct->HTCaps.supportedChannelWidthSet) : 0;
 	ft_session->htRecommendedTxWidthSet =
 		ft_session->htSupportedChannelWidthSet;
@@ -800,6 +808,12 @@ lim_fill_ft_session(struct mac_context *mac,
 					     pe_session);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		pe_err("Failed to fill power info in ft session");
+		goto exit;
+	}
+
+	status = lim_set_session_channel_params(mac, ft_session);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		pe_err("Failed to set session channel params");
 		goto exit;
 	}
 

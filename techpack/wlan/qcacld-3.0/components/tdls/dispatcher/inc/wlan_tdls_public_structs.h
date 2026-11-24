@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -70,6 +70,8 @@
 
 #define AC_PRIORITY_NUM                 4
 
+#define WLAN_TDLS_STA_KICKOUT_THRESHOLD 3
+
 /* Default tdls serialize timeout is set to 4 (peer delete) + 1 secs */
 #ifdef FEATURE_RUNTIME_PM
 /* Add extra PMO_RESUME_TIMEOUT for runtime PM resume timeout */
@@ -110,6 +112,21 @@
 #define MIN_TDLS_HE_CAP_LEN 17
 #define MAX_TDLS_HE_CAP_LEN 29
 #endif
+
+/**
+ * enum wlan_tdls_peer_delete_reason - reason for deletion of TDLS peers
+ * @TDLS_PEER_DEL_REASON_NONE: None
+ * @TDLS_PEER_DEL_REASON_ROAMING: Delete TDLS peers due to roaming
+ * @TDLS_PEER_DEL_REASON_VDEV_REPURPOSE: Delete TDLS peers due to vdev repurpose
+ * @TDLS_PEER_DEL_REASON_LINK_STATE_SWITCH: Delete TDLS peers due to link state
+ * switch
+ */
+enum wlan_tdls_peer_delete_reason {
+	TDLS_PEER_DEL_REASON_NONE = 0,
+	TDLS_PEER_DEL_REASON_ROAMING = 1,
+	TDLS_PEER_DEL_REASON_VDEV_REPURPOSE = 2,
+	TDLS_PEER_DEL_REASON_LINK_STATE_SWITCH = 3,
+};
 
 /**
  * enum tdls_add_oper - add peer type
@@ -401,6 +418,18 @@ enum tdls_disable_sources {
 };
 
 /**
+ * enum tdls_enable_support_bit - tdls enable support bit definitation
+ * @TDLS_ENABLE_BIT_FULL: Full enable TDLS
+ * @TDLS_ENABLE_BIT_11AX: Support TDLS upto 11ax.
+ * @TDLS_ENABLE_BIT_11BE: Support TDLS upto 11be.
+ */
+enum tdls_enable_support_bit {
+	TDLS_ENABLE_BIT_FULL,
+	TDLS_ENABLE_BIT_11AX,
+	TDLS_ENABLE_BIT_11BE,
+};
+
+/**
  * struct tdls_osif_indication - tdls indication to os if layer
  * @vdev: vdev object
  * @reason: used with teardown indication
@@ -540,7 +569,7 @@ struct tdls_user_config {
 	bool tdls_implicit_trigger_enable;
 	bool tdls_scan_enable;
 	bool tdls_sleep_sta_enable;
-	bool tdls_support_enable;
+	uint8_t tdls_support_enable;
 	int tdls_link_id;
 };
 
@@ -599,7 +628,7 @@ struct tdls_rx_mgmt_frame {
 	uint32_t vdev_id;
 	uint32_t frm_type;
 	uint32_t rx_rssi;
-	uint8_t buf[1];
+	QDF_FLEX_ARRAY(uint8_t, buf);
 };
 
 /**
@@ -1407,7 +1436,7 @@ struct tdls_send_mgmt_request {
 	struct qdf_mac_addr peer_mac;
 	enum wifi_traffic_ac ac;
 	/* Variable length. Dont add any field after this. */
-	uint8_t add_ie[1];
+	QDF_FLEX_ARRAY(uint8_t, add_ie);
 };
 
 /**
@@ -1484,6 +1513,11 @@ struct tdls_del_sta_req {
 	uint16_t transaction_id;
 	struct qdf_mac_addr bssid;
 	struct qdf_mac_addr peermac;
+};
+
+enum tdls_teardown_reason {
+	TDLS_TEARDOWN_REASON_DEFAULT,
+	TDLS_TEARDOWN_REASON_LINK_SWITCH,
 };
 
 /**

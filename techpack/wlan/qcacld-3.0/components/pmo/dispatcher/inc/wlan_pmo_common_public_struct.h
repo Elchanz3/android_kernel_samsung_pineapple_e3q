@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -364,6 +364,7 @@ enum pmo_page_fault_action {
  * @ap_arpns_support: true if psoc supports arp ns for ap mode
  * @d0_wow_supported: true if psoc supports D0 wow command
  * @ra_ratelimit_enable: true when ra filtering ins eanbled else false
+ * @ra_priority_enable: true when ra priority ins eanbled else false
  * @ra_ratelimit_interval: ra packets interval
  * @magic_ptrn_enable: true when magic pattern is enabled else false
  * @deauth_enable: true when wake up on deauth is enabled else false
@@ -371,6 +372,8 @@ enum pmo_page_fault_action {
  * @lpass_enable: true when lpass is enabled else false
  * @max_ps_poll: max power save poll
  * @sta_dynamic_dtim: station dynamic DTIM value
+ * @sta_teles_dtim: station telescopic DTIM value
+ * @min_teles_dtim: minimum telescopic DTIM level
  * @sta_mod_dtim: station modulated DTIM value
  * @sta_max_li_mod_dtim: station max listen interval DTIM value
  * @sta_forced_dtim: station forced DTIM value
@@ -409,8 +412,12 @@ enum pmo_page_fault_action {
  * @ito_repeat_count: Indicates ito repeated count
  * @is_mod_dtim_on_sys_suspend_enabled: true when mod dtim is enabled for
  * system suspend wow else false
+ * @is_teles_dtim_only_on_sys_suspend_enabled: true when tele dtim is enable
+ *  for system suspend wow, false when tele dtim is enable for system suspend
+ *  or run time PM.
  * @is_bus_suspend_enabled_in_sap_mode: Can bus suspend in SoftAP mode
  * @is_bus_suspend_enabled_in_go_mode: Can bus suspend in P2P GO mode
+ * @wow_suspend_type: What wow suspend type is currently happening
  * @enable_gpio_wakeup: enable gpio wakeup
  * @gpio_wakeup_pin: gpio wakeup pin
  * @gpio_wakeup_mode: gpio wakeup mode
@@ -426,6 +433,8 @@ enum pmo_page_fault_action {
  * wakeups needs to be monitored.
  * @ssr_frequency_on_pagefault: Time in ms in which SSR needs to be triggered
  * on max pagefault
+ * @is_apf_configure_per_screen_state: Configure APF mode enable/disable
+ * per screen off/on state
  */
 struct pmo_psoc_cfg {
 	bool ptrn_match_enable_all_vdev;
@@ -441,6 +450,7 @@ struct pmo_psoc_cfg {
 	bool ap_arpns_support;
 	bool d0_wow_supported;
 	bool ra_ratelimit_enable;
+	bool ra_priority_enable;
 #ifdef FEATURE_WLAN_RA_FILTERING
 	uint16_t ra_ratelimit_interval;
 #endif
@@ -450,6 +460,8 @@ struct pmo_psoc_cfg {
 	bool lpass_enable;
 	uint8_t max_ps_poll;
 	uint8_t sta_dynamic_dtim;
+	uint8_t sta_teles_dtim;
+	uint8_t min_teles_dtim;
 	uint8_t sta_mod_dtim;
 	uint8_t sta_max_li_mod_dtim;
 	bool sta_forced_dtim;
@@ -492,8 +504,10 @@ struct pmo_psoc_cfg {
 	enum active_apf_mode active_mc_bc_apf_mode;
 	uint8_t ito_repeat_count;
 	bool is_mod_dtim_on_sys_suspend_enabled;
+	bool is_teles_dtim_only_on_sys_suspend_enabled;
 	bool is_bus_suspend_enabled_in_sap_mode;
 	bool is_bus_suspend_enabled_in_go_mode;
+	enum qdf_suspend_type wow_suspend_type;
 #ifdef WLAN_ENABLE_GPIO_WAKEUP
 	bool enable_gpio_wakeup;
 	uint32_t gpio_wakeup_pin;
@@ -511,6 +525,7 @@ struct pmo_psoc_cfg {
 	uint8_t min_pagefault_wakeups_for_action;
 	uint32_t interval_for_pagefault_wakeup_counts;
 	uint32_t ssr_frequency_on_pagefault;
+	bool is_apf_configure_per_screen_state;
 };
 
 /**

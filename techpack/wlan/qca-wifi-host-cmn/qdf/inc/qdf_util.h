@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -34,6 +34,9 @@
 #endif
 
 typedef __qdf_wait_queue_head_t qdf_wait_queue_head_t;
+typedef __qdf_siphash_aligned_key_t qdf_siphash_aligned_key_t;
+
+typedef __qdf_page_t qdf_page_t;
 
 /**
  * qdf_unlikely - Compiler-dependent macro denoting code unlikely to execute
@@ -700,6 +703,23 @@ static inline int qdf_get_pwr2(int value)
 	return 1 << log2;
 }
 
+/**
+ * qdf_get_power2_of_n() - get power 2 value of input n.
+ * @n: value of n in 2^n. Max value allowed is 31.
+ * @power: pointer to store the computed value
+ *
+ * Return: status of calculating 2^n
+ */
+static inline QDF_STATUS qdf_get_power2_of_n(uint8_t n, uint32_t *power)
+{
+	if ((n > 31) || !power)
+		return QDF_STATUS_E_INVAL;
+
+	*power = 1 << n;
+
+	return QDF_STATUS_SUCCESS;
+}
+
 static inline
 int qdf_get_cpu(void)
 {
@@ -931,6 +951,32 @@ int qdf_fls(uint32_t x)
 	return __qdf_fls(x);
 }
 
+
+/**
+ * qdf_ffs() - find first set bit in a given 32 bit input
+ * @x: 32 bit mask
+ *
+ * Return: zero if the input is zero, otherwise returns the bit
+ * position of the first set bit, where the LSB is 1 and MSB is 32.
+ */
+static inline
+int qdf_ffs(uint32_t x)
+{
+	return __qdf_ffs(x);
+}
+
+/**
+ * qdf_ffs64() - find first set bit in a given 64 bit input
+ * @x: 64 bit mask
+ *
+ * Return: zero if the input is zero, otherwise returns the bit
+ * position of the first set bit, where the LSB is 1 and MSB is 64.
+ */
+static inline int qdf_ffs64(uint64_t x)
+{
+	return __qdf_ffs64(x);
+}
+
 /**
  * qdf_get_smp_processor_id() - Get the current CPU id
  *
@@ -950,5 +996,31 @@ static inline int qdf_get_smp_processor_id(void)
 static inline bool qdf_in_atomic(void)
 {
 	return __qdf_in_atomic();
+}
+
+/**
+ * qdf_siphash() - Return siphash
+ * @data: pointer to the data for which siphash has to be generated
+ * @len: length of data in the buffer for which siphash has to be generated
+ * @key: key to be used for generating siphash
+ *
+ * Return: 64-bit hash
+ */
+static inline uint64_t qdf_siphash(const void *data, size_t len,
+				   const qdf_siphash_aligned_key_t *key)
+{
+	return __qdf_siphash(data, len, key);
+}
+
+/**
+ * qdf_virt_to_head_page: Get head page reference for the address
+ *
+ * @addr: virtual address
+ *
+ * Return: Page reference
+ */
+static inline qdf_page_t qdf_virt_to_head_page(void *addr)
+{
+	return __qdf_virt_to_head_page(addr);
 }
 #endif /*_QDF_UTIL_H*/

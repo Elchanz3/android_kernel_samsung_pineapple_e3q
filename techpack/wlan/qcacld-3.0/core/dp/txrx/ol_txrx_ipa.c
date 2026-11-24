@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -844,6 +844,7 @@ QDF_STATUS ol_txrx_ipa_cleanup(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 
 /**
  * ol_txrx_ipa_setup_iface() - Setup IPA header and register interface
+ * @soc_hdl: soc handle
  * @ifname: Interface name
  * @mac_addr: Interface MAC address
  * @prod_client: IPA prod client type
@@ -853,7 +854,8 @@ QDF_STATUS ol_txrx_ipa_cleanup(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
  *
  * Return: QDF_STATUS
  */
-QDF_STATUS ol_txrx_ipa_setup_iface(char *ifname, uint8_t *mac_addr,
+QDF_STATUS ol_txrx_ipa_setup_iface(struct cdp_soc_t *soc_hdl,
+				   char *ifname, uint8_t *mac_addr,
 				   qdf_ipa_client_type_t prod_client,
 				   qdf_ipa_client_type_t cons_client,
 				   uint8_t session_id, bool is_ipv6_enabled,
@@ -868,6 +870,8 @@ QDF_STATUS ol_txrx_ipa_setup_iface(char *ifname, uint8_t *mac_addr,
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "%s: Add Partial hdr: %s, "QDF_MAC_ADDR_FMT,
 		  __func__, ifname, QDF_MAC_ADDR_REF(mac_addr));
+
+	qdf_mem_zero(&in, sizeof(qdf_ipa_wdi_reg_intf_in_params_t));
 
 	qdf_mem_zero(&hdr_info, sizeof(qdf_ipa_wdi_hdr_info_t));
 	memcpy(&uc_tx_hdr, &ipa_uc_tx_hdr, OL_TXRX_IPA_UC_WLAN_TX_HDR_LEN);
@@ -892,6 +896,7 @@ QDF_STATUS ol_txrx_ipa_setup_iface(char *ifname, uint8_t *mac_addr,
 	QDF_IPA_WDI_REG_INTF_IN_PARAMS_META_DATA(&in) =
 		htonl(session_id << 16);
 	QDF_IPA_WDI_REG_INTF_IN_PARAMS_META_DATA_MASK(&in) = htonl(0x00FF0000);
+	QDF_IPA_WDI_REG_INTF_IN_PARAMS_HANDLE(&in) = hdl;
 
 	/* IPV6 header */
 	if (is_ipv6_enabled) {
@@ -1347,7 +1352,7 @@ static QDF_STATUS ol_txrx_ipa_remove_header(char *name)
 	qdf_ipa_ioc_del_hdr_t *ipa_hdr;
 
 	qdf_mem_zero(&hdrlookup, sizeof(hdrlookup));
-	strlcpy(hdrlookup.name, name, sizeof(hdrlookup.name));
+	strscpy(hdrlookup.name, name, sizeof(hdrlookup.name));
 	ret = qdf_ipa_get_hdr(&hdrlookup);
 	if (ret) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
@@ -1565,7 +1570,7 @@ static int ol_txrx_ipa_register_interface(char *ifname,
 			IPA_CLIENT_WLAN1_CONS;
 	QDF_IPA_IOC_TX_INTF_PROP_ALT_DST_PIPE(&tx_prop[IPA_IP_v4]) =
 			cons_client;
-	strlcpy(QDF_IPA_IOC_TX_INTF_PROP_HDR_NAME(&tx_prop[IPA_IP_v4]),
+	strscpy(QDF_IPA_IOC_TX_INTF_PROP_HDR_NAME(&tx_prop[IPA_IP_v4]),
 		ipv4_hdr_name, IPA_RESOURCE_NAME_MAX);
 	tx_intf.num_props++;
 
@@ -1577,7 +1582,7 @@ static int ol_txrx_ipa_register_interface(char *ifname,
 			IPA_CLIENT_WLAN1_CONS;
 		QDF_IPA_IOC_TX_INTF_PROP_ALT_DST_PIPE(&tx_prop[IPA_IP_v6]) =
 			cons_client;
-		strlcpy(QDF_IPA_IOC_TX_INTF_PROP_HDR_NAME(&tx_prop[IPA_IP_v6]),
+		strscpy(QDF_IPA_IOC_TX_INTF_PROP_HDR_NAME(&tx_prop[IPA_IP_v6]),
 			ipv6_hdr_name, IPA_RESOURCE_NAME_MAX);
 		tx_intf.num_props++;
 	}
@@ -1596,6 +1601,7 @@ register_interface_fail:
 
 /**
  * ol_txrx_ipa_setup_iface() - Setup IPA header and register interface
+ * @soc_hdl: soc handle
  * @ifname: Interface name
  * @mac_addr: Interface MAC address
  * @prod_client: IPA prod client type
@@ -1605,7 +1611,8 @@ register_interface_fail:
  *
  * Return: QDF_STATUS
  */
-QDF_STATUS ol_txrx_ipa_setup_iface(char *ifname, uint8_t *mac_addr,
+QDF_STATUS ol_txrx_ipa_setup_iface(struct cdp_soc_t *soc_hdl,
+				   char *ifname, uint8_t *mac_addr,
 				   qdf_ipa_client_type_t prod_client,
 				   qdf_ipa_client_type_t cons_client,
 				   uint8_t session_id, bool is_ipv6_enabled)

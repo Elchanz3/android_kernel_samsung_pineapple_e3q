@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -234,6 +234,7 @@ static void hal_get_tqm_scratch_reg_qca5332(hal_soc_handle_t hal_soc_hdl,
 	*value = ((uint64_t)(offset_hi) << 32 | offset_lo);
 }
 #endif
+
 /**
  * hal_rx_proc_phyrx_other_receive_info_tlv_6432(): API to get tlv info
  *
@@ -244,32 +245,8 @@ static void hal_get_tqm_scratch_reg_qca5332(hal_soc_handle_t hal_soc_hdl,
  */
 static inline
 void hal_rx_proc_phyrx_other_receive_info_tlv_6432(void *rx_tlv_hdr,
-				     void *ppdu_info_hdl)
+						   void *ppdu_info_hdl)
 {
-	uint32_t tlv_tag, tlv_len;
-	uint32_t temp_len, other_tlv_len, other_tlv_tag;
-	void *rx_tlv = (uint8_t *)rx_tlv_hdr + HAL_RX_TLV32_HDR_SIZE;
-	void *other_tlv_hdr = NULL;
-	void *other_tlv = NULL;
-
-	tlv_tag = HAL_RX_GET_USER_TLV32_TYPE(rx_tlv_hdr);
-	tlv_len = HAL_RX_GET_USER_TLV32_LEN(rx_tlv_hdr);
-	temp_len = 0;
-
-	other_tlv_hdr = rx_tlv + HAL_RX_TLV32_HDR_SIZE;
-	other_tlv_tag = HAL_RX_GET_USER_TLV32_TYPE(other_tlv_hdr);
-	other_tlv_len = HAL_RX_GET_USER_TLV32_LEN(other_tlv_hdr);
-
-	temp_len += other_tlv_len;
-	other_tlv = other_tlv_hdr + HAL_RX_TLV32_HDR_SIZE;
-
-	switch (other_tlv_tag) {
-	default:
-		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_ERROR,
-				"%s unhandled TLV type: %d, TLV len:%d",
-				__func__, other_tlv_tag, other_tlv_len);
-		break;
-	}
 }
 
 #if defined(WLAN_CFR_ENABLE) && defined(WLAN_ENH_CFR_ENABLE)
@@ -1004,6 +981,49 @@ void hal_compute_reo_remap_ix2_ix3_6432(uint32_t *ring, uint32_t num_rings,
 }
 
 /**
+ * hal_rx_flow_write_fse_metadata_6432() - Update fse metadata in HW FST
+ * @rx_fst: Pointer to the Rx Flow Search Table
+ * @table_offset: offset into the table where the flow is to be setup
+ * @rx_flow: Flow Parameters
+ *
+ * Return: Success/Failure
+ */
+static void *
+hal_rx_flow_write_fse_metadata_6432(uint8_t *rx_fst, uint32_t table_offset,
+				    uint8_t *rx_flow)
+{
+	struct hal_rx_fst *fst = (struct hal_rx_fst *)rx_fst;
+	struct hal_rx_flow *flow = (struct hal_rx_flow *)rx_flow;
+	uint8_t *fse;
+	bool fse_valid;
+
+	if (table_offset >= fst->max_entries) {
+		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+			  "HAL FSE table offset %u exceeds max entries %u",
+			  table_offset, fst->max_entries);
+		return NULL;
+	}
+
+	fse = (uint8_t *)fst->base_vaddr +
+			(table_offset * HAL_RX_FST_ENTRY_SIZE);
+
+	fse_valid = HAL_GET_FLD(fse, RX_FLOW_SEARCH_ENTRY, VALID);
+
+	if (!fse_valid) {
+		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
+			  "HAL FSE %pK not valid", fse);
+		return NULL;
+	}
+
+	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, METADATA);
+	HAL_SET_FLD(fse, RX_FLOW_SEARCH_ENTRY, METADATA) =
+		HAL_SET_FLD_SM(RX_FLOW_SEARCH_ENTRY, METADATA,
+			       flow->fse_metadata);
+
+	return fse;
+}
+
+/**
  * hal_rx_flow_setup_fse_6432() - Setup a flow search entry in HW FST
  * @rx_fst: Pointer to the Rx Flow Search Table
  * @table_offset: offset into the table where the flow is to be setup
@@ -1122,12 +1142,109 @@ hal_rx_flow_setup_fse_6432(uint8_t *rx_fst, uint32_t table_offset,
 	/* Reset all the other fields in FSE */
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, RESERVED_9);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, MSDU_DROP);
+	HAL_SET_FLD(fse, RX_FLOW_SEARCH_ENTRY, MSDU_DROP) |=
+		HAL_SET_FLD_SM(RX_FLOW_SEARCH_ENTRY, MSDU_DROP,
+			       flow->drop);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, MSDU_COUNT);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, MSDU_BYTE_COUNT);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY, TIMESTAMP);
 
 	return fse;
 }
+
+/**
+ * hal_rx_msdu_get_keyid_6432() - API to get the key id of the decrypted packet
+ *                                from rx_msdu_end
+ * @buf: pointer to the start of RX PKT TLV header
+ *
+ * Return: uint32_t(key id)
+ */
+
+static inline uint8_t hal_rx_msdu_get_keyid_6432(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t keyid_octet;
+
+	keyid_octet = HAL_RX_TLV_KEYID_OCTET_GET(rx_pkt_tlvs);
+
+	return keyid_octet & 0x3;
+}
+
+/**
+ * hal_rx_tlv_get_freq_6432() - API to get the frequency of operating
+ *                              channel from rx_msdu_start
+ * @buf: pointer to the start of RX PKT TLV header
+ *
+ * Return: uint32_t(frequency)
+ */
+
+static inline uint32_t hal_rx_tlv_get_freq_6432(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t freq;
+
+	freq = HAL_RX_TLV_FREQ_GET(rx_pkt_tlvs);
+
+	return freq;
+}
+
+/**
+ * hal_rx_mpdu_start_sw_peer_id_get_6432() - Retrieve sw peer_id
+ * @buf: network buffer
+ *
+ * Return: sw peer_id
+ */
+static inline uint32_t hal_rx_mpdu_start_sw_peer_id_get_6432(uint8_t *buf)
+{
+	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+
+	return HAL_RX_TLV_SW_PEER_ID_GET(rx_pkt_tlvs);
+}
+
+#ifdef CONFIG_WORD_BASED_TLV
+/**
+ * hal_rx_priv_info_set_in_tlv_6432() - Save the private info to
+ *                             the reserved bytes of rx_tlv_hdr
+ * @buf: start of rx_tlv_hdr
+ * @priv_data: hal_wbm_err_desc_info structure
+ * @len: length of the private data
+ *
+ * Return: void
+ */
+static inline void hal_rx_priv_info_set_in_tlv_6432(uint8_t *buf,
+						    uint8_t *priv_data,
+						    uint32_t len)
+{
+	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t copy_len = (len > HAL_RX_TLV_PRIV_INFO_BYTES) ?
+			     HAL_RX_TLV_PRIV_INFO_BYTES : len;
+
+	qdf_mem_copy(&(HAL_RX_MSDU_END(pkt_tlvs).ppdu_start_timestamp_63_32),
+		     priv_data, copy_len);
+}
+
+/**
+ * hal_rx_priv_info_get_from_tlv_6432() - retrieve the private data from
+ *                             the reserved bytes of rx_tlv_hdr.
+ * @buf: start of rx_tlv_hdr
+ * @priv_data: Handle to get the private data, output parameter.
+ * @len: length of the private data
+ *
+ * Return: void
+ */
+static inline void hal_rx_priv_info_get_from_tlv_6432(uint8_t *buf,
+						      uint8_t *priv_data,
+						      uint32_t len)
+{
+	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
+	uint32_t copy_len = (len > HAL_RX_TLV_PRIV_INFO_BYTES) ?
+			     HAL_RX_TLV_PRIV_INFO_BYTES : len;
+
+	qdf_mem_copy(priv_data,
+		     &(HAL_RX_MSDU_END(pkt_tlvs).ppdu_start_timestamp_63_32),
+		     copy_len);
+}
+#endif
 
 #ifndef NO_RX_PKT_HDR_TLV
 /**
@@ -1203,6 +1320,43 @@ static void hal_rx_dump_pkt_tlvs_6432(hal_soc_handle_t hal_soc_hdl,
 #endif
 
 #define HAL_NUM_TCL_BANKS_6432 24
+
+/**
+ * hal_umac_reset_intr_read_6432() - Check if the interrupt reset is successful
+ * @hal_soc_hdl: HAL SOC handle
+ * @offset: Physical address of PCIE
+ * @dev_addr: IOremapped address
+ *
+ * Return: Return the value that is written.
+ */
+static inline
+uint32_t hal_umac_reset_intr_read_6432(hal_soc_handle_t hal_soc_hdl,
+				       uint32_t offset, void __iomem *dev_addr)
+{
+	struct hal_soc *hal = (struct hal_soc *)hal_soc_hdl;
+	uint32_t value = 0;
+
+	pld_reg_read(hal->qdf_dev->dev, offset, &value, dev_addr);
+	return value;
+}
+
+/**
+ * hal_umac_reset_intr_6432() - function to reset the interrupt
+ * @hal_soc_hdl: HAL SOC handle
+ * @offset: Physical address of PCIE
+ * @value: (Reset) value to write
+ * @dev_addr: IOremapped address
+ *
+ * Return: None.
+ */
+static void hal_umac_reset_intr_6432(hal_soc_handle_t hal_soc_hdl,
+				     uint32_t offset, uint32_t value,
+				     void __iomem *dev_addr)
+{
+	struct hal_soc *hal = (struct hal_soc *)hal_soc_hdl;
+
+	pld_reg_write(hal->qdf_dev->dev, offset, value, dev_addr);
+}
 
 /**
  * hal_cmem_write_6432() - function for CMEM buffer writing
@@ -1479,6 +1633,61 @@ static void hal_get_tqm_scratch_reg_qcn6432(hal_soc_handle_t hal_soc_hdl,
 	*value = ((uint64_t)(offset_hi) << 32 | offset_lo);
 }
 
+#ifdef WLAN_PKT_CAPTURE_TX_2_0
+/**
+ * hal_txmon_get_frame_timestamp_qcn6432() - api to get frame timestamp for tx monitor
+ * @tlv_tag: TLV tag
+ * @tx_tlv: pointer to tx tlv information
+ * @ppdu_info: pointer to ppdu_info
+ *
+ * Return: void
+ */
+static inline
+void hal_txmon_get_frame_timestamp_qcn6432(uint32_t tlv_tag, void *tx_tlv,
+					   void *ppdu_info)
+{
+	struct hal_tx_ppdu_info *tx_ppdu_info =
+			(struct hal_tx_ppdu_info *) ppdu_info;
+
+	switch (tlv_tag) {
+	case WIFIRESPONSE_END_STATUS_E:
+	{
+		hal_response_end_status_t *resp_end_status =
+					(hal_response_end_status_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(resp_end_status->start_of_frame_timestamp_15_0 |
+			 (resp_end_status->start_of_frame_timestamp_31_16 << 16));
+		break;
+	}
+
+	case WIFITX_FES_STATUS_END_E:
+	{
+		hal_tx_fes_status_end_t *tx_fes_end =
+					(hal_tx_fes_status_end_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(tx_fes_end->start_of_frame_timestamp_15_0 |
+			 tx_fes_end->start_of_frame_timestamp_31_16 <<
+			 HAL_TX_LSB(TX_FES_STATUS_END,
+			 START_OF_FRAME_TIMESTAMP_31_16));
+		break;
+	}
+
+	case WIFITX_FES_STATUS_PROT_E:
+	{
+		hal_tx_fes_status_prot_t *fes_prot =
+					(hal_tx_fes_status_prot_t *)tx_tlv;
+
+		TXMON_HAL_STATUS(tx_ppdu_info, ppdu_timestamp) =
+			(fes_prot->start_of_frame_timestamp_15_0 |
+			fes_prot->start_of_frame_timestamp_31_16 << 15);
+		break;
+	}
+	}
+}
+#endif
+
 static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 {
 	/* init and setup */
@@ -1488,6 +1697,8 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_get_hw_hptp = hal_get_hw_hptp_generic;
 	hal_soc->ops->hal_get_window_address = hal_get_window_address_6432;
 	hal_soc->ops->hal_cmem_write = hal_cmem_write_6432;
+	hal_soc->ops->hal_umac_reset_intr = hal_umac_reset_intr_6432;
+	hal_soc->ops->hal_umac_reset_read = hal_umac_reset_intr_read_6432;
 
 	/* tx */
 	hal_soc->ops->hal_tx_set_dscp_tid_map = hal_tx_set_dscp_tid_map_6432;
@@ -1572,9 +1783,7 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_rx_get_mpdu_mac_ad4_valid =
 		hal_rx_get_mpdu_mac_ad4_valid_be;
 	hal_soc->ops->hal_rx_mpdu_start_sw_peer_id_get =
-		hal_rx_mpdu_start_sw_peer_id_get_be;
-	hal_soc->ops->hal_rx_tlv_peer_meta_data_get =
-		hal_rx_msdu_peer_meta_data_get_be;
+		hal_rx_mpdu_start_sw_peer_id_get_6432;
 #ifndef CONFIG_WORD_BASED_TLV
 	hal_soc->ops->hal_rx_mpdu_get_addr4 = hal_rx_mpdu_get_addr4_be;
 	hal_soc->ops->hal_rx_mpdu_info_ampdu_flag_get =
@@ -1612,6 +1821,8 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_rx_get_to_ds_flag = hal_rx_get_to_ds_flag_be;
 	hal_soc->ops->hal_rx_get_mac_addr2_valid =
 		hal_rx_get_mac_addr2_valid_be;
+	hal_soc->ops->hal_rx_flow_write_fse_metadata =
+					hal_rx_flow_write_fse_metadata_6432;
 	hal_soc->ops->hal_reo_config = hal_reo_config_6432;
 	hal_soc->ops->hal_rx_msdu_flow_idx_get = hal_rx_msdu_flow_idx_get_be;
 	hal_soc->ops->hal_rx_msdu_flow_idx_invalid =
@@ -1695,12 +1906,19 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 	hal_soc->ops->hal_rx_tlv_first_mpdu_get = hal_rx_tlv_first_mpdu_get_be;
 	hal_soc->ops->hal_rx_tlv_get_is_decrypted =
 		hal_rx_tlv_get_is_decrypted_be;
-	hal_soc->ops->hal_rx_msdu_get_keyid = hal_rx_msdu_get_keyid_be;
-	hal_soc->ops->hal_rx_tlv_get_freq = hal_rx_tlv_get_freq_be;
+	hal_soc->ops->hal_rx_msdu_get_keyid = hal_rx_msdu_get_keyid_6432;
+	hal_soc->ops->hal_rx_tlv_get_freq = hal_rx_tlv_get_freq_6432;
+#ifdef CONFIG_WORD_BASED_TLV
 	hal_soc->ops->hal_rx_priv_info_set_in_tlv =
-		hal_rx_priv_info_set_in_tlv_be;
+		hal_rx_priv_info_set_in_tlv_6432;
 	hal_soc->ops->hal_rx_priv_info_get_from_tlv =
-		hal_rx_priv_info_get_from_tlv_be;
+		hal_rx_priv_info_get_from_tlv_6432;
+#else
+	hal_soc->ops->hal_rx_priv_info_set_in_tlv =
+			hal_rx_priv_info_set_in_tlv_be;
+	hal_soc->ops->hal_rx_priv_info_get_from_tlv =
+			hal_rx_priv_info_get_from_tlv_be;
+#endif
 	hal_soc->ops->hal_rx_pkt_hdr_get = hal_rx_pkt_hdr_get_be;
 	hal_soc->ops->hal_reo_setup = hal_reo_setup_6432;
 	hal_soc->ops->hal_reo_config_reo2ppe_dest_info = NULL;
@@ -1725,6 +1943,8 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 		hal_txmon_status_parse_tlv_generic_be;
 	hal_soc->ops->hal_txmon_status_get_num_users =
 		hal_txmon_status_get_num_users_generic_be;
+	hal_soc->ops->hal_txmon_get_frame_timestamp =
+				hal_txmon_get_frame_timestamp_qcn6432;
 #if defined(TX_MONITOR_WORD_MASK)
 	hal_soc->ops->hal_txmon_get_word_mask =
 				hal_txmon_get_word_mask_qcn6432;
@@ -1767,6 +1987,7 @@ static void hal_hw_txrx_ops_attach_qcn6432(struct hal_soc *hal_soc)
 		hal_tx_ppe2tcl_ring_halt_done_6432;
 	hal_soc->ops->hal_tx_get_num_ppe_vp_search_idx_tbl_entries =
 		hal_tx_get_num_ppe_vp_search_idx_reg_entries_6432;
+	hal_soc->ops->hal_tx_ring_halt_get = hal_tx_ppe2tcl_ring_halt_get_6432;
 };
 
 struct hal_hw_srng_config hw_srng_table_6432[] = {
@@ -2127,7 +2348,7 @@ struct hal_hw_srng_config hw_srng_table_6432[] = {
 	{},
 #endif
 	{ /* RXDMA_MONITOR_STATUS */
-		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA1_STATBUF,
+		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA0_STATBUF,
 		.max_rings = 0,
 		.entry_size = sizeof(struct wbm_buffer_ring) >> 2,
 		.lmac_ring = TRUE,
@@ -2172,8 +2393,10 @@ struct hal_hw_srng_config hw_srng_table_6432[] = {
 
 	{ /* DIR_BUF_RX_DMA_SRC */
 		.start_ring_id = HAL_SRNG_DIR_BUF_RX_SRC_DMA_RING,
-		/* one ring for spectral and one ring for cfr */
-		.max_rings = 2,
+		/* one ring for spectral, one ring for cfr,
+		 * one for CBF and another one for wifi radar
+		 */
+		.max_rings = 4,
 		.entry_size = 2,
 		.lmac_ring = TRUE,
 		.ring_dir = HAL_SRNG_SRC_RING,

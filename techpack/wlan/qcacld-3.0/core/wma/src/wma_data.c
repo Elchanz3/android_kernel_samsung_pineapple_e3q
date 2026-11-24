@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -757,6 +757,7 @@ static void wma_cp_stats_set_rate_flag(tp_wma_handle wma, uint8_t vdev_id)
 	status = wma_get_vdev_rate_flag(iface->vdev, &rate_flag);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		wma_err("vdev not found for id: %d", vdev_id);
+		wlan_objmgr_vdev_release_ref(vdev, WLAN_LEGACY_WMA_ID);
 		return;
 	}
 	ucfg_mc_cp_stats_set_rate_flags(vdev, rate_flag);
@@ -963,23 +964,27 @@ static void wma_data_tx_ack_work_handler(void *ack_work)
 	wma_handle = work->wma_handle;
 	if (!wma_handle || cds_is_load_or_unload_in_progress()) {
 		wma_err("Driver load/unload in progress");
-		goto end;
+		goto free_frame;
 	}
+
+	wma_debug("Data Tx Ack Cb Status %d", work->status);
 	ack_cb = wma_handle->umac_data_ota_ack_cb;
-
-	if (work->status)
-		wma_debug("Data Tx Ack Cb Status %d", work->status);
-	else
-		wma_debug("Data Tx Ack Cb Status %d", work->status);
-
-	/* Call the Ack Cb registered by UMAC */
-	if (ack_cb)
-		ack_cb(wma_handle->mac_context, NULL, work->status, NULL);
-	else
+	if (!ack_cb) {
 		wma_err("Data Tx Ack Cb is NULL");
+		goto free_frame;
+	}
+
+	ack_cb(wma_handle->mac_context, work->frame, work->status,
+	       NULL);
+	goto end;
+
+free_frame:
+	if (work->frame)
+		qdf_nbuf_free(work->frame);
 
 end:
 	qdf_mem_free(work);
+
 	if (wma_handle) {
 		wma_handle->umac_data_ota_ack_cb = NULL;
 		wma_handle->last_umac_data_nbuf = NULL;
@@ -1002,38 +1007,59 @@ void
 wma_data_tx_ack_comp_hdlr(void *wma_context, qdf_nbuf_t netbuf, int32_t status)
 {
 	tp_wma_handle wma_handle = (tp_wma_handle) wma_context;
+	struct wma_tx_ack_work_ctx *ack_work;
+	QDF_STATUS qdf_status;
 
 	if (wma_validate_handle(wma_handle))
 		return;
+
+	if (!netbuf) {
+		wma_debug("netbuf is NULL");
+		return;
+	}
 
 	/*
 	 * if netBuf does not match with pending nbuf then just free the
 	 * netbuf and do not call ack cb
 	 */
 	if (wma_handle->last_umac_data_nbuf != netbuf) {
-		if (wma_handle->umac_data_ota_ack_cb) {
-			wma_err("nbuf does not match but umac_data_ota_ack_cb is not null");
-		} else {
-			wma_err("nbuf does not match and umac_data_ota_ack_cb is also null");
-		}
+		wma_err("nbuf does not match but umac_data_ota_ack_cb is %s null",
+			wma_handle->umac_data_ota_ack_cb ? "not" : "");
 		goto free_nbuf;
 	}
 
-	if (wma_handle->umac_data_ota_ack_cb) {
-		struct wma_tx_ack_work_ctx *ack_work;
+	if (!wma_handle->umac_data_ota_ack_cb) {
+		wma_err_rl("ota_ack cb not registered");
+		goto free_nbuf;
+	}
 
-		ack_work = qdf_mem_malloc(sizeof(struct wma_tx_ack_work_ctx));
+	ack_work = qdf_mem_malloc(sizeof(struct wma_tx_ack_work_ctx));
+	if (ack_work) {
 		wma_handle->ack_work_ctx = ack_work;
-		if (ack_work) {
-			ack_work->wma_handle = wma_handle;
-			ack_work->sub_type = 0;
-			ack_work->status = status;
 
-			qdf_create_work(0, &ack_work->ack_cmp_work,
-					wma_data_tx_ack_work_handler,
-					ack_work);
-			qdf_sched_work(0, &ack_work->ack_cmp_work);
+		ack_work->wma_handle = wma_handle;
+		ack_work->sub_type = 0;
+		ack_work->status = status;
+		ack_work->frame = netbuf;
+
+		/*
+		 * free of the netbuf will be done by the scheduled work so
+		 * just do unmap here
+		 */
+		qdf_nbuf_unmap_single(wma_handle->qdf_dev, netbuf,
+				      QDF_DMA_TO_DEVICE);
+
+		qdf_status = qdf_create_work(0, &ack_work->ack_cmp_work,
+					     wma_data_tx_ack_work_handler,
+					     ack_work);
+		if (QDF_IS_STATUS_ERROR(qdf_status)) {
+			qdf_nbuf_free(netbuf);
+			wma_err("Failed to create TX ack work");
+			return;
 		}
+
+		qdf_sched_work(0, &ack_work->ack_cmp_work);
+		return;
 	}
 
 free_nbuf:
@@ -1156,6 +1182,8 @@ QDF_STATUS wma_set_mcc_channel_time_latency(tp_wma_handle wma,
  * @adapter_1_chan_number: adapter 1 channel number
  * @adapter_1_quota: adapter 1 quota
  * @adapter_2_chan_number: adapter 2 channel number
+ * @band_1: Band bitmap for @adapter_1_chan_number
+ * @band_2: Band bitmap for @adapter_2_chan_number
  *
  * Currently used to set time quota for 2 MCC vdevs/adapters using (operating
  * channel, quota) for each mode . The info is provided run time using
@@ -1168,12 +1196,12 @@ QDF_STATUS wma_set_mcc_channel_time_latency(tp_wma_handle wma,
  */
 QDF_STATUS wma_set_mcc_channel_time_quota(tp_wma_handle wma,
 		uint32_t adapter_1_chan_number,	uint32_t adapter_1_quota,
-		uint32_t adapter_2_chan_number)
+		uint32_t adapter_2_chan_number, uint8_t band_1, uint8_t band_2)
 {
 	bool mcc_adapt_sch = false;
 	struct mac_context *mac = NULL;
-	uint32_t chan1_freq = cds_chan_to_freq(adapter_1_chan_number);
-	uint32_t chan2_freq = cds_chan_to_freq(adapter_2_chan_number);
+	uint32_t chan1_freq;
+	uint32_t chan2_freq;
 
 	if (!wma) {
 		wma_err("NULL wma ptr. Exiting");
@@ -1192,6 +1220,13 @@ QDF_STATUS wma_set_mcc_channel_time_quota(tp_wma_handle wma,
 		QDF_ASSERT(0);
 		return QDF_STATUS_E_FAILURE;
 	}
+
+	chan1_freq = wlan_reg_chan_band_to_freq(wma->pdev,
+						adapter_1_chan_number,
+						BIT(band_1));
+	chan2_freq = wlan_reg_chan_band_to_freq(wma->pdev,
+						adapter_2_chan_number,
+						BIT(band_2));
 
 	/* Confirm MCC adaptive scheduler feature is disabled */
 	if (policy_mgr_get_dynamic_mcc_adaptive_sch(mac->psoc,
@@ -1560,108 +1595,6 @@ int wma_mcc_vdev_tx_pause_evt_handler(void *handle, uint8_t *event,
 }
 
 #endif /* QCA_LL_LEGACY_TX_FLOW_CONTROL */
-
-#if defined(CONFIG_HL_SUPPORT) && defined(QCA_BAD_PEER_TX_FLOW_CL)
-
-/**
- * wma_set_peer_rate_report_condition -
- *                    this function set peer rate report
- *                    condition info to firmware.
- * @handle:	Handle of WMA
- * @config:	Bad peer configuration from SIR module
- *
- * It is a wrapper function to sent WMI_PEER_SET_RATE_REPORT_CONDITION_CMDID
- * to the firmware\target. If the command sent to firmware failed, free the
- * buffer that allocated.
- *
- * Return: QDF_STATUS based on values sent to firmware
- */
-static
-QDF_STATUS wma_set_peer_rate_report_condition(WMA_HANDLE handle,
-			struct t_bad_peer_txtcl_config *config)
-{
-	tp_wma_handle wma_handle = (tp_wma_handle)handle;
-	struct wmi_peer_rate_report_params rate_report_params = {0};
-	u_int32_t i, j;
-
-	rate_report_params.rate_report_enable = config->enable;
-	rate_report_params.backoff_time = config->tgt_backoff;
-	rate_report_params.timer_period = config->tgt_report_prd;
-	for (i = 0; i < WMI_PEER_RATE_REPORT_COND_MAX_NUM; i++) {
-		rate_report_params.report_per_phy[i].cond_flags =
-			config->threshold[i].cond;
-		rate_report_params.report_per_phy[i].delta.delta_min  =
-			config->threshold[i].delta;
-		rate_report_params.report_per_phy[i].delta.percent =
-			config->threshold[i].percentage;
-		for (j = 0; j < WMI_MAX_NUM_OF_RATE_THRESH; j++) {
-			rate_report_params.report_per_phy[i].
-				report_rate_threshold[j] =
-					config->threshold[i].thresh[j];
-		}
-	}
-
-	return wmi_unified_peer_rate_report_cmd(wma_handle->wmi_handle,
-						&rate_report_params);
-}
-
-/**
- * wma_process_init_bad_peer_tx_ctl_info -
- *                this function to initialize peer rate report config info.
- * @handle:	Handle of WMA
- * @config:	Bad peer configuration from SIR module
- *
- * This function initializes the bad peer tx control data structure in WMA,
- * sends down the initial configuration to the firmware and configures
- * the peer status update setting in the tx_rx module.
- *
- * Return: QDF_STATUS based on procedure status
- */
-
-QDF_STATUS wma_process_init_bad_peer_tx_ctl_info(tp_wma_handle wma,
-					struct t_bad_peer_txtcl_config *config)
-{
-	/* Parameter sanity check */
-	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
-
-	if (!wma || !config) {
-		wma_err("Invalid input");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	wma_debug("enable %d period %d txq limit %d\n",
-		 config->enable,
-		 config->period,
-		 config->txq_limit);
-
-	/* Only need to initialize the setting
-	 * when the feature is enabled
-	 */
-	if (config->enable) {
-		int i = 0;
-
-		cdp_bad_peer_txctl_set_setting(soc,
-					WMI_PDEV_ID_SOC,
-					config->enable,
-					config->period,
-					config->txq_limit);
-
-		for (i = 0; i < WLAN_WMA_IEEE80211_MAX_LEVEL; i++) {
-			u_int32_t threshold, limit;
-
-			threshold = config->threshold[i].thresh[0];
-			limit =	config->threshold[i].txlimit;
-			cdp_bad_peer_txctl_update_threshold(soc,
-						WMI_PDEV_ID_SOC,
-						i,
-						threshold,
-						limit);
-		}
-	}
-
-	return wma_set_peer_rate_report_condition(wma, config);
-}
-#endif /* defined(CONFIG_HL_SUPPORT) && defined(QCA_BAD_PEER_TX_FLOW_CL) */
 
 #ifdef FW_THERMAL_THROTTLE_SUPPORT
 /**
@@ -2272,6 +2205,55 @@ static void wma_update_tx_send_params(struct tx_send_params *tx_param,
 		 tx_param->preamble_type);
 }
 
+/**
+ * wma_is_mlo_link_agnostic(): get if agnostic support for pkt
+ * if send as agnostic, FW will choose which link will be used
+ * depends on link's active/inactive status.
+ *
+ * @vdev: objmgr of vdev
+ * @dest_addr: dest mlo address
+ * @frmType: type of frame
+ * @subtype: subtype of frame
+ * @action: type of action frame
+ *
+ * return: true if send as agnostic.
+ */
+static bool wma_is_mlo_link_agnostic(struct wlan_objmgr_vdev *vdev,
+				     uint8_t *dest_addr, eFrameType frmType,
+				     uint8_t subType,
+				     uint16_t action)
+{
+	bool mlo_link_agnostic = false;
+
+	if (!wlan_vdev_mlme_is_mlo_vdev(vdev))
+		goto end;
+
+	if (wlan_vdev_mlme_is_active(vdev) != QDF_STATUS_SUCCESS)
+		goto end;
+
+	if (wlan_vdev_mlme_get_opmode(vdev) == QDF_STA_MODE &&
+	    wlan_get_mlo_link_agnostic_flag(vdev, dest_addr) &&
+	    frmType == TXRX_FRM_802_11_MGMT &&
+	    subType != SIR_MAC_MGMT_PROBE_REQ &&
+	    subType != SIR_MAC_MGMT_AUTH &&
+	    action != (ACTION_CATEGORY_PUBLIC << 8 | TDLS_DISCOVERY_RESPONSE) &&
+	    action != (ACTION_CATEGORY_BACK << 8 | ADDBA_RESPONSE))
+		mlo_link_agnostic = true;
+
+	if (wlan_vdev_mlme_get_opmode(vdev) == QDF_SAP_MODE &&
+	    wlan_get_mlo_link_agnostic_flag(vdev, dest_addr) &&
+	    frmType == TXRX_FRM_802_11_MGMT &&
+	    subType != SIR_MAC_MGMT_PROBE_RSP &&
+	    subType != SIR_MAC_MGMT_AUTH &&
+	    subType != SIR_MAC_MGMT_ASSOC_RSP &&
+	    subType != SIR_MAC_MGMT_REASSOC_RSP &&
+	    action != (ACTION_CATEGORY_BACK << 8 | ADDBA_RESPONSE))
+		mlo_link_agnostic = true;
+
+end:
+	return mlo_link_agnostic;
+}
+
 QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 			 eFrameType frmType, eFrameTxDir txDir, uint8_t tid,
 			 wma_tx_dwnld_comp_callback tx_frm_download_comp_cb,
@@ -2308,7 +2290,6 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 	uint8_t *mld_addr = NULL;
 	bool is_5g = false;
 	uint8_t pdev_id;
-	bool mlo_link_agnostic;
 
 	if (wma_validate_handle(wma_handle)) {
 		cds_packet_free((void *)tx_frame);
@@ -2604,7 +2585,7 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 				(!is_wmi_mgmt_tx) && tx_frm_ota_comp_cb;
 
 	/* Fill the frame index to send */
-	if (pFc->type == SIR_MAC_MGMT_FRAME) {
+	if (pFc->type == WLAN_FC0_TYPE_MGMT) {
 		if (tx_frm_ota_comp_cb) {
 			if (downld_comp_required)
 				tx_frm_index =
@@ -2660,39 +2641,21 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 		chanfreq = 0;
 	}
 
-	if (pFc->type == SIR_MAC_MGMT_FRAME) {
-		if ((mac->mlme_cfg->gen.debug_packet_log &
+	if (pFc->type == WLAN_FC0_TYPE_MGMT) {
+		if (((mac->mlme_cfg->gen.debug_packet_log &
 		    DEBUG_PKTLOG_TYPE_MGMT) &&
 		    (pFc->subType != SIR_MAC_MGMT_PROBE_REQ) &&
 		    (pFc->subType != SIR_MAC_MGMT_PROBE_RSP) &&
-		    (pFc->subType != SIR_MAC_MGMT_ACTION)) {
-			wma_debug("TX MGMT - Type %hu, SubType %hu seq_num[%d]",
-				  pFc->type, pFc->subType,
-				  ((mHdr->seqControl.seqNumHi << 4) |
-				  mHdr->seqControl.seqNumLo));
-			qdf_trace_hex_dump(QDF_MODULE_ID_WMA,
-					   QDF_TRACE_LEVEL_DEBUG, pData,
-					   frmLen);
-		} else if ((mac->mlme_cfg->gen.debug_packet_log &
-			   DEBUG_PKTLOG_TYPE_ACTION) &&
-			   (pFc->subType == SIR_MAC_MGMT_ACTION)) {
-			wma_debug("TX MGMT - Type %hu, SubType %hu seq_num[%d]",
-				  pFc->type, pFc->subType,
-				 ((mHdr->seqControl.seqNumHi << 4) |
-				 mHdr->seqControl.seqNumLo));
-			qdf_trace_hex_dump(QDF_MODULE_ID_WMA,
-					   QDF_TRACE_LEVEL_DEBUG, pData,
-					   frmLen);
-		}
+		    (pFc->subType != SIR_MAC_MGMT_ACTION)) ||
+		    ((mac->mlme_cfg->gen.debug_packet_log &
+		      DEBUG_PKTLOG_TYPE_ACTION) &&
+		     (pFc->subType == SIR_MAC_MGMT_ACTION)))
+			mgmt_txrx_frame_hex_dump(pData, frmLen, true);
 	}
-
 	if (wlan_reg_is_5ghz_ch_freq(wma_handle->interfaces[vdev_id].ch_freq))
 		is_5g = true;
 
 	wh = (struct ieee80211_frame *)(qdf_nbuf_data(tx_frame));
-
-	mlo_link_agnostic =
-		wlan_get_mlo_link_agnostic_flag(iface->vdev, wh->i_addr1);
 
 	mgmt_param.tx_frame = tx_frame;
 	mgmt_param.frm_len = frmLen;
@@ -2703,16 +2666,9 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 	mgmt_param.use_6mbps = use_6mbps;
 	mgmt_param.tx_type = tx_frm_index;
 	mgmt_param.peer_rssi = peer_rssi;
-	if (wlan_vdev_mlme_get_opmode(iface->vdev) == QDF_STA_MODE &&
-	    wlan_vdev_mlme_is_mlo_vdev(iface->vdev) &&
-	    (wlan_vdev_mlme_is_active(iface->vdev) == QDF_STATUS_SUCCESS) &&
-	    frmType == TXRX_FRM_802_11_MGMT &&
-	    pFc->subType != SIR_MAC_MGMT_PROBE_REQ &&
-	    pFc->subType != SIR_MAC_MGMT_AUTH &&
-	    action != (ACTION_CATEGORY_PUBLIC << 8 | TDLS_DISCOVERY_RESPONSE) &&
-	    action != (ACTION_CATEGORY_BACK << 8 | ADDBA_RESPONSE) &&
-	    mlo_link_agnostic)
-		mgmt_param.mlo_link_agnostic = true;
+	mgmt_param.mlo_link_agnostic =
+		wma_is_mlo_link_agnostic(iface->vdev, wh->i_addr1,
+					 frmType, pFc->subType, action);
 
 	if (tx_flag & HAL_USE_INCORRECT_KEY_PMF)
 		mgmt_param.tx_flags |= MGMT_TX_USE_INCORRECT_KEY;
@@ -2793,7 +2749,7 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 
 	wlan_objmgr_peer_release_ref(peer, WLAN_MGMT_NB_ID);
 	if (status != QDF_STATUS_SUCCESS) {
-		wma_err("mgmt tx failed");
+		wma_err_rl("mgmt tx failed");
 		qdf_nbuf_free((qdf_nbuf_t)tx_frame);
 		goto error;
 	}
@@ -3128,6 +3084,7 @@ wma_drop_delba(tp_wma_handle wma, uint8_t vdev_id,
 	struct wlan_objmgr_vdev *vdev;
 	qdf_time_t last_ts, ts = qdf_mc_timer_get_system_time();
 	bool drop = false;
+	uint32_t interval;
 
 	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(wma->psoc, vdev_id,
 						    WLAN_MLME_CM_ID);
@@ -3135,12 +3092,14 @@ wma_drop_delba(tp_wma_handle wma, uint8_t vdev_id,
 		wma_err("vdev is NULL");
 		return drop;
 	}
-	if (!wlan_mlme_is_ba_2k_jump_iot_ap(vdev))
-		goto done;
+	if (wlan_mlme_is_ba_2k_jump_iot_ap(vdev))
+		interval = CDP_DELBA_INTERVAL_MS;
+	else
+		interval = CDP_DELBA_INTERVAL_MS / 10;
 
 	last_ts = wlan_mlme_get_last_delba_sent_time(vdev);
 	if ((last_ts && cdp_reason_code == CDP_DELBA_2K_JUMP) &&
-	    (ts - last_ts) < CDP_DELBA_INTERVAL_MS) {
+	    (ts - last_ts) < interval) {
 		wma_debug("Drop DELBA, last sent ts: %lu current ts: %lu",
 			  last_ts, ts);
 		drop = true;
@@ -3148,7 +3107,6 @@ wma_drop_delba(tp_wma_handle wma, uint8_t vdev_id,
 
 	wlan_mlme_set_last_delba_sent_time(vdev, ts);
 
-done:
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_CM_ID);
 
 	return drop;

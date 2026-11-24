@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021,2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -252,10 +252,14 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 			cfg_get(psoc, CFG_PMO_ENABLE_HOST_NSOFFLOAD);
 	psoc_cfg->sta_dynamic_dtim = cfg_get(psoc, CFG_PMO_ENABLE_DYNAMIC_DTIM);
 	wlan_pmo_get_igmp_version_support_cfg(psoc, psoc_cfg);
+	psoc_cfg->sta_teles_dtim = cfg_get(psoc, CFG_PMO_ENABLE_TELESCOPIC_DTIM);
+	psoc_cfg->min_teles_dtim = cfg_get(psoc, CFG_PMO_MIN_TELESDTIM_LVL);
 	psoc_cfg->sta_mod_dtim = cfg_get(psoc, CFG_PMO_ENABLE_MODULATED_DTIM);
 	psoc_cfg->enable_mc_list = cfg_get(psoc, CFG_PMO_MC_ADDR_LIST_ENABLE);
 	psoc_cfg->power_save_mode = cfg_get(psoc, CFG_PMO_POWERSAVE_MODE);
 	psoc_cfg->sta_forced_dtim = cfg_get(psoc, CFG_PMO_ENABLE_FORCED_DTIM);
+	psoc_cfg->is_teles_dtim_only_on_sys_suspend_enabled =
+			cfg_get(psoc, CFG_PMO_TELES_DTIM_ONLY_ON_SYS_SUSPEND);
 	psoc_cfg->is_mod_dtim_on_sys_suspend_enabled =
 			cfg_get(psoc, CFG_PMO_MOD_DTIM_ON_SYS_SUSPEND);
 	psoc_cfg->is_bus_suspend_enabled_in_sap_mode =
@@ -263,7 +267,7 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 	psoc_cfg->is_bus_suspend_enabled_in_go_mode =
 		cfg_get(psoc, CFG_ENABLE_BUS_SUSPEND_IN_GO_MODE);
 	if (wlan_ipa_config_is_enabled() &&
-	    !ipa_config_is_opt_wifi_dp_enabled()) {
+	    !wlan_ipa_config_is_opt_wifi_dp_enabled()) {
 		pmo_info("ipa is enabled and hence disable sap/go d3 wow");
 		psoc_cfg->is_bus_suspend_enabled_in_sap_mode = 0;
 		psoc_cfg->is_bus_suspend_enabled_in_go_mode = 0;
@@ -291,6 +295,8 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 			cfg_get(psoc, CFG_ACTIVE_UC_APF_MODE);
 	psoc_cfg->active_mc_bc_apf_mode =
 			cfg_get(psoc, CFG_ACTIVE_MC_BC_APF_MODE);
+	psoc_cfg->is_apf_configure_per_screen_state =
+			cfg_get(psoc, CFG_CONFIGURE_APF_PER_SCREEN_STATE);
 	psoc_cfg->ito_repeat_count = cfg_get(psoc, CFG_ITO_REPEAT_COUNT);
 	wlan_pmo_ra_filtering_init_cfg(psoc, psoc_cfg);
 	wlan_pmo_gpio_wakeup_init_cfg(psoc, psoc_cfg);
@@ -315,6 +321,7 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 				CFG_INTERVAL_FOR_PAGEFAULT_WAKEUP_COUNT);
 	psoc_cfg->ssr_frequency_on_pagefault =
 			cfg_get(psoc, CFG_SSR_FREQUENCY_ON_PAGEFAULT);
+	psoc_cfg->ra_priority_enable = cfg_get(psoc, CFG_RA_PRIORITY);
 }
 
 QDF_STATUS pmo_psoc_open(struct wlan_objmgr_psoc *psoc)

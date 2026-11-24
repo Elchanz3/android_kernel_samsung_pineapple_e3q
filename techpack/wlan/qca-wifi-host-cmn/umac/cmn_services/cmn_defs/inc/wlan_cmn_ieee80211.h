@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -45,6 +45,7 @@
 #define WLAN_FC0_TYPE_DATA        2
 
 /* Definitions for management frame subtypes in Frame Control field */
+#define WLAN_FC0_STYPE_INVALID       -1
 #define WLAN_FC0_STYPE_ASSOC_REQ      0
 #define WLAN_FC0_STYPE_ASSOC_RESP     1
 #define WLAN_FC0_STYPE_REASSOC_REQ    2
@@ -83,6 +84,7 @@
 #define WLAN_FC0_STYPE_QOS_CFPOLL         14
 #define WLAN_FC0_STYPE_QOS_CFACKPOLL      15
 
+
 /* Get Type/Subtype subfields in Frame Control field */
 #define WLAN_FC0_GET_TYPE(fc)    (((fc) & 0x0c) >> 2)
 #define WLAN_FC0_GET_STYPE(fc)   (((fc) & 0xf0) >> 4)
@@ -114,6 +116,12 @@
 
 /* Length of AID field */
 #define WLAN_AID_LEN               2
+
+/* Length of dtim count field */
+#define WLAN_DTIMCOUNT_LEN         1
+
+/* Length of dtim period field */
+#define WLAN_DTIMPERIOD_LEN        1
 
 /* Assoc resp IE offset Capability(2) + Status Code(2) + AID(2) */
 #define WLAN_ASSOC_RSP_IES_OFFSET \
@@ -270,6 +278,38 @@ enum qcn_attribute_id {
 #define ATH_HE_CAP_SUBTYPE          0x01
 #define ATH_HE_OP_SUBTYPE           0x02
 
+/*
+ * Multi RSNO OUI definitions:
+ * The below OUI definitions are defined under section 14.4 "Information
+ * elements for RSN overriding" of WPA3-Personal compatibility mode
+ * (Multi-RSNO) WFA specification.
+ */
+#define RSN_OVERRIDE_OUI       0x9a6f50
+#define RSNO_SUBTYPE_WIFI6_RSN 0x29
+#define RSNO_SUBTYPE_WIFI7_RSN 0x2a
+#define RSNO_SUBTYPE_RSNXE     0x2b
+#define RSNO_SUBTYPE_SELECTION 0x2c
+#define RSNO_OUI_WIFI6_RSN     "\x50\x6f\x9a\x29"
+#define RSNO_OUI_WIFI7_RSN     "\x50\x6f\x9a\x2a"
+#define RSNO_OUI_RSNXE         "\x50\x6f\x9a\x2b"
+#define RSNO_OUI_SELECTION     "\x50\x6f\x9a\x2c"
+#define RSNO_OUI_SIZE          4
+#define RSN_SEL_ID_OFFSET      6
+/*
+ * enum rsn_element_identifier : Identifier for the type of RSN IE being used
+ * @RSN_LEGACY     : Denotes the IEEE 80211 spec defined RSN IE EID
+ * @RSNO_GEN_WIFI6 : Denotes the WFA spec defined MRSNO OUI RSNO_OUI_WIFI6_RSN
+ * @RSNO_GEN_WIFI7 : Denotes the WFA spec defined MRSNO OUI RSNO_OUI_WIFI7_RSN
+ * @RSNO_GEN_MAX   : Max supported RSNO GEN
+ */
+enum rsn_element_identifier {
+	RSN_LEGACY = 1,
+	RSNO_GEN_WIFI6 = 2,
+	RSNO_GEN_WIFI7 = 3,
+	/* Set max to the last element */
+	RSNO_GEN_MAX = RSNO_GEN_WIFI7
+};
+
 /* EPR information element flags */
 #define ERP_NON_ERP_PRESENT   0x01
 #define ERP_USE_PROTECTION    0x02
@@ -306,14 +346,33 @@ enum qcn_attribute_id {
 #define WLAN_RNR_TBTT_OFFSET_INVALID             255
 #define WLAN_TPE_IE_MIN_LEN                      2
 #define WLAN_MAX_NUM_TPE_IE                      8
+/* Number of max TX power elements supported plus size of Transmit Power
+ * Information element.
+ * For 320 MHz, the maximum number of subchannels is 16.
+ * And 2 extra octets for (1) Transmit Power Information Field and
+ * (2) Extension Transmit PSD Information Field
+ */
+#define WLAN_TPE_IE_MAX_LEN                      18
+
+/* BSS Parameters subield of RNR IE */
+
+/* Bit-0 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_OCT_RECOMMENDED                   0x01
+/* Bit-1 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_SAME_SSID                         0x02
+/* Bit-2 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_MBSSID                            0x04
+/* Bit-3 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_TRANSMITTED_BSSID                 0x08
+/* Bit-4 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_ESS_WITH_COLOCATED_AP_IN_24_OR_5  0x10
+/* Bit-5 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_UNSOLICITED_PROBE_RESPONSE        0x20
+/* Bit-6 of BSS Parameters subfield */
+#define WLAN_RNR_BSS_PARAM_COLOCATED_AP                      0x40
 
 /* Wide band channel switch IE length */
 #define WLAN_WIDE_BW_CHAN_SWITCH_IE_LEN          3
-
-/* Number of max TX power elements supported plus size of Transmit Power
- * Information element.
- */
-#define WLAN_TPE_IE_MAX_LEN                      9
 
 #ifdef WLAN_FEATURE_11BE
 /* Bandwidth indication element IE maximum length */
@@ -833,6 +892,7 @@ enum extn_element_ie {
  * REASON_PROP_START and decrease the value of REASON_PROP_START
  * accordingly.
  *
+ * @REASON_KEY_FAIL_TO_INSTALL: key fail to install reason code
  * @REASON_PROP_START: Start of prop reason code
  * @REASON_FW_TRIGGERED_LINK_SWITCH: Link Switch from active to standby link
  * @REASON_HOST_TRIGGERED_LINK_DELETE: Dynamic link removal
@@ -927,6 +987,7 @@ enum wlan_reason_code {
 	 * REASON_PROP_START and decrease the value of REASON_PROP_START
 	 * accordingly.
 	 */
+	REASON_KEY_FAIL_TO_INSTALL = 65514,
 	REASON_PROP_START = 65515,
 	REASON_FW_TRIGGERED_LINK_SWITCH = 65516,
 	REASON_HOST_TRIGGERED_LINK_DELETE = 65517,
@@ -3974,6 +4035,27 @@ is_qcn_oui(uint8_t *frm)
 {
 	return ((frm[1] > 4) && (LE_READ_4(frm + 2) ==
 		((QCN_OUI_TYPE_CMN << 24) | QCA_OUI)));
+}
+
+static inline bool
+is_vendor_wifi6_rsno_oui(uint8_t *frm)
+{
+	return (frm[1] > 4) && (LE_READ_4(frm + 2) ==
+		((RSNO_SUBTYPE_WIFI6_RSN << OUI_TYPE_BITS) | RSN_OVERRIDE_OUI));
+}
+
+static inline bool
+is_vendor_rsnxo_oui(uint8_t *frm)
+{
+	return (frm[1] > 4) && (LE_READ_4(frm + 2) ==
+		((RSNO_SUBTYPE_RSNXE << OUI_TYPE_BITS) | RSN_OVERRIDE_OUI));
+}
+
+static inline bool
+is_vendor_wifi7_rsno_oui(uint8_t *frm)
+{
+	return (frm[1] > 4) && (LE_READ_4(frm + 2) ==
+		((RSNO_SUBTYPE_WIFI7_RSN << OUI_TYPE_BITS) | RSN_OVERRIDE_OUI));
 }
 
 #define WLAN_VENDOR_WME_IE_LEN 24

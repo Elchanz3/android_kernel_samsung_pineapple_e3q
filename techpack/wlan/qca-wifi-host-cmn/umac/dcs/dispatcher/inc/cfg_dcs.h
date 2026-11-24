@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -53,7 +54,7 @@
  * dcs_debug - Configure dcs debug trace level for debug purpose
  * @Min: 0
  * @Max: 2
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to configure dcs debug trace level for debug purpose
  *
@@ -66,7 +67,7 @@
  */
 #define CFG_DCS_DEBUG CFG_INI_UINT(\
 		"dcs_debug",\
-		0, 2, 0,\
+		0, 2, 1,\
 		CFG_VALUE_OR_DEFAULT,\
 		"dcs debug trace level")
 
@@ -91,6 +92,28 @@
 		0, 0xFFFFFFFF, 30,\
 		CFG_VALUE_OR_DEFAULT,\
 		"dcs co-channel interference threshold level")
+
+/*
+ * <ini>
+ * dcs_trnsprt_rjt_threshold_cu - Configure Transport reject interference threshold
+ * @Min: 0
+ * @Max: 0xFFFFFFFF
+ * @Default: 30
+ *
+ * This ini is used to configure Transport reject interference threshold
+ *
+ *
+ * Related: None
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DCS_TRANSPORT_SWITCH_RJT_TH_CU CFG_INI_UINT(\
+		"dcs_trnsprt_rjt_threshold_cu",\
+		0, 0xFFFFFFFF, 30,\
+		CFG_VALUE_OR_DEFAULT,\
+		"dcs ll sap Transport reject interference threshold level")
 
 /*
  * <ini>
@@ -313,10 +336,87 @@
 		"dcs_disable_algorithm", false,\
 		"dcs disable algorithm")
 
+#ifdef WLAN_FEATURE_VDEV_DCS
+/*
+ * <ini>
+ * gEnableDcsPerMode - Enable/Disable DCS per mode
+ * @Min: 0x0
+ * @Max: 0x0f0f0f0f
+ * @Default: 0x0200
+ *
+ * This ini is used to enable or disable DCS and DCS type per mode.
+ *
+ * BYTE        Role
+ * 1st BYTE    DCS_SAP (lowest byte)
+ * 2nd BYTE    DCS_XPAN
+ * 3rd BYTE    DCS_XR
+ * 4th BYTE    DCS_GO (highest byte)
+ *
+ * Configure each byte for each mode as follows:
+ * 0 - Disable DCS.
+ * 1 - Enable DCS for CW interference mitigation (CW_IM).
+ * 2 - Enable DCS for WLAN interference mitigation (WLAN_IM).
+ * 3 - Enable both DCS for CW_IM and DCS for WLAN_IM.
+ *
+ * Example: 0x0202 enables DCS for WLAN interference mitigation (WLAN_IM) for
+ * both general SAP and XPAN.
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DCS_ENABLE_PER_MODE CFG_INI_UINT( \
+		"gEnableDcsPerMode", \
+		0x0, \
+		0x0f0f0f0f, \
+		0x0200, \
+		CFG_VALUE_OR_DEFAULT, \
+		"Enable DCS per mode")
+
+/*
+ * <ini>
+ * dcs_intfr_detection_threshold_per_mode - Configure interference detection
+ * threshold per mode
+ * @Min: 0
+ * @Max: 0xFFFFFFFF
+ * @Default: 0x0606
+ *
+ * This ini configures the interference detection threshold per mode.
+ *
+ * BYTE        Meaning
+ * 1st BYTE    Threshold for DCS_SAP (lowest byte)
+ * 2nd BYTE    Threshold for DCS_XPAN
+ * 3rd BYTE    Threshold for DCS_XR
+ * 4th BYTE    Threshold for DCS_GO (highest byte)
+ *
+ * Example: 0x0606 sets the interference detection threshold to 6 for both
+ * general SAP and XPAN.
+ *
+ * Related: None
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DCS_INTFR_DETECTION_THRESHOLD_PER_MODE CFG_INI_UINT(\
+		"dcs_intfr_detection_threshold_per_mode",\
+		0, 0xFFFFFFFF, 0x0606,\
+		CFG_VALUE_OR_DEFAULT,\
+		"DCS interference detection threshold per mode")
+
+#define CFG_DCS_PER_MODE \
+	CFG(CFG_DCS_ENABLE_PER_MODE) \
+	CFG(CFG_DCS_INTFR_DETECTION_THRESHOLD_PER_MODE)
+
+#else
+#define CFG_DCS_PER_MODE
+#endif
+
 #define CFG_DCS_ALL \
 	CFG(CFG_DCS_ENABLE) \
 	CFG(CFG_DCS_DEBUG) \
 	CFG(CFG_DCS_COCH_INTFR_THRESHOLD) \
+	CFG(CFG_DCS_TRANSPORT_SWITCH_RJT_TH_CU) \
 	CFG(CFG_DCS_TX_ERR_THRESHOLD) \
 	CFG(CFG_DCS_PHY_ERR_PENALTY) \
 	CFG(CFG_DCS_PHY_ERR_THRESHOLD) \
@@ -326,6 +426,8 @@
 	CFG(CFG_DCS_INTFR_DETECTION_WINDOW) \
 	CFG(CFG_DCS_DISABLE_THRESHOLD_PER_5MINS) \
 	CFG(CFG_DCS_RESTART_DELAY) \
-	CFG(CFG_DCS_DISABLE_ALGORITHM)
+	CFG(CFG_DCS_DISABLE_ALGORITHM) \
+	CFG_DCS_PER_MODE
+
 
 #endif /* __CONFIG_DCS_H */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -29,6 +29,7 @@
 #include "wlan_mlme_vdev_mgr_interface.h"
 #include <include/wlan_pdev_mlme.h>
 #include "wlan_pdev_mlme_api.h"
+#include <wlan_psoc_mlme_api.h>
 #include "wlan_vdev_mgr_tgt_if_tx_api.h"
 #include "wlan_policy_mgr_public_struct.h"
 #include "spatial_reuse_api.h"
@@ -107,6 +108,7 @@ QDF_STATUS ucfg_mlme_psoc_open(struct wlan_objmgr_psoc *psoc)
 void ucfg_mlme_psoc_close(struct wlan_objmgr_psoc *psoc)
 {
 	/* Clear the MLME CFG Structure */
+	wlan_mlme_psoc_flush_peer_trans_history(psoc);
 }
 
 QDF_STATUS ucfg_mlme_pdev_open(struct wlan_objmgr_pdev *pdev)
@@ -249,17 +251,7 @@ QDF_STATUS
 ucfg_mlme_get_sta_keep_alive_period(struct wlan_objmgr_psoc *psoc,
 				    uint32_t *val)
 {
-	struct wlan_mlme_psoc_ext_obj *mlme_obj;
-
-	mlme_obj = mlme_get_psoc_ext_obj(psoc);
-	if (!mlme_obj) {
-		*val = cfg_default(CFG_INFRA_STA_KEEP_ALIVE_PERIOD);
-		return QDF_STATUS_E_INVAL;
-	}
-
-	*val = mlme_obj->cfg.sta.sta_keep_alive_period;
-
-	return QDF_STATUS_SUCCESS;
+	return wlan_mlme_get_sta_keep_alive_period(psoc, val);
 }
 
 QDF_STATUS
@@ -277,6 +269,15 @@ ucfg_mlme_get_dfs_master_capability(struct wlan_objmgr_psoc *psoc,
 	*val = mlme_obj->cfg.dfs_cfg.dfs_master_capable;
 
 	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_mlme_vendor_set_disable_dfs_master_capability(
+					struct wlan_objmgr_psoc *psoc,
+					bool disable)
+{
+	return wlan_mlme_vendor_set_disable_dfs_master_capability(
+				psoc, disable);
 }
 
 QDF_STATUS
@@ -1632,6 +1633,20 @@ ucfg_mlme_get_restart_beaconing_on_ch_avoid(struct wlan_objmgr_psoc *psoc,
 	return QDF_STATUS_SUCCESS;
 }
 
+bool
+ucfg_mlme_check_bit_in_rso_disabled_bitmap(struct wlan_objmgr_psoc *psoc,
+				uint8_t vdev_id,
+				enum wlan_cm_rso_control_requestor reqs)
+{
+	uint8_t rso_disabled_bitmap;
+
+	rso_disabled_bitmap = mlme_get_rso_disabled_bitmap(psoc, vdev_id);
+	if (rso_disabled_bitmap & reqs)
+		return true;
+
+	return false;
+}
+
 QDF_STATUS
 ucfg_mlme_get_indoor_channel_support(struct wlan_objmgr_psoc *psoc,
 				     bool *value)
@@ -1728,6 +1743,24 @@ ucfg_mlme_get_current_tx_power_level(struct wlan_objmgr_psoc *psoc,
 	}
 
 	*value = mlme_obj->cfg.power.current_tx_power_level;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS ucfg_wlan_mlme_get_reg_tpc_info(struct wlan_objmgr_vdev *vdev,
+					   struct reg_tpc_power_info *tpc_info)
+{
+	struct vdev_mlme_obj *mlme_obj;
+
+	mlme_obj = wlan_vdev_mlme_get_cmpt_obj(vdev);
+
+	if (!mlme_obj) {
+		mlme_legacy_err("vdev component object is NULL");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	qdf_mem_copy(tpc_info, &mlme_obj->reg_tpc_obj,
+		     sizeof(struct reg_tpc_power_info));
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1866,6 +1899,13 @@ ucfg_mlme_set_channel_bonding_24ghz(struct wlan_objmgr_psoc *psoc,
 }
 
 QDF_STATUS
+ucfg_mlme_get_update_chan_width_allowed(struct wlan_objmgr_psoc *psoc,
+					   bool *value)
+{
+	return wlan_mlme_get_update_chan_width_allowed(psoc, value);
+}
+
+QDF_STATUS
 ucfg_mlme_get_channel_bonding_5ghz(struct wlan_objmgr_psoc *psoc,
 				   uint32_t *value)
 {
@@ -1954,6 +1994,11 @@ bool ucfg_mlme_get_coex_unsafe_chan_reg_disable(
 	return mlme_obj->cfg.reg.coex_unsafe_chan_reg_disable;
 }
 #endif
+
+bool ucfg_mlme_is_chan_switch_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	return mlme_is_chan_switch_in_progress(vdev);
+}
 
 #if defined(CONFIG_AFC_SUPPORT) && defined(CONFIG_BAND_6GHZ)
 QDF_STATUS
@@ -2101,6 +2146,53 @@ ucfg_mlme_get_valid_channels(struct wlan_objmgr_psoc *psoc,
 	*list_len = num_valid_chan;
 	for (i = 0; i < *list_len; i++)
 		ch_freq_list[i] = mlme_obj->cfg.reg.valid_channel_freq_list[i];
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_mlme_get_dfs_discard_mode(struct wlan_objmgr_psoc *psoc,
+			       uint8_t *val)
+{
+	struct wlan_mlme_psoc_ext_obj *mlme_obj;
+
+	mlme_obj = mlme_get_psoc_ext_obj(psoc);
+	if (!mlme_obj) {
+		*val = cfg_default(CFG_DISCARD_DFS_CHANNEL_FOR_MODE);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	*val = mlme_obj->cfg.dfs_cfg.dfs_discard_mode;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_mlme_set_mrsno_support(struct wlan_objmgr_psoc *psoc, bool val)
+{
+	struct wlan_mlme_psoc_ext_obj *mlme_obj;
+
+	mlme_obj = mlme_get_psoc_ext_obj(psoc);
+	if (!mlme_obj)
+		return QDF_STATUS_E_INVAL;
+
+	mlme_obj->cfg.lfr.mrsno_support = val;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_mlme_get_mrsno_support(struct wlan_objmgr_psoc *psoc, bool *val)
+{
+	struct wlan_mlme_psoc_ext_obj *mlme_obj;
+
+	mlme_obj = mlme_get_psoc_ext_obj(psoc);
+	if (!mlme_obj) {
+		*val = false;
+		return QDF_STATUS_E_INVAL;
+	}
+
+	*val = mlme_obj->cfg.lfr.mrsno_support;
 
 	return QDF_STATUS_SUCCESS;
 }

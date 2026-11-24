@@ -26,6 +26,11 @@
 #include "wlan_dp_public_struct.h"
 #include "wlan_dp_priv.h"
 #include "wlan_dp_objmgr.h"
+#ifdef WLAN_SUPPORT_FLOW_PRIORTIZATION
+#include "wlan_fpm_table.h"
+#include "wlan_dp_fim.h"
+#endif
+#include <cdp_txrx_ipa.h>
 
 #define NUM_RX_QUEUES 5
 
@@ -72,6 +77,36 @@ dp_get_next_intf_no_lock(struct wlan_dp_psoc_context *dp_ctx,
 			 struct wlan_dp_intf *cur_intf,
 			 struct wlan_dp_intf **out_intf);
 
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+/**
+ * dp_get_front_hlp_no_lock() - Get the first HLP node from the HLP list
+ * This API does not use any lock in it's implementation. It is the caller's
+ * directive to ensure concurrency safety.
+ * @dp_intf: pointer to the DP Interface
+ * @out_hlp: double pointer to pass the next hlp node
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+dp_get_front_hlp_no_lock(struct wlan_dp_intf *dp_intf,
+			 struct fils_peer_hlp_node **out_hlp);
+
+/**
+ * dp_get_next_hlp_no_lock() - Get the next HLP node from the HLP list
+ * This API does not use any lock in it's implementation. It is the caller's
+ * directive to ensure concurrency safety.
+ * @dp_intf: pointer to the DP interface
+ * @cur_hlp: pointer to the current hlp node
+ * @out_hlp: double pointer to pass the next HLP node
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+dp_get_next_hlp_no_lock(struct wlan_dp_intf *dp_intf,
+			struct fils_peer_hlp_node *cur_hlp,
+			struct fils_peer_hlp_node **out_hlp);
+
+#endif
 /**
  * __dp_take_ref_and_fetch_front_intf_safe - Helper macro to lock, fetch
  * front and next intf, take ref and unlock.
@@ -133,6 +168,84 @@ dp_get_next_intf_no_lock(struct wlan_dp_psoc_context *dp_ctx,
 struct wlan_dp_intf*
 dp_get_intf_by_macaddr(struct wlan_dp_psoc_context *dp_ctx,
 		       struct qdf_mac_addr *addr);
+
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+/**
+ * dp_get_hlp_by_peeraddr() - API to Get HLP node from MAC address
+ * @dp_intf: DP interface
+ * @addr: MAC address
+ *
+ * Return: Pointer to Peer HLP Node
+ */
+struct fils_peer_hlp_node*
+dp_get_hlp_by_peeraddr(struct wlan_dp_intf *dp_intf,
+		       struct qdf_mac_addr *addr);
+
+/**
+ * dp_get_hlp_peer_state() - API to Get HLP Peer state from MAC address
+ * @dp_intf: DP interface
+ * @addr: MAC address of Peer
+ *
+ * Return: QDF_STATUS status in case of success else return error
+ */
+
+QDF_STATUS dp_get_hlp_peer_state(struct wlan_dp_intf *dp_intf,
+				 struct qdf_mac_addr *addr);
+
+/**
+ * dp_softap_handle_hlp() - API to handle HLP msg received from upper layer
+ * @dp_intf: DP interface
+ * @addr: MAC address of Peer
+ *
+ * Return: QDF_STATUS status in case of success else return error
+ */
+
+QDF_STATUS dp_softap_handle_hlp(struct wlan_dp_intf *dp_intf,
+				struct qdf_mac_addr *addr);
+
+/**
+ * dp_softap_hlp_init() - API to initialise context for hlp
+ * @dp_intf: DP interface
+ *
+ */
+void dp_softap_hlp_init(struct wlan_dp_intf *dp_intf);
+
+/**
+ * dp_softap_hlp_deinit() - API to initialise context for hlp
+ * @dp_intf: DP interface
+ *
+ */
+void dp_softap_hlp_deinit(struct wlan_dp_intf *dp_intf);
+
+#else
+static inline struct fils_peer_hlp_node*
+dp_get_hlp_by_peeraddr(struct wlan_dp_intf *dp_intf,
+		       struct qdf_mac_addr *addr)
+{
+	return NULL;
+}
+
+static inline QDF_STATUS
+dp_get_hlp_peer_state(struct wlan_dp_intf *dp_intf, struct qdf_mac_addr *addr)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+static inline QDF_STATUS
+dp_softap_handle_hlp(struct wlan_dp_intf *dp_intf, struct qdf_mac_addr *addr)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+static inline void dp_softap_hlp_init(struct wlan_dp_intf *dp_intf)
+{
+}
+
+static inline void dp_softap_hlp_deinit(struct wlan_dp_intf *dp_intf)
+{
+}
+
+#endif
 
 /**
  * dp_get_intf_by_netdev() - Api to Get interface from netdev
@@ -886,6 +999,16 @@ void dp_direct_link_deinit(struct wlan_dp_psoc_context *dp_ctx, bool is_ssr);
 QDF_STATUS dp_config_direct_link(struct wlan_dp_intf *dp_intf,
 				 bool config_direct_link,
 				 bool enable_low_latency);
+
+/**
+ * dp_direct_link_handle_lpass_ssr_notif: Handle LPASS SSR notification in the
+ *  context of direct link
+ * @dp_ctx: DP private context
+ *
+ * Return: QDF Status
+ */
+QDF_STATUS
+dp_direct_link_handle_lpass_ssr_notif(struct wlan_dp_psoc_context *dp_ctx);
 #else
 static inline
 QDF_STATUS dp_direct_link_init(struct wlan_dp_psoc_context *dp_ctx)
@@ -902,6 +1025,12 @@ static inline
 QDF_STATUS dp_config_direct_link(struct wlan_dp_intf *dp_intf,
 				 bool config_direct_link,
 				 bool enable_low_latency)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+dp_direct_link_handle_lpass_ssr_notif(struct wlan_dp_psoc_context *dp_ctx)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -970,10 +1099,12 @@ QDF_STATUS wlan_dp_select_profile_cfg(struct wlan_objmgr_psoc *psoc)
 /**
  * wlan_dp_link_cdp_vdev_delete_notification() - CDP vdev delete notification
  * @context: osif_vdev handle
+ * @cdp_vdev: CDP vdev handle
  *
  * Return: None
  */
-void wlan_dp_link_cdp_vdev_delete_notification(void *context);
+void wlan_dp_link_cdp_vdev_delete_notification(ol_osif_vdev_handle context,
+					       struct cdp_vdev *cdp_vdev);
 
 /* DP CFG APIs - START */
 
@@ -1017,4 +1148,143 @@ bool wlan_dp_cfg_is_rx_fisa_lru_del_enabled(struct wlan_dp_psoc_cfg *dp_cfg)
 
 
 /* DP CFG APIs - END */
+
+#ifdef WLAN_SUPPORT_FLOW_PRIORTIZATION
+
+/**
+ * dp_flow_priortization_init() - Initialize FPM and FIM modules
+ * @dp_intf: DP interface handle
+ *
+ * Return: void
+ */
+static inline void dp_flow_priortization_init(struct wlan_dp_intf *dp_intf)
+{
+	dp_fpm_init(dp_intf);
+	dp_fim_init(dp_intf);
+}
+
+/**
+ * dp_flow_priortization_deinit() - Deinitialize FPM and FIM modules
+ * @dp_intf: DP interface handle
+ *
+ * Return: void
+ */
+static inline void dp_flow_priortization_deinit(struct wlan_dp_intf *dp_intf)
+{
+	dp_fim_deinit(dp_intf);
+	dp_fpm_deinit(dp_intf);
+}
+#else
+static inline void dp_flow_priortization_init(struct wlan_dp_intf *dp_intf)
+{
+}
+
+static inline void dp_flow_priortization_deinit(struct wlan_dp_intf *dp_intf)
+{
+}
+#endif
+#ifdef FEATURE_ML_MONITOR_MODE_SUPPORT
+/*
+ * wlan_dp_ml_mon_supported() - API to get ML mon support
+ *
+ * Return: Return true if ML mon mode supported
+ */
+bool wlan_dp_ml_mon_supported(void);
+#else
+static inline bool wlan_dp_ml_mon_supported(void)
+{
+	return false;
+}
+#endif
+
+/**
+ * __wlan_dp_update_def_link() - update DP interface default link
+ * @psoc: psoc handle
+ * @intf_mac: interface MAC address
+ * @vdev: objmgr vdev handle to set the def_link in dp_intf
+ *
+ */
+void __wlan_dp_update_def_link(struct wlan_objmgr_psoc *psoc,
+			       struct qdf_mac_addr *intf_mac,
+			       struct wlan_objmgr_vdev *vdev);
+
+#ifdef WLAN_FEATURE_DYNAMIC_RX_AGGREGATION
+/**
+ * wlan_dp_rx_aggr_dis_req() -  Request Rx aggregation  disable
+ * @dp_intf: DP interface handle
+ * @id: Client ID
+ * @disable: Disable aggregation
+ *
+ * Return: None
+ */
+void wlan_dp_rx_aggr_dis_req(struct wlan_dp_intf *dp_intf,
+			     enum ctrl_rx_aggr_client_id id,
+			     bool disable);
+#else
+static inline void
+wlan_dp_rx_aggr_dis_req(struct wlan_dp_intf *dp_intf,
+			enum ctrl_rx_aggr_client_id id, bool disable)
+{
+}
+#endif
+
+#ifdef IPA_OFFLOAD
+static inline bool
+wlan_dp_check_is_ring_ipa_rx(ol_txrx_soc_handle soc, uint8_t ring_id)
+{
+	return cdp_ipa_check_is_ring_ipa_rx(soc, ring_id);
+}
+#else
+static inline bool
+wlan_dp_check_is_ring_ipa_rx(ol_txrx_soc_handle soc, uint8_t ring_id)
+{
+	return false;
+}
+#endif
+
+/* The below two key combined is ASCII "WLAN_DP_GET_HASH" */
+#define WLAN_DP_HASH_KEY_0 0x574C414E5F44505F
+#define WLAN_DP_HASH_KEY_1 0x4745545F48415348
+
+/**
+ * wlan_dp_get_flow_hash() - Generate flow tuple hash
+ * @dp_ctx: DP global psoc context
+ * @flow_tuple: flow tuple
+ *
+ * Return: tuple hash
+ */
+static inline uint64_t
+wlan_dp_get_flow_hash(struct wlan_dp_psoc_context *dp_ctx,
+		      struct flow_info *flow_tuple)
+{
+	uint64_t *data = (uint64_t *)flow_tuple;
+	uint64_t a, b, c, d, e;
+	uint64_t flow_secret[2];
+
+	flow_secret[0] = WLAN_DP_HASH_KEY_0;
+	flow_secret[1] = WLAN_DP_HASH_KEY_1;
+
+	a = data[0] ^ flow_secret[0];
+	b = data[1] ^ flow_secret[1];
+	c = data[2] ^ flow_secret[0];
+	d = data[3] ^ flow_secret[1];
+	e = data[4] ^ flow_secret[0];
+
+	return ((a ^ b) ^ (c ^ d) ^ e);
+}
+
+static inline bool wlan_dp_link_check_cdp_vdev(struct wlan_dp_link *dp_link,
+					       struct cdp_vdev *cdp_vdev)
+{
+	struct cdp_vdev *temp_cdp_vdev;
+
+	TAILQ_FOREACH(temp_cdp_vdev, &dp_link->cdp_vdev_list,
+		      cdp_vdev_list_elem) {
+		if (temp_cdp_vdev == cdp_vdev)
+			return true;
+	}
+
+	return false;
+}
+
 #endif

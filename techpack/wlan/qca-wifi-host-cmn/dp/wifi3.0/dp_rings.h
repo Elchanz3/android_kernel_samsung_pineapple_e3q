@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -52,7 +52,7 @@ static inline bool dp_is_mon_mask_valid(struct dp_soc *soc,
  */
 static inline int dp_srng_get_cpu(void)
 {
-	return smp_processor_id();
+	return qdf_get_cpu();
 }
 
 #else /* QCA_HOST_MODE_WIFI_DISABLED */
@@ -264,7 +264,7 @@ static inline bool dp_skip_msi_cfg(struct dp_soc *soc, int ring_type)
 		if (ring_type != RXDMA_MONITOR_STATUS)
 			return true;
 	} else if (ring_type == RXDMA_MONITOR_STATUS &&
-		   !wlan_cfg_get_local_pkt_capture(soc->wlan_cfg_ctx)) {
+		   !dp_mon_mode_local_pkt_capture(soc)) {
 		return true;
 	}
 
@@ -278,7 +278,7 @@ static inline bool dp_skip_msi_cfg(struct dp_soc *soc, int ring_type)
 		if (ring_type == REO_DST || ring_type == RXDMA_DST)
 			return true;
 	} else if (ring_type == RXDMA_MONITOR_STATUS &&
-		  !wlan_cfg_get_local_pkt_capture(soc->wlan_cfg_ctx)) {
+		  !dp_mon_mode_local_pkt_capture(soc)) {
 		return true;
 	}
 
@@ -565,12 +565,12 @@ dp_dump_wbm_idle_hptp(struct dp_soc *soc, struct dp_pdev *pdev);
  * READ NOC error when UMAC is in low power state. MCC does not have
  * device force wake working yet.
  *
- * Return: none
+ * Return: rings are empty
  */
-void dp_display_srng_info(struct cdp_soc_t *soc_hdl);
+bool dp_display_srng_info(struct cdp_soc_t *soc_hdl);
 
 #if defined(DP_POWER_SAVE) || defined(FEATURE_RUNTIME_PM)
-void dp_drain_txrx(struct cdp_soc_t *soc_handle);
+QDF_STATUS dp_drain_txrx(struct cdp_soc_t *soc_handle, uint8_t rx_only);
 
 /*
  * dp_update_ring_hptp() - update dp rings hptp
@@ -809,16 +809,19 @@ static inline QDF_STATUS dp_soc_srng_alloc(struct dp_soc *soc)
  *
  * This function dumps the SW Read/Write idx for the important rings.
  *
- * Return: none
+ * Return:  rings are empty
  */
-static inline void dp_display_srng_info(struct cdp_soc_t *soc_hdl)
+static inline bool dp_display_srng_info(struct cdp_soc_t *soc_hdl)
 {
 /*TODO add support display SOFTUMAC data rings info*/
+	return true;
 }
 
 #if defined(DP_POWER_SAVE) || defined(FEATURE_RUNTIME_PM)
-static inline void dp_drain_txrx(struct cdp_soc_t *soc_handle)
+static inline QDF_STATUS dp_drain_txrx(struct cdp_soc_t *soc_handle,
+				       uint8_t rx_only)
 {
+	return QDF_STATUS_SUCCESS;
 }
 #endif
 #endif /* WLAN_SOFTUMAC_SUPPORT */
@@ -881,5 +884,63 @@ void dp_soc_reset_dpdk_intr_mask(struct dp_soc *soc);
 #else
 static inline void dp_soc_reset_dpdk_intr_mask(struct dp_soc *soc)
 { }
+#endif
+
+/**
+ * dp_deinit_ipa_rx_alt_refill_buf_ring() - deinit IPA Rx alt refill buffer ring
+ * @soc: DP soc context
+ *
+ * Return: None
+ */
+void dp_deinit_ipa_rx_alt_refill_buf_ring(struct dp_soc *soc);
+
+/**
+ * dp_init_ipa_rx_refill_buf_ring() - init Second Rx refill buffer ring
+ * @soc: DP soc context
+ *
+ * Return: QDF_STATUS_SUCCESS: success
+ *         QDF_STATUS_E_RESOURCES: Error return
+ */
+QDF_STATUS dp_init_ipa_rx_refill_buf_ring(struct dp_soc *soc);
+
+/**
+ * dp_deinit_ipa_rx_refill_buf_ring - deinit second Rx refill buffer ring
+ * @soc: DP soc context
+ *
+ * Return: None
+ */
+void dp_deinit_ipa_rx_refill_buf_ring(struct dp_soc *soc);
+
+#ifdef WLAN_DP_LOAD_BALANCE_SUPPORT
+/**
+ * dp_soc_get_ext_grp_id_from_reo_num() - Get ext group id from reo number
+ * @soc_handle: cdp soc handle
+ * @reo_num: reo ring number
+ *
+ * Return: ext group id
+ */
+int dp_soc_get_ext_grp_id_from_reo_num(struct cdp_soc_t *soc_handle,
+				       uint8_t reo_num);
+#endif
+
+#ifdef DP_FTM_MODE_SKIP_WBM_RING_INIT
+/**
+ * dp_skip_ftm_mode_wbm_ring_init() - Skip WBM idle ring init in FTM mode
+ * @soc: DP SoC handle
+ *
+ * Return: True in FTM mode/False otherwise
+ */
+bool dp_skip_ftm_mode_wbm_ring_init(struct dp_soc *soc);
+#else
+/**
+ * dp_skip_ftm_mode_wbm_ring_init() - Skip WBM idle ring init in FTM mode
+ * @soc: DP SoC handle
+ *
+ * Return: True in FTM mode/False otherwise
+ */
+static inline bool dp_skip_ftm_mode_wbm_ring_init(struct dp_soc *soc)
+{
+	return false;
+}
 #endif
 #endif /* _DP_RINGS_H_ */

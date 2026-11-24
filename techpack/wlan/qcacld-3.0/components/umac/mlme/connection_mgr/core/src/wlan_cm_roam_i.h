@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -98,6 +98,17 @@ cm_update_scan_mlme_on_roam(struct wlan_objmgr_vdev *vdev,
 QDF_STATUS cm_abort_fw_roam(struct cnx_mgr *cm_ctx,
 			    wlan_cm_id cm_id);
 
+/*
+ * cm_roam_handle_mlo_roam_abort() - API to handle the MLO roam abort when
+ * roam partner bringup is offloaded to host
+ * @vdev: pointer to vdev object
+ * @aborted_link_id: Link deleted by the firmware
+ *
+ * Return: None
+ */
+void
+cm_roam_handle_mlo_roam_abort(struct wlan_objmgr_vdev *vdev,
+			      uint32_t aborted_link_id);
 /**
  * cm_fw_roam_sync_req() - Post roam sync to CM SM
  * @psoc: psoc pointer
@@ -174,6 +185,22 @@ QDF_STATUS cm_fw_roam_invoke_fail(struct wlan_objmgr_psoc *psoc,
 				  uint8_t vdev_id)
 {
 	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif /* WLAN_FEATURE_ROAM_OFFLOAD */
+
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * cm_delete_crypto_keys_for_all_links() - This API clears the keys for all
+ * the links
+ * @vdev: pointer to VDEV object
+ *
+ * Return: none
+ */
+void cm_delete_crypto_keys_for_all_links(struct wlan_objmgr_vdev *vdev);
+#else
+static inline
+void cm_delete_crypto_keys_for_all_links(struct wlan_objmgr_vdev *vdev)
+{
 }
 #endif /* WLAN_FEATURE_ROAM_OFFLOAD */
 #endif /* _WLAN_CM_ROAM_I_H_ */

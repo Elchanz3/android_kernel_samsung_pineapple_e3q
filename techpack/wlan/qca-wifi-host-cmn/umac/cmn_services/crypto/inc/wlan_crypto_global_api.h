@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -339,7 +339,7 @@ QDF_STATUS wlan_crypto_wpaie_check(struct wlan_crypto_params *crypto_params,
 /**
  * wlan_crypto_rsnie_check() - called by mlme to check the rsnie
  * @crypto_params: crypto params
- * @frm: ie buffer
+ * @frm: rsn buffer beginning from RSN data
  *
  * This function gets called by mlme to check the contents of rsn is
  * matching with given crypto params
@@ -801,7 +801,7 @@ wlan_get_crypto_params_from_wpa_ie(struct wlan_crypto_params *crypto_params,
 /**
  * wlan_get_crypto_params_from_rsn_ie() - Function to get crypto params
  * from rsn ie
- * @crypto_params: return crypto parameters
+ * @crypto_params: vdev crypto parameters
  * @ie_ptr: pointer to IEs
  * @ie_len: IE length
  *
@@ -815,7 +815,7 @@ wlan_get_crypto_params_from_rsn_ie(struct wlan_crypto_params *crypto_params,
 				   const uint8_t *ie_ptr, uint16_t ie_len);
 
 /**
- * wlan_set_vdev_crypto_prarams_from_ie() - Sets vdev crypto params from IE info
+ * wlan_set_vdev_crypto_params_from_ie() - Sets vdev crypto params from IE info
  * @vdev: vdev pointer
  * @ie_ptr: pointer to IE
  * @ie_len: IE length
@@ -824,9 +824,9 @@ wlan_get_crypto_params_from_rsn_ie(struct wlan_crypto_params *crypto_params,
  *
  * Return: QDF_STATUS_SUCCESS or error code
  */
-QDF_STATUS wlan_set_vdev_crypto_prarams_from_ie(struct wlan_objmgr_vdev *vdev,
-						uint8_t *ie_ptr,
-						uint16_t ie_len);
+QDF_STATUS wlan_set_vdev_crypto_params_from_ie(struct wlan_objmgr_vdev *vdev,
+					       uint8_t *ie_ptr,
+					       uint16_t ie_len);
 #ifdef WLAN_CRYPTO_GCM_OS_DERIVATIVE
 static inline int wlan_crypto_aes_gmac(const uint8_t *key, size_t key_len,
 				       uint8_t *iv, size_t iv_len,
@@ -879,15 +879,27 @@ int8_t wlan_crypto_get_default_key_idx(struct wlan_objmgr_vdev *vdev,
 /**
  * wlan_crypto_get_cipher() - Get the cipher type for the vdev
  * @vdev: vdev object
+ * @peer_mac: MAC address of crypto key entity
  * @pairwise: denotes if the request is for pairwise cipher or not
  * @key_index: Index of the key whose cipher type has to be returned
  *
  * Return: enum wlan_crypto_cipher_type
  */
 enum wlan_crypto_cipher_type
-wlan_crypto_get_cipher(struct wlan_objmgr_vdev *vdev,
+wlan_crypto_get_cipher(struct wlan_objmgr_vdev *vdev, const uint8_t *peer_mac,
 		       bool pairwise, uint8_t key_index);
 
+/**
+ * wlan_crypto_get_secure_akm_available() - Search the AKM bitmap to
+ * find the most secure AKM.
+ * @akm: Bitmap of available AKMs.
+ *
+ * Search in the decreasing order of AKM security and return the
+ * first matching AKM available in @akm bitmap.
+ *
+ * Return: enum wlan_crypto_key_mgmt
+ */
+wlan_crypto_key_mgmt wlan_crypto_get_secure_akm_available(uint32_t akm);
 #ifdef CRYPTO_SET_KEY_CONVERGED
 /**
  * wlan_crypto_update_set_key_peer() - Update the peer for set key
@@ -933,13 +945,14 @@ wlan_crypto_save_ml_sta_key(struct wlan_objmgr_psoc *psoc,
 /**
  * wlan_crypto_save_key() - Allocate memory for storing key
  * @vdev: vdev object
+ * @peer_mac: MAC address of crypto key entity
  * @key_index: the index of the key that needs to be allocated
  * @crypto_key: Pointer to crypto key
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS wlan_crypto_save_key(struct wlan_objmgr_vdev *vdev,
-				uint8_t key_index,
+				const uint8_t *peer_mac, uint8_t key_index,
 				struct wlan_crypto_key *crypto_key);
 
 /**
@@ -958,11 +971,13 @@ struct wlan_crypto_key *wlan_crypto_get_ml_sta_link_key(
 /**
  * wlan_crypto_get_key() - Get the stored key information
  * @vdev: vdev object
+ * @peer_mac: MAC address of crypto key entity
  * @key_index: the index of the key that needs to be retrieved
  *
  * Return: Key material
  */
 struct wlan_crypto_key *wlan_crypto_get_key(struct wlan_objmgr_vdev *vdev,
+					    const uint8_t *peer_mac,
 					    uint8_t key_index);
 
 /**
@@ -1016,14 +1031,16 @@ static inline void wlan_crypto_update_set_key_peer(
 }
 
 static inline QDF_STATUS
-wlan_crypto_save_key(struct wlan_objmgr_vdev *vdev, uint8_t key_index,
+wlan_crypto_save_key(struct wlan_objmgr_vdev *vdev,
+		     const uint8_t *peer_mac, uint8_t key_index,
 		     struct wlan_crypto_key *crypto_key)
 {
 	return QDF_STATUS_SUCCESS;
 }
 
 static inline struct wlan_crypto_key *
-wlan_crypto_get_key(struct wlan_objmgr_vdev *vdev, uint8_t key_index)
+wlan_crypto_get_key(struct wlan_objmgr_vdev *vdev,
+		    const uint8_t *peer_mac, uint8_t key_index)
 {
 	return NULL;
 }
@@ -1234,4 +1251,55 @@ void wlan_crypto_aquire_lock(void);
  */
 void wlan_crypto_release_lock(void);
 #endif /* WLAN_FEATURE_FILS_SK */
+
+/**
+ * crypto_flush_entries - This API will flush crypto keys
+ * @psoc: psoc handler
+ *
+ * Return: None
+ */
+void crypto_flush_entries(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_crypto_flush_entries - wrapper API for "crypto_flush_entries"
+ * @psoc: psoc handler
+ *
+ * Return: None
+ */
+void ucfg_crypto_flush_entries(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_crypto_free_key_by_link_id - free key by link id
+ * @psoc: psoc handler
+ * @link_addr: link address
+ * @link_id: link id
+ *
+ * Return: None
+ */
+void ucfg_crypto_free_key_by_link_id(struct wlan_objmgr_psoc *psoc,
+				     struct qdf_mac_addr *link_addr,
+				     uint8_t link_id);
+
+#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_FEATURE_ROAM_OFFLOAD)
+/**
+ * wlan_crypto_key_event_handler() - Handle key event and store the keys in
+ * crypto PSOC object.
+ * @psoc:  Pointer to PSOC object
+ * @keys:  Pointer to the keys
+ * @num_keys: Number of links for which keys entries are available
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS wlan_crypto_key_event_handler(struct wlan_objmgr_psoc *psoc,
+					 struct wlan_crypto_key_entry *keys,
+					 uint8_t num_keys);
+#else
+static inline
+QDF_STATUS wlan_crypto_key_event_handler(struct wlan_objmgr_psoc *psoc,
+					 struct wlan_crypto_key_entry *keys,
+					 uint8_t num_keys)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif
 #endif /* end of _WLAN_CRYPTO_GLOBAL_API_H_ */

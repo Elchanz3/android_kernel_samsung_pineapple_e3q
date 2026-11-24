@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -406,7 +406,7 @@ pkt_capture_process_tx_data(void *soc, void *log_data, u_int16_t vdev_id,
  * Return: true, if filter bit is set
  *         false, if filter bit is not set
  */
-static bool
+bool
 pkt_capture_is_frame_filter_set(qdf_nbuf_t buf,
 				struct pkt_capture_frame_filter *frame_filter,
 				bool direction)
@@ -594,8 +594,6 @@ void pkt_capture_callback(void *soc, enum WDI_EVENT event, void *log_data,
 		struct htt_tx_offload_deliver_ind_hdr_t *offload_deliver_msg;
 		bool is_pkt_during_roam = false;
 		uint32_t freq = 0;
-		qdf_nbuf_t buf = log_data +
-				sizeof(struct htt_tx_offload_deliver_ind_hdr_t);
 
 		if (!frame_filter->data_tx_frame_filter) {
 			pkt_capture_vdev_put_ref(vdev);
@@ -615,17 +613,9 @@ void pkt_capture_callback(void *soc, enum WDI_EVENT event, void *log_data,
 			vdev_id = offload_deliver_msg->vdev_id;
 		}
 
-		if (frame_filter->data_tx_frame_filter &
-		    PKT_CAPTURE_DATA_FRAME_TYPE_ALL) {
-			pkt_capture_offload_deliver_indication_handler(
+		pkt_capture_offload_deliver_indication_handler(
 							log_data,
 							vdev_id, bssid, soc);
-		} else if (pkt_capture_is_frame_filter_set(
-			   buf, frame_filter, IEEE80211_FC1_DIR_TODS)) {
-			pkt_capture_offload_deliver_indication_handler(
-							log_data,
-							vdev_id, bssid, soc);
-		}
 		break;
 	}
 
@@ -1239,11 +1229,11 @@ void pkt_capture_record_channel(struct wlan_objmgr_vdev *vdev)
 	 * Record packet capture channel here
 	 */
 	des_chan = vdev->vdev_mlme.des_chan;
-	val.cdp_pdev_param_monitor_chan = des_chan->ch_ieee;
-	cdp_txrx_set_pdev_param(soc, wlan_objmgr_pdev_get_pdev_id(pdev),
+	val.cdp_vdev_param_monitor_chan = des_chan->ch_ieee;
+	cdp_txrx_set_vdev_param(soc, wlan_vdev_get_id(vdev),
 				CDP_MONITOR_CHANNEL, val);
-	val.cdp_pdev_param_mon_freq = des_chan->ch_freq;
-	cdp_txrx_set_pdev_param(soc, wlan_objmgr_pdev_get_pdev_id(pdev),
+	val.cdp_vdev_param_mon_freq = des_chan->ch_freq;
+	cdp_txrx_set_vdev_param(soc, wlan_vdev_get_id(vdev),
 				CDP_MONITOR_FREQUENCY, val);
 }
 

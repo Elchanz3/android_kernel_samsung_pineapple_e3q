@@ -30,6 +30,12 @@ INCS += -I$(obj)/$(DEPTH)/component_dev/wmi/inc
 INCS += -I$(obj)/$(DEPTH)/pld/inc
 INCS += -I$(obj)/$(DEPTH)/component_dev/dp/inc
 
+ifeq ($(WLAN_IOT_SIM_SUPPORT), 1)
+INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/mlo_mgr/inc
+INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/wifi_pos/inc
+INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/twt/dispatcher/inc
+endif
+
 INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/cmn_services/crypto/inc
 INCS += -I$(obj)/$(DEPTH)/component_dev/crypto/inc
 
@@ -109,6 +115,11 @@ ccflags-y+= -DWLAN_CFR_ENABLE=1
 INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/cfr/dispatcher/inc/
 INCS += -I$(obj)/$(DEPTH)/component_dev/umac/cfr/dispatcher/inc
 INCS += -I$(obj)/$(DEPTH)/component_dev/qal/inc
+endif
+
+ifeq ($(WLAN_WIFI_RADAR_ENABLE), 1)
+ccflags-y+= -DWLAN_WIFI_RADAR_ENABLE=1
+INCS += -I$(obj)/$(DEPTH)/cmn_dev/umac/wifi_radar/dispatcher/inc/
 endif
 
 INCS += -I$(obj)/$(DEPTH)/cmn_dev/iot_sim/core

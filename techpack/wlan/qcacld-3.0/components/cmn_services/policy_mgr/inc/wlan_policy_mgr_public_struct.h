@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -52,16 +52,22 @@
 	(WEIGHT_OF_GROUP2_PCL_CHANNELS - PCL_GROUPS_WEIGHT_DIFFERENCE)
 #define WEIGHT_OF_GROUP4_PCL_CHANNELS \
 	(WEIGHT_OF_GROUP3_PCL_CHANNELS - PCL_GROUPS_WEIGHT_DIFFERENCE)
+#define WEIGHT_OF_GROUP5_PCL_CHANNELS \
+	(WEIGHT_OF_GROUP4_PCL_CHANNELS - PCL_GROUPS_WEIGHT_DIFFERENCE)
 
 #define WEIGHT_OF_NON_PCL_CHANNELS 1
 #define WEIGHT_OF_DISALLOWED_CHANNELS 0
 
 #define MAX_MAC 2
 
+#ifdef FEATURE_FIFTH_CONNECTION
+#define MAX_NUMBER_OF_CONC_CONNECTIONS 5
+#else
 #ifdef FEATURE_FOURTH_CONNECTION
 #define MAX_NUMBER_OF_CONC_CONNECTIONS 4
 #else
 #define MAX_NUMBER_OF_CONC_CONNECTIONS 3
+#endif
 #endif
 
 #ifdef WLAN_FEATURE_11BE_MLO
@@ -96,6 +102,7 @@ typedef int (*send_mode_change_event_cb)(void);
  * @CSA_REASON_GO_BSS_STARTED: P2P go started
  * @CSA_REASON_SAP_ACS: 2.4 GHz preferred SAP ACS starting
  * @CSA_REASON_SAP_FIX_CH_CONC_WITH_GO: SAP fix channel start
+ * @CSA_REASON_LL_LT_SAP_EVENT: LL_LT_SAP csa event
  *  and move GO to other band
  */
 enum sap_csa_reason_code {
@@ -114,7 +121,8 @@ enum sap_csa_reason_code {
 	CSA_REASON_CHAN_PASSIVE,
 	CSA_REASON_GO_BSS_STARTED,
 	CSA_REASON_SAP_ACS,
-	CSA_REASON_SAP_FIX_CH_CONC_WITH_GO
+	CSA_REASON_SAP_FIX_CH_CONC_WITH_GO,
+	CSA_REASON_LL_LT_SAP_EVENT
 };
 
 /*
@@ -131,13 +139,38 @@ enum sap_csa_reason_code {
  * MLO_LINK_FORCE_MODE_INACTIVE_NUM, MLO_LINK_FORCE_MODE_NO_FORCE.
  * @link_ctrl_f_post_re_evaluate: run link state check again after command
  * response handled.
+ * @link_ctrl_f_sync_set_link: wait response for set link command
+ * @link_ctrl_f_dont_update_disallow_bitmap: dont need to call
+ * ml_nlink_update_disallow_modes again.
+ * @link_ctrl_f_dont_reschedule_workqueue: don't reschedule force scc workqueue
+ * after set link response
  */
 enum link_control_flags {
 	link_ctrl_f_overwrite_active_bitmap =   1 << 0,
 	link_ctrl_f_overwrite_inactive_bitmap = 1 << 1,
 	link_ctrl_f_dynamic_force_link_num =    1 << 2,
 	link_ctrl_f_post_re_evaluate =          1 << 3,
+	link_ctrl_f_sync_set_link =             1 << 4,
+	link_ctrl_f_dont_update_disallow_bitmap = 1 << 5,
+	link_ctrl_f_dont_reschedule_workqueue = 1 << 6,
 };
+
+/* Define the max number of consecutive re-evaluate number. usually, we have
+ * to update force active_inactive bitmap, force active number, force inactive
+ * number to target, so post re-evaluate should not exceed 3.
+ */
+#define MAX_RE_EVALUATE_LOOPS 3
+#define link_ctrl_f_loop_count_pos          30
+#define link_ctrl_f_loop_count_bits          2
+
+#define SET_POST_RE_EVALUATE_LOOPS(_FLAGS_, _COUNT_) \
+	QDF_SET_BITS(_FLAGS_, link_ctrl_f_loop_count_pos, \
+		     link_ctrl_f_loop_count_bits, \
+		     _COUNT_)
+
+#define GET_POST_RE_EVALUATE_LOOPS(_FLAGS_) \
+	QDF_GET_BITS(_FLAGS_, link_ctrl_f_loop_count_pos, \
+		     link_ctrl_f_loop_count_bits)
 
 /**
  * enum hw_mode_ss_config - Possible spatial stream configuration
@@ -221,6 +254,22 @@ enum hw_mode_mac_band_cap {
 };
 
 /**
+ * enum pm_rd_type - rd type
+ * @pm_rd_none: unknown
+ * @pm_rd_dbs: dbs only
+ * @pm_rd_sbs_low_share: sbs lower shared
+ * @pm_rd_sbs_upper_share: sbs upper shared
+ * @pm_rd_sbs_switchable: sbs switchable
+ */
+enum pm_rd_type {
+	pm_rd_none,
+	pm_rd_dbs,
+	pm_rd_sbs_low_share,
+	pm_rd_sbs_upper_share,
+	pm_rd_sbs_switchable,
+};
+
+/**
  * enum force_1x1_type - enum to specify the type of forced 1x1 ini provided.
  * @FORCE_1X1_DISABLED: even if the AP is present in OUI, 1x1 will not be forced
  * @FORCE_1X1_ENABLED_FOR_AS: If antenna sharing supported, then only do 1x1.
@@ -261,6 +310,12 @@ enum policy_mgr_pcl_group_id {
  * @POLICY_MGR_PCL_ORDER_SCC_5G_HIGH_5G_HIGH_SCC_5G_LOW: 5 GHz High SCC
  * frequency followed by 5G High band i.e 5G freq > sbs cutoff freq, add 5 GHz
  * Low SCC frequency
+ * @POLICY_MGR_PCL_ORDER_SCC_5G_LOW: SCC channel on 5G low
+ * @POLICY_MGR_PCL_ORDER_SCC_5G_HIGH: SCC channel on 5G high
+ * @POLICY_MGR_PCL_ORDER_SCC_5G_LOW_MCC_5G_HIGH: SCC channels on 5G low
+ * followed by MCC channels on 5G high
+ * @POLICY_MGR_PCL_ORDER_SCC_5G_HIGH_MCC_5G_LOW: SCC channels on 5G high
+ * followed by MCC channels on 5G low
  *
  * Order in which the PCL is requested
  */
@@ -273,6 +328,10 @@ enum policy_mgr_pcl_channel_order {
 	POLICY_MGR_PCL_ORDER_SCC_5G_LOW_5G_LOW,
 	POLICY_MGR_PCL_ORDER_SCC_5G_HIGH_5G_HIGH,
 	POLICY_MGR_PCL_ORDER_SCC_5G_HIGH_5G_HIGH_SCC_5G_LOW,
+	POLICY_MGR_PCL_ORDER_SCC_5G_LOW,
+	POLICY_MGR_PCL_ORDER_SCC_5G_HIGH,
+	POLICY_MGR_PCL_ORDER_SCC_5G_LOW_MCC_5G_HIGH,
+	POLICY_MGR_PCL_ORDER_SCC_5G_HIGH_MCC_5G_LOW,
 };
 
 /**
@@ -400,9 +459,13 @@ enum policy_mgr_mac_use {
  *	channel on 2.4 Ghz & 2.4 Ghz channels
  * @PM_SCC_ON_5_SCC_ON_24_5G: SCC channel on 5 Ghz, SCC channel
  *	on 2.4 Ghz & 5 Ghz channels
+ * @PM_SCC_ON_5_SCC_ON_24_5G_24G: SCC channel on 5 Ghz, SCC channel
+ *	on 2.4 Ghz, 5 Ghz channels & 2 Ghz channels
  * @PM_SCC_ON_5_5G_24G: SCC channel on 5 Ghz, 5 Ghz channels & 2.4 Ghz channels
  * @PM_SCC_ON_5_5G_SCC_ON_24G: SCC channel on 5 Ghz, 5 Ghz channels &
  *	SCC channel on 2.4 Ghz
+ * @PM_SCC_ON_5_5G_SCC_ON_24_24G: SCC channel on 5 Ghz, 5 Ghz channels,
+ *	SCC channel on 2.4 Ghz & 2.4 Ghz channels
  * @PM_SCC_ON_24_SCC_ON_5_24G: SCC channel on 2.4 Ghz, SCC
  *	channel on 5 Ghz & 2.4 Ghz channels
  * @PM_SCC_ON_24_SCC_ON_5_5G: SCC channel on 2.4 Ghz, SCC
@@ -431,11 +494,26 @@ enum policy_mgr_mac_use {
  * 5 GHz low frequencies, add 2.4 GHz if its shared with 5 GHz low
  * @PM_SCC_ON_5G_HIGH_5G_HIGH_PLUS_SHARED_2G: 5GHZ high SCC channel followed by
  * 5 GHz high frequencies, add 2.4 GHZ if its shared with 5GHz high
- * @PM_SBS_CH_MCC_CH: SBS channels followed by MCC channels
- * @PM_SBS_5G_MCC_24G: SBS channels, 5G MCC channels and 2.4GHz channels
  * @PM_SCC_ON_5G_HIGH_5G_HIGH_SCC_ON_5G_LOW_PLUS_SHARED_2G: 5GHZ high SCC
  * channel followed by 5 GHz high frequencies and 5 GHz low SCC channel,
  * add 2.4 GHZ if its shared with 5GHz high
+ * @PM_SBS_CH_MCC_CH: SBS channels followed by MCC channels
+ * @PM_SBS_5G_MCC_24G: SBS channels, 5G MCC channels and 2.4GHz channels
+ * @PM_SCC_ON_24G: SCC channels on 2.4 Ghz
+ * @PM_SCC_ON_5G_LOW: SCC channels on 5G low frequencies
+ * @PM_SCC_ON_5G_HIGH: SCC channels on 5G high frequencies
+ * @PM_SBS_CH_MCC_CH_SCC_ON_24_24G: SBS channels followed by MCC channels
+ * followed by SCC channels on 2.4 GHz followed by 2.4 GHz channels
+ * @PM_5G_24G: 5 GHz channels, followed by 2.4 GHz channels
+ * @PM_MCC_CH_SCC_ON_24G: MCC chanenls followed by SCC channels on 2.4 Ghz
+ * @PM_SCC_ON_5G_LOW_MCC_ON_5G_HIGH: SCC channels on 5G low frequencies
+ * followed by MCC channels on 5G high frequencies
+ * @PM_SCC_ON_5G_HIGH_MCC_ON_5G_LOW: SCC channels on 5G high frequencies
+ * followed by MCC channels on 5G low frequencies
+ * @PM_SCC_ON_5G_LOW_CH_24G: SCC channels on 5G low frequencies followed by
+ * 2.4 GHz channels.
+ * @PM_SCC_ON_5G_HIGH_CH_24G: SCC channels on 5G high frequencies followed by
+ * 2.4 GHz channels.
  *
  * @PM_MAX_PCL_TYPE: Max place holder
  *
@@ -456,8 +534,10 @@ enum policy_mgr_pcl_type {
 	PM_SCC_ON_5_CH_5G,
 	PM_SCC_ON_5_SCC_ON_24_24G,
 	PM_SCC_ON_5_SCC_ON_24_5G,
+	PM_SCC_ON_5_SCC_ON_24_5G_24G,
 	PM_SCC_ON_5_5G_24G,
 	PM_SCC_ON_5_5G_SCC_ON_24G,
+	PM_SCC_ON_5_5G_SCC_ON_24_24G,
 	PM_SCC_ON_24_SCC_ON_5_24G,
 	PM_SCC_ON_24_SCC_ON_5_5G,
 	PM_SCC_ON_24_CH_24G,
@@ -484,6 +564,16 @@ enum policy_mgr_pcl_type {
 
 	PM_SBS_CH_MCC_CH,
 	PM_SBS_5G_MCC_24G,
+	PM_SCC_ON_24G,
+	PM_SCC_ON_5G_LOW,
+	PM_SCC_ON_5G_HIGH,
+	PM_SBS_CH_MCC_CH_SCC_ON_24_24G,
+	PM_5G_24G,
+	PM_MCC_CH_SCC_ON_24G,
+	PM_SCC_ON_5G_LOW_MCC_ON_5G_HIGH,
+	PM_SCC_ON_5G_HIGH_MCC_ON_5G_LOW,
+	PM_SCC_ON_5G_LOW_CH_24G,
+	PM_SCC_ON_5G_HIGH_CH_24G,
 
 	PM_MAX_PCL_TYPE
 };
@@ -812,6 +902,65 @@ enum policy_mgr_one_connection_mode {
  * @PM_NAN_DISC_NDI_MCC_24_2x2: NAN & NDI connection on MCC using 2x2 on 2.4 GHz
  * @PM_NAN_DISC_NDI_DBS_1x1: NAN & NDI connection on DBS using 1x1
  * @PM_NAN_DISC_NDI_DBS_2x2: NAN & NDI connection on DBS using 2x2
+ * @PM_NAN_P2P: NAN & P2P(GO/CLI) connection generic index
+ * @PM_NAN_DISC_P2P_SCC_24_1x1: NAN & P2P connection on SCC using 1x1 on 2.4 GHz
+ * @PM_NAN_DISC_P2P_SCC_24_2x2: NAN & P2P connection on SCC using 2x2 on 2.4 GHz
+ * @PM_NAN_DISC_P2P_MCC_24_1x1: NAN & P2P connection on MCC using 1x1 on 2.4 GHz
+ * @PM_NAN_DISC_P2P_MCC_24_2x2: NAN & P2P connection on MCC using 2x2 on 2.4 GHz
+ * @PM_NAN_DISC_P2P_DBS_1x1: NAN & P2P connection on DBS using 1x1
+ * @PM_NAN_DISC_P2P_DBS_2x2: NAN & P2P connection on DBS using 2x2
+ * @PM_STA_24_LL_LT_SAP_DBS_1x1: STA & LL_LT_SAP connection in DBS using 1x1
+ * @PM_STA_24_LL_LT_SAP_DBS_2x2: STA & LL_LT_SAP connection in DBS using 2x2
+ * @PM_STA_5_LL_LT_SAP_MCC_1x1: STA & LL_LT_SAP connection in MCC on 5 GHz
+ * using 1x1
+ * @PM_STA_5_LL_LT_SAP_MCC_2x2: STA & LL_LT_SAP connection in MCC on 5 GHz
+ * using 2x2
+ * @PM_STA_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1: STA on 5G low & LL_LT_SAP on 5G high
+ * connection in SBS using 1x1
+ * @PM_STA_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2: STA on 5G low & LL_LT_SAP on 5G high
+ * connection in SBS using 2x2
+ * @PM_STA_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1: STA on 5G high & LL_LT_SAP on 5G low
+ * connection in SBS using 1x1
+ * @PM_STA_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2: STA on 5G high & LL_LT_SAP on 5G low
+ * connection in SBS using 1x1
+ * @PM_SAP_24_LL_LT_SAP_DBS_1x1: SAP & LL_LT_SAP connection in DBS using 1x1
+ * @PM_SAP_24_LL_LT_SAP_DBS_2x2: SAP & LL_LT_SAP connection in DBS using 2x2
+ * @PM_SAP_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1: SAP on 5G low & LL_LT_SAP on 5G high
+ * connection in SBS using 1x1
+ * @PM_SAP_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2: SAP on 5G low & LL_LT_SAP on 5G high
+ * connection in SBS using 2x2
+ * @PM_SAP_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1: SAP on 5G high & LL_LT_SAP on 5G low
+ * connection in SBS using 1x1
+ * @PM_SAP_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2: SAP on 5G high & LL_LT_SAP on 5G low
+ * connection in SBS using 1x1
+ * @PM_P2P_GO_24_LL_LT_SAP_DBS_1x1: P2P GO & LL_LT_SAP connection in DBS
+ * using 1x1
+ * @PM_P2P_GO_24_LL_LT_SAP_DBS_2x2: P2P GO & LL_LT_SAP connection in DBS
+ * using 2x2
+ * @PM_P2P_GO_5_LL_LT_SAP_MCC_1x1: GO & LL_LT_SAP connection in MCC using 1x1
+ * @PM_P2P_GO_5_LL_LT_SAP_MCC_2x2: GO & LL_LT_SAP connection in MCC using 2x2
+ * @PM_P2P_GO_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1: GO on 5G low & LL_LT_SAP on 5G
+ * high connection in SBS using 1x1
+ * @PM_P2P_GO_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2: GO on 5G low & LL_LT_SAP on 5G
+ * high connection in SBS using 2x2
+ * @PM_P2P_GO_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1: GO on 5G high & LL_LT_SAP on 5G
+ * low connection in SBS using 1x1
+ * @PM_P2P_GO_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2: GO on 5G high & LL_LT_SAP on 5G
+ * low connection in SBS using 2x2
+ * @PM_P2P_CLI_24_LL_LT_SAP_DBS_1x1: CLI & LL_LT_SAP connection in DBS using 1x1
+ * @PM_P2P_CLI_24_LL_LT_SAP_DBS_2x2: CLI & LL_LT_SAP connection in DBS using 2x2
+ * @PM_P2P_CLI_5_LL_LT_SAP_MCC_1x1: CLI & LL_LT_SAP connection in MCC on 5 GHz
+ * using 1x1
+ * @PM_P2P_CLI_5_LL_LT_SAP_MCC_2x2: CLI & LL_LT_SAP connection in MCC on 5 GHz
+ * using 2x2
+ * @PM_P2P_CLI_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1: CLI on 5G low & LL_LT_SAP on 5G
+ * high connection in SBS using 1x1
+ * @PM_P2P_CLI_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2: CLI on 5G low & LL_LT_SAP on 5G
+ * high connection in SBS using 2x2
+ * @PM_P2P_CLI_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1: CLI on 5G high & LL_LT_SAP on 5G
+ * low connection in SBS using 1x1
+ * @PM_P2P_CLI_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2: CLI on 5G high & LL_LT_SAP on 5G
+ * low connection in SBS using 2x2
  * @PM_MAX_TWO_CONNECTION_MODE: Max enumeration
  *
  * These are generic IDs that identify the various roles in the
@@ -976,6 +1125,52 @@ enum policy_mgr_two_connection_mode {
 	PM_NAN_DISC_NDI_MCC_24_2x2,
 	PM_NAN_DISC_NDI_DBS_1x1,
 	PM_NAN_DISC_NDI_DBS_2x2,
+	PM_NAN_P2P,
+	PM_NAN_DISC_P2P_SCC_24_1x1 = PM_NAN_P2P,
+	PM_NAN_DISC_P2P_SCC_24_2x2 = PM_NAN_P2P,
+	PM_NAN_DISC_P2P_MCC_24_1x1 = PM_NAN_P2P,
+	PM_NAN_DISC_P2P_MCC_24_2x2 = PM_NAN_P2P,
+	PM_NAN_DISC_P2P_DBS_1x1 = PM_NAN_P2P,
+	PM_NAN_DISC_P2P_DBS_2x2 = PM_NAN_P2P,
+	PM_STA_24_LL_LT_SAP_DBS_1x1,
+	PM_STA_24_LL_LT_SAP_DBS_2x2 = PM_STA_24_LL_LT_SAP_DBS_1x1,
+	PM_STA_5_LL_LT_SAP_MCC_1x1,
+	PM_STA_5_LL_LT_SAP_MCC_2x2 = PM_STA_5_LL_LT_SAP_MCC_1x1,
+	PM_STA_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_STA_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2 =
+					PM_STA_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_STA_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_STA_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2 =
+					PM_STA_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_SAP_24_LL_LT_SAP_DBS_1x1,
+	PM_SAP_24_LL_LT_SAP_DBS_2x2 = PM_SAP_24_LL_LT_SAP_DBS_1x1,
+	PM_SAP_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_SAP_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2 =
+					PM_SAP_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_SAP_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_SAP_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2 =
+					PM_SAP_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_P2P_GO_24_LL_LT_SAP_DBS_1x1,
+	PM_P2P_GO_24_LL_LT_SAP_DBS_2x2 = PM_P2P_GO_24_LL_LT_SAP_DBS_1x1,
+	PM_P2P_GO_5_LL_LT_SAP_MCC_1x1,
+	PM_P2P_GO_5_LL_LT_SAP_MCC_2x2 = PM_P2P_GO_5_LL_LT_SAP_MCC_1x1,
+	PM_P2P_GO_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_P2P_GO_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2 =
+				PM_P2P_GO_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_P2P_GO_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_P2P_GO_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2 =
+				PM_P2P_GO_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_P2P_CLI_24_LL_LT_SAP_DBS_1x1,
+	PM_P2P_CLI_24_LL_LT_SAP_DBS_2x2 = PM_P2P_CLI_24_LL_LT_SAP_DBS_1x1,
+	PM_P2P_CLI_5_LL_LT_SAP_MCC_1x1,
+	PM_P2P_CLI_5_LL_LT_SAP_MCC_2x2 = PM_P2P_CLI_5_LL_LT_SAP_MCC_1x1,
+	PM_P2P_CLI_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_P2P_CLI_5_LOW_LL_LT_SAP_5_HIGH_SBS_2x2 =
+				PM_P2P_CLI_5_LOW_LL_LT_SAP_5_HIGH_SBS_1x1,
+	PM_P2P_CLI_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+	PM_P2P_CLI_5_HIGH_LL_LT_SAP_5_LOW_SBS_2x2 =
+				PM_P2P_CLI_5_HIGH_LL_LT_SAP_5_LOW_SBS_1x1,
+
 	PM_MAX_TWO_CONNECTION_MODE
 };
 
@@ -998,22 +1193,45 @@ enum policy_mgr_two_connection_mode {
  * STA on 2.4 GHZ
  * @PM_STA_STA_5_SAP_24_DBS: STA & STA connection on 5 GHZ SCC/MCC,
  * SAP on 2.4 GHZ
+ * @PM_NAN_24_SCC_MCC_PLUS_5_DBS: Generic index for NAN with other mode
+ *				  in SCC/MCC and another mode in DBS
+ * @PM_NAN_DISC_SAP_SCC_24_NDI_5_DBS: NAN & SAP SCC in 2.4 GHz with NDI in 5 GHz
+ * @PM_NAN_DISC_NDI_SCC_24_SAP_5_DBS: NAN & NDI SCC in 2.4 GHz with SAP in 5 GHz
+ * @PM_SAP_NDI_SCC_5_NAN_DISC_24_DBS: NAN in 2.4 GHz with NDI & SAP in 5 GHz
+ * @PM_NAN_NDI_STA_DBS: Generic index for NAN & NDI with other mode in DBS
+ * @PM_NAN_DISC_STA_SCC_MCC_24_NDI_5_DBS: NAN & STA SCC/MCC in 2.4 GHz with NDI
+ *					  in 5 GHz
+ * @PM_NAN_DISC_NDI_STA_SCC_5_DBS: NAN in 2.4 GHz with NDI & STA SCC in 5 GHz
+ * @PM_NAN_DISC_NDI_STA_MCC_5_DBS: NAN in 2.4 GHz with NDI & STA MCC in 5 GHz
+ * @PM_NAN_DISC_NDI_24_STA_5_DBS: NAN & NDI in 2.4 GHz with STA in 5 GHz
+ * @PM_NAN_DISC_NDI_STA_24_SMM: NAN, NDI & STA in 2.4 GHz
+ * @PM_NAN_DISC_NDI_STA_MCC_24_DBS: NAN, NDI & STA in 2.4 GHz
+ * @PM_NAN_NDI_NDI_DBS: Generic index for NAN & NDI with other mode in DBS
+ * @PM_NAN_DISC_NDI_24_NDI_5_DBS: NAN & NDI in 2.4 GHz and another NDI in 5 GHz
+ * @PM_NAN_DISC_NDI_NDI_5_DBS: NAN in 2.4 GHz and both NDIs are in 5 GHz
+ * @PM_NAN_DISC_NDI_NDI_24_SMM: NAN and both NDIs in 2.4 GHz
+ * @PM_NAN_NDI_ML_STA_SCC_MCC_DBS: Generic index for NAN+NDI+ML-STA
+ * @PM_NAN_DISC_STA_24_STA_5_DBS: NAN & STA in 2.4 GHz and another STA in 5 GHz
+ * @PM_NAN_DISC_STA_STA_SCC_5_DBS: NAN in 2.4 GHz and both STAs are SCC in 5 GHz
+ * @PM_NAN_DISC_STA_STA_MCC_5_DBS: NAN in 2.4 GHz and both STAs are MCC in 5 GHz
+ * @PM_NAN_NDI_P2P_SCC_MCC_DBS: Generic index for NAN & NDI with P2P in DBS
+ * @PM_NAN_DISC_NDI_5_P2P_24_DBS: NAN & P2P are in 2.4 GHz and NDI is in 5 GHz
+ * @PM_NAN_DISC_NDI_24_P2P_5_DBS: NAN & NDI are in 2.4 GHz and P2P is in 5 GHz
+ * @PM_NAN_DISC_NDI_P2P_SCC_MCC_5_DBS: NAN in 2.4 GHz and NDI & P2P is in 5 GHz
+ * @PM_NAN_DISC_NDI_P2P_SCC_MCC_24_DBS: NAN, NDI and P2P are in 2.4 GHz
  * @PM_NAN_DISC_SAP_SCC_24_NDI_5_DBS: NAN_DISC & SAP connection on 2.4 Ghz SCC,
  * NDI/NDP on 5 G
  * @PM_NAN_DISC_NDI_SCC_24_SAP_5_DBS: NAN_DISC & NDI/NDP connection on 2.4 Ghz
  * SCC, SAP on 5 G
  * @PM_SAP_NDI_SCC_5_NAN_DISC_24_DBS: SAP & NDI/NDP connection on 5 Ghz,
  * NAN_DISC on 24 Ghz
- * @PM_NAN_DISC_STA_24_NDI_5_DBS: STA and NAN Disc on 2.4Ghz and NDI on 5ghz DBS
  * @PM_NAN_DISC_NDI_24_STA_5_DBS: NDI and NAN Disc on 2.4Ghz and STA on 5ghz DBS
- * @PM_STA_NDI_5_NAN_DISC_24_DBS: STA, NDI on 5ghz and NAN Disc on 2.4Ghz DBS
- * @PM_STA_NDI_NAN_DISC_24_SMM: STA, NDI, NAN Disc all on 2.4ghz SMM
  * @PM_NAN_DISC_NDI_24_NDI_5_DBS: NDI and NAN Disc on 2.4Ghz and second NDI in
  * 5ghz DBS
- * @PM_NDI_NDI_5_NAN_DISC_24_DBS: Both NDI on 5ghz and NAN Disc on 2.4Ghz DBS
- * @PM_NDI_NDI_NAN_DISC_24_SMM: Both NDI, NAN Disc on 2.4ghz SMM
- * @PM_SAP_SAP_SCC_24_SAP_5_DBS: Both SAP on 2.4Ghz and another SAP on 5Ghz DBS
- * @PM_SAP_SAP_SCC_5_SAP_24_DBS: Both SAP on 5Ghz and another SAP on 2.4Ghz DBS
+ * @PM_SAP_SAP_SAP_SCC_24_SMM: AP+AP+AP on 2.4Ghz in SMM mode
+ * @PM_SAP_SAP_SAP_SCC_5_SMM: AP+AP+AP on 5Ghz in SMM mode
+ * @PM_SAP_SAP_SCC_5_STA_24_DBS: Both SAP on 5Ghz and another STA on 2.4Ghz DBS
+ * @PM_SAP_SAP_STA_SCC_5_DBS: Both SAP on 5Ghz and another STA on 5Ghz DBS
  * @PM_STA_STA_5_NAN_DISC_24_DBS: Both STA on 5Ghz and NAN Disc on 2.4Ghz DBS
  * @PM_NAN_DISC_24_STA_STA_5_DBS: NAN Disc on 2.4Ghz and both STA on 5Ghz DBS
  * @PM_STA_STA_24_NAN_DISC_24_SMM: Both STA on 2.4Ghz and NAN Disc on 2.4Ghz SMM
@@ -1034,6 +1252,10 @@ enum policy_mgr_two_connection_mode {
  * and second STA on 5Ghz SMM
  * @PM_NAN_DISC_24_STA_24_STA_5_DBS: NAN Disc on 2.4Ghz and first STA on 2.4Ghz
  * and second STA on 5Ghz DBS
+ * @PM_NAN_DISC_24_STA_SAP_SCC_MCC_DBS: NAN Disc on 2.4Ghz and STA,
+ * SAP SCC MCC on DBS
+ * @PM_NAN_DISC_24_STA_STA_SCC_MCC_DBS: NAN Disc on 2.4Ghz and STA,
+ * STA SCC MCC on DBS
  * @PM_MCC_SCC_5G_HIGH_PLUS_5_LOW_SBS: ANY 2 link on 5 GHZ high mac
  * and one link on 5 GHZ low doing SBS
  * @PM_STA_24_SAP_5_HIGH_MCC_STA_5_LOW_SBS : First STA on 2.4 GHZ & SAP on high
@@ -1075,6 +1297,7 @@ enum policy_mgr_two_connection_mode {
  * @PM_MAX_THREE_CONNECTION_MODE: Maximum enumeration
  */
 enum policy_mgr_three_connection_mode {
+	/* STA + SAP + SAP */
 	PM_STA_SAP_SCC_24_SAP_5_DBS,
 	PM_STA_SAP_SCC_5_SAP_24_DBS,
 	PM_24_SCC_MCC_PLUS_5_DBS,
@@ -1082,18 +1305,50 @@ enum policy_mgr_three_connection_mode {
 	PM_5_SCC_MCC_PLUS_24_DBS,
 	PM_STA_SAP_5_STA_24_DBS = PM_5_SCC_MCC_PLUS_24_DBS,
 	PM_STA_STA_5_SAP_24_DBS = PM_5_SCC_MCC_PLUS_24_DBS,
+
+	/*
+	 * 3-home channels case can be allowed from host when NDP is one
+	 * of them as firmware takes care of it by internally disabling NDP to
+	 * avoid 3-home channel case
+	 */
+	PM_NAN_24_SCC_MCC_PLUS_5_DBS,
+	/* NAN + SAP */
 	PM_NAN_DISC_SAP_SCC_24_NDI_5_DBS,
 	PM_NAN_DISC_NDI_SCC_24_SAP_5_DBS,
 	PM_SAP_NDI_SCC_5_NAN_DISC_24_DBS,
-	PM_NAN_DISC_STA_24_NDI_5_DBS,
-	PM_NAN_DISC_NDI_24_STA_5_DBS,
-	PM_STA_NDI_5_NAN_DISC_24_DBS,
-	PM_STA_NDI_NAN_DISC_24_SMM,
-	PM_NAN_DISC_NDI_24_NDI_5_DBS,
-	PM_NDI_NDI_5_NAN_DISC_24_DBS,
-	PM_NDI_NDI_NAN_DISC_24_SMM,
-	PM_SAP_SAP_SCC_24_SAP_5_DBS,
-	PM_SAP_SAP_SCC_5_SAP_24_DBS,
+
+	/* NAN + STA */
+	PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_STA_SCC_MCC_24_NDI_5_DBS = PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_NDI_STA_SCC_5_DBS = PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_NDI_STA_MCC_5_DBS = PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_NDI_24_STA_5_DBS = PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_NDI_STA_24_SMM = PM_NAN_NDI_STA_DBS,
+	PM_NAN_DISC_NDI_STA_MCC_24_DBS = PM_NAN_NDI_STA_DBS,
+
+	/* NAN + 2 NDI */
+	PM_NAN_NDI_NDI_DBS,
+	PM_NAN_DISC_NDI_24_NDI_5_DBS = PM_NAN_NDI_NDI_DBS,
+	PM_NAN_DISC_NDI_NDI_5_DBS = PM_NAN_NDI_NDI_DBS,
+	PM_NAN_DISC_NDI_NDI_24_SMM = PM_NAN_NDI_NDI_DBS,
+
+	/* NAN + ML-STA */
+	PM_NAN_NDI_ML_STA_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_24_STA_5_DBS = PM_NAN_NDI_ML_STA_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_STA_SCC_5_DBS = PM_NAN_NDI_ML_STA_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_STA_MCC_5_DBS = PM_NAN_NDI_ML_STA_SCC_MCC_DBS,
+
+	/* NAN + P2P */
+	PM_NAN_NDI_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_NDI_5_P2P_24_DBS = PM_NAN_NDI_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_NDI_24_P2P_5_DBS = PM_NAN_NDI_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_NDI_P2P_SCC_MCC_5_DBS = PM_NAN_NDI_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_NDI_P2P_SCC_MCC_24_DBS = PM_NAN_NDI_P2P_SCC_MCC_DBS,
+
+	PM_SAP_SAP_SAP_SCC_24_SMM,
+	PM_SAP_SAP_SAP_SCC_5_SMM,
+	PM_SAP_SAP_SCC_5_STA_24_DBS,
+	PM_SAP_SAP_STA_SCC_5_DBS,
 	PM_STA_STA_5_NAN_DISC_24_DBS,
 	PM_NAN_DISC_24_STA_STA_5_DBS,
 	PM_STA_STA_24_NAN_DISC_24_SMM,
@@ -1106,6 +1361,8 @@ enum policy_mgr_three_connection_mode {
 	PM_NAN_DISC_24_STA_5_STA_24_DBS,
 	PM_NAN_DISC_24_STA_24_STA_5_SMM,
 	PM_NAN_DISC_24_STA_24_STA_5_DBS,
+	PM_NAN_DISC_24_STA_SAP_SCC_MCC_DBS,
+	PM_NAN_DISC_24_STA_STA_SCC_MCC_DBS,
 	PM_MCC_SCC_5G_HIGH_PLUS_5_LOW_SBS,
 	PM_STA_24_SAP_5_HIGH_MCC_STA_5_LOW_SBS =
 		PM_MCC_SCC_5G_HIGH_PLUS_5_LOW_SBS,
@@ -1142,6 +1399,45 @@ enum policy_mgr_three_connection_mode {
 	PM_MAX_THREE_CONNECTION_MODE,
 };
 #endif
+
+/**
+ * enum policy_mgr_four_connection_mode - Combination of first four
+ * connection type, concurrency state, band used.
+ * @PM_NAN_DISC_24_STA_STA_MCC_SCC_SAP_SCC_MCC_DBS: NAN on 2GHz, both STA SCC
+ * or MCC on 2GHz/5GHz and SAP SCC on 2GHz
+ * @PM_NAN_ML_STA_P2P_SCC_MCC_DBS: Generic PCL index for NAN+ML-STA+P2P
+ * @PM_NAN_ML_STA_P2P_SCC_MCC_DBS: Generic PCL index for NAN+ML-STA+P2P
+ * @PM_NAN_DISC_STA_24_STA_P2P_SCC_5_DBS: NAN & STA on 2GHz and STA & P2P SCC
+ *					  on 5GHz
+ * @PM_NAN_DISC_STA_24_STA_P2P_MCC_5_DBS: NAN & STA on 2GHz and STA & P2P MCC
+ *					  on 5GHz
+ * @PM_NAN_DISC_STA_P2P_24_SCC_STA_5_DBS: NAN, STA & P2P SCC on 2GHz and STA
+ *					  on 5GHz
+ * @PM_NAN_DISC_STA_P2P_24_MCC_STA_5_DBS: NAN, STA & P2P MCC on 2GHz and STA
+ *					  on 5GHz
+ * @PM_NAN_DISC_STA_STA_5_MCC_P2P_24_DBS: NAN & P2P on 2GHz and ML-STA on 5 GHz
+ * @PM_NAN_DISC_STA_STA_P2P_5_SCC_MCC_DBS: NAN on 2GHz and ML-STA & P2P on 5GHz
+ * @PM_NAN_DISC_24_NDI_STA_STA_SCC_MCC_DBS : NAN on 2GHz, NDI on 2GHz/5GHz
+ * and both STA SCC or MCC on 2GHz/5GHz,
+ * @PM_MAX_FOUR_CONNECTION_MODE: Maximum enumeration
+ */
+enum policy_mgr_four_connection_mode {
+	/* NAN disc + ML-STA + SAP */
+	PM_NAN_DISC_24_STA_STA_MCC_SCC_SAP_SCC_MCC_DBS,
+
+	/* NAN disc + ML-STA + P2P */
+	PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_24_STA_P2P_SCC_5_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_24_STA_P2P_MCC_5_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_P2P_24_SCC_STA_5_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_P2P_24_MCC_STA_5_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_STA_5_MCC_P2P_24_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+	PM_NAN_DISC_STA_STA_P2P_5_SCC_MCC_DBS = PM_NAN_ML_STA_P2P_SCC_MCC_DBS,
+
+	/* NAN disc + NDI + ML-STA */
+	PM_NAN_DISC_24_NDI_STA_STA_SCC_MCC_DBS,
+	PM_MAX_FOUR_CONNECTION_MODE,
+};
 
 /**
  * enum policy_mgr_conc_next_action - actions to be taken on old
@@ -1307,6 +1603,36 @@ enum set_hw_mode_status {
 	SET_HW_MODE_STATUS_ALREADY,
 };
 
+/**
+ * enum policy_mgr_curr_hw_mode: Policy mgr curr hw mode
+ * @POLICY_MGR_HW_MODE_SINGLE: Hw mode none
+ * @POLICY_MGR_HW_MODE_DBS: HW mode is DBS
+ * @POLICY_MGR_HW_MODE_SBS_PASSIVE: HW mode is SBS passive
+ * @POLICY_MGR_HW_MODE_SBS: HW mode is SBS
+ * @POLICY_MGR_HW_MODE_DBS_SBS: HW mode DBS SBS
+ * @POLICY_MGR_HW_MODE_DBS_OR_SBS: HW mode DBS or SBS
+ * @POLICY_MGR_HW_MODE_DBS_2G_5G: HW mode DBS 2G/5G
+ * @POLICY_MGR_HW_MODE_2G_PHYB: Hw mode 2G phyb
+ * @POLICY_MGR_HW_MODE_EMLSR: HW mode is EMLSR
+ * @POLICY_MGR_HW_MODE_AUX_EMLSR_SINGLE: Hw mode Aux EMLSR single
+ * @POLICY_MGR_HW_MODE_AUX_EMLSR_SPLIT: Hw mode Aux EMLSR split
+ * @POLICY_MGR_HW_MODE_INVALID: Invalid Hw mode
+ */
+enum policy_mgr_curr_hw_mode {
+	POLICY_MGR_HW_MODE_SINGLE = 0,
+	POLICY_MGR_HW_MODE_DBS = 1,
+	POLICY_MGR_HW_MODE_SBS_PASSIVE = 2,
+	POLICY_MGR_HW_MODE_SBS = 3,
+	POLICY_MGR_HW_MODE_DBS_SBS = 4,
+	POLICY_MGR_HW_MODE_DBS_OR_SBS = 5,
+	POLICY_MGR_HW_MODE_DBS_2G_5G = 6,
+	POLICY_MGR_HW_MODE_2G_PHYB = 7,
+	POLICY_MGR_HW_MODE_EMLSR = 8,
+	POLICY_MGR_HW_MODE_AUX_EMLSR_SINGLE = 9,
+	POLICY_MGR_HW_MODE_AUX_EMLSR_SPLIT = 10,
+	POLICY_MGR_HW_MODE_INVALID = 255
+};
+
 typedef void (*dual_mac_cb)(enum set_hw_mode_status status,
 		uint32_t scan_config,
 		uint32_t fw_mode_config);
@@ -1375,17 +1701,10 @@ enum conn_6ghz_flag {
 	CONN_6GHZ_FLAG_NO_LEGACY_CLIENT = 0x0008,
 };
 
-#ifdef WLAN_FEATURE_AFC_DCS_SKIP_ACS_RANGE
-/* To support DCS to 6 Ghz channel when AFC response receive */
-#define CONN_6GHZ_CAPABLE (CONN_6GHZ_FLAG_VALID | \
-			     CONN_6GHZ_FLAG_SECURITY_ALLOWED | \
-			     CONN_6GHZ_FLAG_NO_LEGACY_CLIENT)
-#else
 #define CONN_6GHZ_CAPABLE (CONN_6GHZ_FLAG_VALID | \
 			     CONN_6GHZ_FLAG_ACS_OR_USR_ALLOWED | \
 			     CONN_6GHZ_FLAG_SECURITY_ALLOWED | \
 			     CONN_6GHZ_FLAG_NO_LEGACY_CLIENT)
-#endif
 
 /**
  * struct policy_mgr_conc_connection_info - information of all existing
@@ -1468,11 +1787,13 @@ struct policy_mgr_hw_mode_params {
  * @scan_config: Scan configuration
  * @fw_mode_config: FW mode configuration
  * @set_dual_mac_cb: Callback function to be executed on response to the command
+ * @vdev_id: vdev id to serialize the mac config cmd
  */
 struct policy_mgr_dual_mac_config {
 	uint32_t scan_config;
 	uint32_t fw_mode_config;
 	dual_mac_cb set_dual_mac_cb;
+	uint8_t vdev_id;
 };
 
 /**
@@ -1536,6 +1857,7 @@ struct policy_mgr_pcl_chan_weights {
  * used by policy manager
  * @type: type
  * @sub_type: sub type
+ * @vdev_id: vdev id
  * @mhz: channel frequency in MHz
  * @chan_width: channel bandwidth
  * @mac_id: the mac on which vdev is on
@@ -1544,6 +1866,7 @@ struct policy_mgr_pcl_chan_weights {
 struct policy_mgr_vdev_entry_info {
 	uint32_t type;
 	uint32_t sub_type;
+	uint8_t vdev_id;
 	uint32_t mhz;
 	uint32_t chan_width;
 	uint32_t mac_id;
@@ -1706,6 +2029,24 @@ struct connection_info {
 };
 
 /**
+ * struct defer_csa_request - deferred CSA request
+ * @target_chan_freq: target channel frequency
+ * @vdev_id: vdev id
+ * @csa_reason: csa reason
+ * @curr_ch_freq: current home channel frequency
+ * @target_bw: bandwidth
+ * @forced: forced CSA
+ */
+struct defer_csa_request {
+	uint32_t target_chan_freq;
+	uint8_t vdev_id;
+	enum sap_csa_reason_code csa_reason;
+	uint32_t curr_ch_freq;
+	enum phy_ch_width target_bw;
+	bool forced;
+};
+
+/**
  * struct go_plus_go_force_scc - structure to hold p2p go
  * params for forcescc restart
  *
@@ -1737,6 +2078,7 @@ struct sap_plus_go_force_scc {
  * struct sta_ap_intf_check_work_ctx - sta_ap_intf_check_work
  * related info
  * @psoc: pointer to PSOC object information
+ * @defer_csa_request: deferred csa request
  * @go_plus_go_force_scc: structure to hold params of
  *			  curr and first p2p go ctx
  * @sap_plus_go_force_scc: sap p2p force SCC ctx
@@ -1744,6 +2086,7 @@ struct sap_plus_go_force_scc {
  */
 struct sta_ap_intf_check_work_ctx {
 	struct wlan_objmgr_psoc *psoc;
+	struct defer_csa_request defer_csa_request;
 	struct go_plus_go_force_scc go_plus_go_force_scc;
 	struct sap_plus_go_force_scc sap_plus_go_force_scc;
 	uint8_t nan_force_scc_in_progress;
@@ -1784,6 +2127,18 @@ enum indoor_conc_update_type {
 	DISCONNECT_WITH_CONCURRENCY,
 	SWITCH_WITHOUT_CONCURRENCY,
 	SWITCH_WITH_CONCURRENCY,
+};
+
+/**
+ * struct weighed_pcl: Preferred channel info
+ * @freq: Channel frequency
+ * @weight: Weightage of the channel
+ * @flag: Validity of the channel in p2p negotiation
+ */
+struct weighed_pcl {
+	uint32_t freq;
+	uint32_t weight;
+	uint32_t flag;
 };
 
 #endif /* __WLAN_POLICY_MGR_PUBLIC_STRUCT_H */

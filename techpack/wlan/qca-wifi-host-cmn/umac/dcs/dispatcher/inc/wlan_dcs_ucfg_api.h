@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -29,14 +29,12 @@
 /**
  * typedef dcs_callback() - DCS callback
  * @psoc: Pointer to psoc
- * @mac_id: mac id
- * @interference_type: interference type
+ * @param: DCS params
  * @arg: list of arguments
  */
 typedef void (*dcs_callback)(
 		struct wlan_objmgr_psoc *psoc,
-		uint8_t mac_id,
-		uint8_t interference_type,
+		struct dcs_param *param,
 		void *arg);
 
 /**
@@ -96,6 +94,17 @@ void ucfg_dcs_register_user_cb(struct wlan_objmgr_psoc *psoc,
 				      int status));
 
 /**
+ * wlan_dcs_get_trnsprt_switch_rjt_th_cu() - get unused cu threshold
+ * @psoc: psoc pointer
+ * @pdev_id: pdev_id
+ *
+ * Return: cu threshold
+ */
+uint32_t
+wlan_dcs_get_trnsprt_switch_rjt_th_cu(struct wlan_objmgr_psoc *psoc,
+				      uint8_t pdev_id);
+
+/**
  * ucfg_dcs_register_awgn_cb() - API to register dcs awgn callback
  * @psoc: pointer to psoc object
  * @cb: dcs switch channel callback to be registered
@@ -131,6 +140,38 @@ QDF_STATUS
 ucfg_wlan_dcs_cmd(struct wlan_objmgr_psoc *psoc,
 		  uint32_t mac_id,
 		  bool is_host_pdev_id);
+
+#ifdef WLAN_FEATURE_VDEV_DCS
+/**
+ * ucfg_wlan_dcs_cmd_for_vdev(): API to send dcs command for given vdev
+ * @psoc: pointer to psoc object
+ * @mac_id: mac id
+ * @vdev_id: vdev id
+ *
+ * This function gets called to send dcs command for given vdev
+ *
+ * Return: QDF_STATUS_SUCCESS on success, QDF_STATUS_E_** on error
+ */
+QDF_STATUS
+ucfg_wlan_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
+			   uint8_t vdev_id);
+#else
+static inline QDF_STATUS
+ucfg_wlan_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
+			   uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
+/**
+ * ucfg_is_vdev_level_dcs_supported()- API to check whether vdev level
+ * DCS is supported or not
+ * @psoc: pointer to psoc object
+ *
+ * Return: True/False
+ */
+bool ucfg_is_vdev_level_dcs_supported(struct wlan_objmgr_psoc *psoc);
 
 /**
  * ucfg_config_dcs_enable() - API to config dcs enable
@@ -228,6 +269,19 @@ void ucfg_dcs_set_user_request(struct wlan_objmgr_psoc *psoc, uint8_t mac_id,
  */
 QDF_STATUS ucfg_dcs_get_ch_util(struct wlan_objmgr_psoc *psoc, uint8_t mac_id,
 				struct wlan_host_dcs_ch_util_stats *dcs_stats);
+
+/**
+ * ucfg_dcs_trigger_dcs() - ucfg wrapper to trigger DCS
+ * @psoc: psoc Pointer
+ * @pdev_id: pdev id
+ * @vdev_id: vdev id
+ * @dcs_type: DCS type
+ *
+ * Return: void
+ */
+void
+ucfg_dcs_trigger_dcs(struct wlan_objmgr_psoc *psoc, uint8_t pdev_id,
+		     uint8_t vdev_id, enum wlan_host_dcs_type dcs_type);
 /**
  * ucfg_dcs_switch_chan() - switch channel for vdev
  * @vdev: vdev ptr
@@ -254,9 +308,23 @@ ucfg_dcs_register_user_cb(struct wlan_objmgr_psoc *psoc,
 {
 }
 
+static inline uint32_t
+wlan_dcs_get_trnsprt_switch_rjt_th_cu(struct wlan_objmgr_psoc *psoc,
+				      uint8_t pdev_id)
+{
+	return 0;
+}
+
 static inline QDF_STATUS
 ucfg_wlan_dcs_cmd(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
 		  bool is_host_pdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_wlan_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
+			   uint8_t vdev_id)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -268,7 +336,8 @@ ucfg_config_dcs_enable(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
 }
 
 static inline void
-ucfg_config_dcs_disable(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
+ucfg_config_dcs_disable(struct wlan_objmgr_psoc *psoc,
+			uint32_t mac_id,
 			uint8_t interference_type)
 {
 }
@@ -315,5 +384,16 @@ ucfg_dcs_switch_chan(struct wlan_objmgr_vdev *vdev, qdf_freq_t tgt_freq,
 	return QDF_STATUS_SUCCESS;
 }
 
+static inline void
+ucfg_dcs_trigger_dcs(struct wlan_objmgr_psoc *psoc, uint8_t pdev_id,
+		     uint8_t vdev_id, enum wlan_host_dcs_type dcs_type)
+{
+}
+
+static inline
+bool ucfg_is_vdev_level_dcs_supported(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
 #endif
 #endif /* _WLAN_DCS_UCFG_API_H_ */

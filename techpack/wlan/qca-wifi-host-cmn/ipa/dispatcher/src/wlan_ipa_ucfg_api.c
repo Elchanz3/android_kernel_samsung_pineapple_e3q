@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -74,14 +74,6 @@ bool ucfg_ipa_is_vlan_enabled(void)
 
 qdf_export_symbol(ucfg_ipa_is_vlan_enabled);
 
-void ucfg_ipa_set_pdev_id(struct wlan_objmgr_psoc *psoc,
-			  uint8_t pdev_id)
-{
-	return ipa_set_pdev_id(psoc, pdev_id);
-}
-
-qdf_export_symbol(ucfg_ipa_set_pdev_id);
-
 void ucfg_ipa_set_dp_handle(struct wlan_objmgr_psoc *psoc,
 				     void *dp_soc)
 {
@@ -111,6 +103,24 @@ void ucfg_ipa_uc_stat(struct wlan_objmgr_pdev *pdev)
 }
 
 qdf_export_symbol(ucfg_ipa_uc_stat);
+
+void ucfg_ipa_set_opt_dp_ctrl_flt(
+			struct wlan_objmgr_pdev *pdev,
+			struct ipa_wdi_opt_dpath_flt_add_cb_params *flt)
+{
+	return ipa_set_opt_dp_ctrl_flt(pdev, flt);
+}
+
+qdf_export_symbol(ucfg_ipa_set_opt_dp_ctrl_flt);
+
+void ucfg_ipa_set_opt_dp_ctrl_flt_rm(
+			struct wlan_objmgr_pdev *pdev,
+			struct ipa_wdi_opt_dpath_flt_rem_cb_params *flt)
+{
+	return ipa_set_opt_dp_ctrl_flt_rm(pdev, flt);
+}
+
+qdf_export_symbol(ucfg_ipa_set_opt_dp_ctrl_flt_rm);
 
 void ucfg_ipa_uc_rt_debug_host_dump(struct wlan_objmgr_pdev *pdev)
 {
@@ -224,10 +234,10 @@ QDF_STATUS ucfg_ipa_resume(struct wlan_objmgr_pdev *pdev)
 
 qdf_export_symbol(ucfg_ipa_resume);
 
-QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_pdev *pdev,
+QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_psoc *psoc,
 			       qdf_device_t osdev)
 {
-	return ipa_uc_ol_init(pdev, osdev);
+	return ipa_uc_ol_init(psoc, osdev);
 }
 
 qdf_export_symbol(ucfg_ipa_uc_ol_init);
@@ -273,9 +283,9 @@ int ucfg_ipa_uc_smmu_map(bool map, uint32_t num_buf, qdf_mem_info_t *buf_arr)
 
 qdf_export_symbol(ucfg_ipa_uc_smmu_map);
 
-bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_pdev *pdev)
+bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_psoc *psoc)
 {
-	return ipa_is_fw_wdi_activated(pdev);
+	return ipa_is_fw_wdi_activated(psoc);
 }
 
 qdf_export_symbol(ucfg_ipa_is_fw_wdi_activated);
@@ -303,6 +313,13 @@ void ucfg_ipa_cleanup_dev_iface(struct wlan_objmgr_pdev *pdev,
 }
 
 qdf_export_symbol(ucfg_ipa_cleanup_dev_iface);
+
+void ucfg_ipa_uc_shutdown_opt_dp_ctrl_cleanup(struct wlan_objmgr_pdev *pdev)
+{
+	return ipa_uc_shutdown_opt_dp_ctrl_cleanup(pdev);
+}
+
+qdf_export_symbol(ucfg_ipa_uc_shutdown_opt_dp_ctrl_cleanup);
 
 void ucfg_ipa_uc_ssr_cleanup(struct wlan_objmgr_pdev *pdev)
 {
@@ -385,3 +402,36 @@ void ucfg_ipa_set_perf_level_bw(struct wlan_objmgr_pdev *pdev,
 }
 
 qdf_export_symbol(ucfg_ipa_set_perf_level_bw);
+
+bool ucfg_ipa_is_two_tx_pipes_enabled(void)
+{
+	return ipa_config_is_two_tx_pipes_enabled();
+}
+
+qdf_export_symbol(ucfg_ipa_is_two_tx_pipes_enabled);
+
+void ucfg_ipa_set_shared_smmu_enable(bool flag)
+{
+	ipa_set_shared_smmu_enable(flag);
+}
+
+qdf_export_symbol(ucfg_ipa_set_shared_smmu_enable);
+
+bool ucfg_ipa_get_shared_smmu_enable(void)
+{
+	return ipa_get_shared_smmu_enable();
+}
+
+qdf_export_symbol(ucfg_ipa_get_shared_smmu_enable);
+
+#if defined(QCA_IPA_LL_TX_FLOW_CONTROL)
+void ucfg_ipa_event_wq(struct wlan_objmgr_psoc *psoc,
+		       uint8_t *peer_mac_addr,
+		       struct wlan_objmgr_vdev *vdev,
+		       enum wlan_ipa_wlan_event wlan_event)
+{
+	ipa_event_wq(psoc, peer_mac_addr, vdev, wlan_event);
+}
+
+qdf_export_symbol(ucfg_ipa_event_wq);
+#endif

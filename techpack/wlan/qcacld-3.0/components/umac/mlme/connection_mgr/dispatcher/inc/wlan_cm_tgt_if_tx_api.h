@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -115,6 +115,20 @@ QDF_STATUS wlan_cm_tgt_send_roam_full_scan_6ghz_on_disc(
 					struct wlan_objmgr_psoc *psoc,
 					uint8_t vdev_id,
 					uint8_t roam_full_scan_6ghz_on_disc);
+
+/**
+ * wlan_cm_tgt_send_roam_scan_offload_rssi_params() - Set the RSSI parameters
+ * for roam offload scan
+ * @vdev: Pointer to vdev object
+ * @roam_rssi_params: structure containing parameters for roam offload scan
+ * based on RSSI
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_cm_tgt_send_roam_scan_offload_rssi_params(
+		struct wlan_objmgr_vdev *vdev,
+		struct wlan_roam_offload_scan_rssi_params *roam_rssi_params);
 
 #ifdef FEATURE_RX_LINKSPEED_ROAM_TRIGGER
 /**
@@ -241,6 +255,18 @@ QDF_STATUS wlan_cm_tgt_send_roam_stop_req(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS wlan_cm_tgt_send_roam_update_req(struct wlan_objmgr_psoc *psoc,
 					   uint8_t vdev_id,
 					   struct wlan_roam_update_config *req);
+/**
+ * wlan_cm_tgt_send_roam_freqs()  - Send roam frequencies to firmware
+ * @psoc: psoc pointer
+ * @vdev_id: vdev id
+ * @req: roam frequency list to be sent to fw
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_cm_tgt_send_roam_freqs(struct wlan_objmgr_psoc *psoc,
+			    uint8_t vdev_id,
+			    struct wlan_roam_scan_channel_list *req);
 
 /**
  * wlan_cm_tgt_send_roam_abort_req()  - Send roam abort command to firmware
@@ -275,6 +301,18 @@ QDF_STATUS wlan_cm_tgt_send_roam_per_config(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS wlan_cm_tgt_send_roam_triggers(struct wlan_objmgr_psoc *psoc,
 					  uint8_t vdev_id,
 					  struct wlan_roam_triggers *req);
+
+/**
+ * wlan_cm_tgt_send_idle_params()  - Send idle roam params command to FW
+ * @psoc: psoc pointer
+ * @vdev_id: vdev id
+ * @params: idle roam params
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS wlan_cm_tgt_send_idle_params(struct wlan_objmgr_psoc *psoc,
+					uint8_t vdev_id,
+					struct wlan_roam_idle_params *params);
 
 /**
  * wlan_cm_tgt_send_roam_invoke_req()  - Send roam trigger command to FW

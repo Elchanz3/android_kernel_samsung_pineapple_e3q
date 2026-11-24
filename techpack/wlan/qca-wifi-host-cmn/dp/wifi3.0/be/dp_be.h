@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -20,6 +20,7 @@
 #define __DP_BE_H
 
 #include <dp_types.h>
+#include <dp_tx.h>
 #include <hal_be_tx.h>
 #ifdef WLAN_MLO_MULTI_CHIP
 #include "mlo/dp_mlo.h"
@@ -185,6 +186,7 @@ struct dp_spt_page_desc {
  * @page_desc_base: page Desc buffer base address.
  * @page_pool: DDR pages pool
  * @cc_lock: locks for page acquiring/free
+ * @desc_type: descriptor type for which memory allocated
  */
 struct dp_hw_cookie_conversion_t {
 	uint32_t cmem_offset;
@@ -192,6 +194,7 @@ struct dp_hw_cookie_conversion_t {
 	struct dp_spt_page_desc *page_desc_base;
 	struct qdf_mem_multi_page_t page_pool;
 	qdf_spinlock_t cc_lock;
+	enum qdf_dp_desc_type desc_type;
 };
 
 /**
@@ -250,6 +253,7 @@ struct dp_ppe_vp_search_idx_tbl_entry {
  * @drop_prec_enable: Drop precedance enable
  * @to_fw: To FW exception enable/disable.
  * @use_ppe_int_pri: Use PPE INT_PRI to TID mapping table
+ * @vdev_id: Vdev ID
  */
 struct dp_ppe_vp_profile {
 	bool is_configured;
@@ -259,6 +263,7 @@ struct dp_ppe_vp_profile {
 	uint8_t drop_prec_enable;
 	uint8_t to_fw;
 	uint8_t use_ppe_int_pri;
+	uint8_t vdev_id;
 };
 
 /**
@@ -272,6 +277,7 @@ struct dp_ppe_vp_profile {
  * @elem_count: Number of descriptors in the pool
  * @num_free: Number of free descriptors
  * @lock: Lock for descriptor allocation/free from/to the pool
+ * @comp: Tx completion status structure
  */
 struct dp_ppeds_tx_desc_pool_s {
 	uint16_t elem_size;
@@ -283,6 +289,9 @@ struct dp_ppeds_tx_desc_pool_s {
 	uint16_t elem_count;
 	uint32_t num_free;
 	qdf_spinlock_t lock;
+#ifdef QCA_DP_OPTIMIZED_TX_DESC
+	struct hal_tx_desc_comp_s *comp;
+#endif
 };
 #endif
 
@@ -367,6 +376,9 @@ struct dp_soc_be {
 	uint8_t num_ppe_vp_entries;
 	uint8_t num_ppe_vp_search_idx_entries;
 	uint8_t num_ppe_vp_profiles;
+	uint32_t dp_ppeds_node_id;
+	qdf_atomic_t borrow_count;
+	int64_t borrow_limit;
 	char irq_name[DP_PPE_INTR_MAX][DP_PPE_INTR_STRNG_LEN];
 	struct {
 		struct {
@@ -441,10 +453,11 @@ struct dp_vdev_be {
 	uint8_t vdev_id_check_en;
 #ifdef WLAN_MLO_MULTI_CHIP
 	struct cdp_vdev_stats mlo_stats;
-#ifdef WLAN_FEATURE_11BE_MLO
-#ifdef WLAN_MCAST_MLO
-	bool mcast_primary;
 #endif
+#ifdef WLAN_FEATURE_11BE_MLO
+#if (defined(WLAN_MLO_MULTI_CHIP) && defined(WLAN_MCAST_MLO)) || \
+	defined(WLAN_MCAST_MLO_SAP)
+	bool mcast_primary;
 #endif
 #endif
 #ifdef WLAN_FEATURE_11BE_MLO
@@ -464,6 +477,7 @@ struct dp_vdev_be {
  * @is_bridge_vdev_present: flag to check if bridge vdev is present
  * @vdev_list_lock: lock to protect vdev list
  * @vdev_count: number of elements in the vdev list
+ * @sn_lock: To protect seq_num before any write operation
  * @seq_num: DP MLO multicast sequence number
  * @ref_cnt: reference count
  * @mod_refs: module reference count
@@ -473,14 +487,12 @@ struct dp_vdev_be {
 struct dp_mlo_dev_ctxt {
 	TAILQ_ENTRY(dp_mlo_dev_ctxt) ml_dev_list_elem;
 	union dp_align_mac_addr mld_mac_addr;
-#ifdef WLAN_MLO_MULTI_CHIP
 	uint8_t vdev_list[WLAN_MAX_MLO_CHIPS][WLAN_MAX_MLO_LINKS_PER_SOC];
 	uint8_t bridge_vdev[WLAN_MAX_MLO_CHIPS][WLAN_MAX_MLO_LINKS_PER_SOC];
 	bool is_bridge_vdev_present;
 	qdf_spinlock_t vdev_list_lock;
 	uint16_t vdev_count;
-	uint16_t seq_num;
-#endif
+	qdf_atomic_t seq_num;
 	qdf_atomic_t ref_cnt;
 	qdf_atomic_t mod_refs[DP_MOD_ID_MAX];
 	uint8_t ref_delete_pending;
@@ -604,32 +616,7 @@ void dp_mlo_partner_chips_unmap(struct dp_soc *soc,
  */
 void dp_soc_initialize_cdp_cmn_mlo_ops(struct dp_soc *soc);
 
-#ifdef WLAN_MLO_MULTI_CHIP
-typedef void dp_ptnr_vdev_iter_func(struct dp_vdev_be *be_vdev,
-				    struct dp_vdev *ptnr_vdev,
-				    void *arg);
-
-/**
- * dp_mlo_iter_ptnr_vdev() - API to iterate through ptnr vdev list
- * @be_soc: dp_soc_be pointer
- * @be_vdev: dp_vdev_be pointer
- * @func: function to be called for each peer
- * @arg: argument need to be passed to func
- * @mod_id: module id
- * @type: iterate type
- * @include_self_vdev: flag to include/exclude self vdev in iteration
- *
- * Return: None
- */
-void dp_mlo_iter_ptnr_vdev(struct dp_soc_be *be_soc,
-			   struct dp_vdev_be *be_vdev,
-			   dp_ptnr_vdev_iter_func func, void *arg,
-			   enum dp_mod_id mod_id,
-			   uint8_t type,
-			   bool include_self_vdev);
-#endif
-
-#ifdef WLAN_MCAST_MLO
+#if defined(WLAN_MCAST_MLO)
 /**
  * dp_mlo_get_mcast_primary_vdev() - get ref to mcast primary vdev
  * @be_soc: dp_soc_be pointer
@@ -659,6 +646,32 @@ dp_get_mlo_dev_list_obj(struct dp_soc_be *be_soc)
 {
 	return be_soc;
 }
+#endif
+
+#if defined(WLAN_FEATURE_11BE_MLO) && (defined(WLAN_MLO_MULTI_CHIP) || \
+	defined(WLAN_MCAST_MLO_SAP) && defined(WLAN_DP_MLO_DEV_CTX))
+typedef void dp_ptnr_vdev_iter_func(struct dp_vdev_be *be_vdev,
+				    struct dp_vdev *ptnr_vdev,
+				    void *arg);
+
+/**
+ * dp_mlo_iter_ptnr_vdev() - API to iterate through ptnr vdev list
+ * @be_soc: dp_soc_be pointer
+ * @be_vdev: dp_vdev_be pointer
+ * @func: function to be called for each peer
+ * @arg: argument need to be passed to func
+ * @mod_id: module id
+ * @type: iterate type
+ * @include_self_vdev: flag to include/exclude self vdev in iteration
+ *
+ * Return: None
+ */
+void dp_mlo_iter_ptnr_vdev(struct dp_soc_be *be_soc,
+			   struct dp_vdev_be *be_vdev,
+			   dp_ptnr_vdev_iter_func func, void *arg,
+			   enum dp_mod_id mod_id,
+			   uint8_t type,
+			   bool include_self_vdev);
 #endif
 
 #ifdef QCA_SUPPORT_DP_GLOBAL_CTX

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -102,6 +102,8 @@
 #define WLAN_PEER_QCN_NODE                          0x00000010
 /* Peer is 4 Address node */
 #define WLAN_PEER_MESH_NODE                         0x00000020
+/* Partner Peer ASSOC rejected */
+#define WLAN_PEER_FEXT_ASSOC_REJ                    0x00000040
 
 /**
  * enum wlan_peer_state  - peer state
@@ -214,6 +216,18 @@ struct wlan_objmgr_peer {
 	bool mlo_bridge_peer;
 #endif
 };
+
+/**
+ * wlan_peer_set_phymode() - set phymode
+ * @peer: PEER object
+ * @phymode: phymode of peer
+ *
+ * API to set phymode
+ *
+ * Return: void
+ */
+void wlan_peer_set_phymode(struct wlan_objmgr_peer *peer,
+			   enum wlan_phymode phymode);
 
 /*
  * APIs to Create/Delete Global object APIs
@@ -855,21 +869,6 @@ static inline enum wlan_peer_type wlan_peer_get_peer_type(
 }
 
 /**
- * wlan_peer_set_phymode() - set phymode
- * @peer: PEER object
- * @phymode: phymode of peer
- *
- * API to set phymode
- *
- * Return: void
- */
-static inline void wlan_peer_set_phymode(struct wlan_objmgr_peer *peer,
-					 enum wlan_phymode phymode)
-{
-	peer->peer_mlme.phymode = phymode;
-}
-
-/**
  * wlan_peer_get_phymode() - get phymode
  * @peer: PEER object
  *
@@ -1077,7 +1076,7 @@ static inline void wlan_peer_mlme_flag_ext_clear(struct wlan_objmgr_peer *peer,
 static inline uint8_t wlan_peer_mlme_flag_ext_get(struct wlan_objmgr_peer *peer,
 						  uint32_t flag)
 {
-	return (peer->peer_mlme.peer_ext_flags & flag) ? 1 : 0;
+	return (peer && (peer->peer_mlme.peer_ext_flags & flag)) ? 1 : 0;
 }
 
 /**
@@ -1225,7 +1224,7 @@ static inline bool wlan_peer_mlme_get_auth_state(
 
 /**
  * wlan_peer_mlme_get_next_seq_num() - get peer mlme next sequence number
- * @peer: PEER object
+ * @seq_num: Current sequence number
  *
  * API to get mlme peer next sequence number
  *
@@ -1233,16 +1232,17 @@ static inline bool wlan_peer_mlme_get_auth_state(
  *
  * Return: peer mlme next sequence number
  */
-static inline uint32_t wlan_peer_mlme_get_next_seq_num(
-				struct wlan_objmgr_peer *peer)
+static inline uint16_t wlan_peer_mlme_get_next_seq_num(uint16_t *seq_num)
 {
-	/* This API is invoked with lock acquired, do not add log prints */
-	if (peer->peer_mlme.seq_num < WLAN_MAX_SEQ_NUM)
-		peer->peer_mlme.seq_num++;
-	else
-		peer->peer_mlme.seq_num = 0;
+	uint16_t cur_seq_num = *seq_num;
 
-	return peer->peer_mlme.seq_num;
+	/* This API is invoked with lock acquired, do not add log prints */
+	if (*seq_num < WLAN_MAX_SEQ_NUM)
+		*seq_num = ++cur_seq_num;
+	else
+		*seq_num = 0;
+
+	return *seq_num;
 }
 
 /**

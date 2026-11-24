@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -331,6 +331,8 @@ struct wlan_mlo_peer_context
 	return NULL;
 }
 
+qdf_export_symbol(wlan_mlo_get_mlpeer_by_peer_mladdr);
+
 struct wlan_mlo_peer_context *wlan_mlo_get_mlpeer_by_ml_peerid(
 				struct wlan_mlo_dev_context *ml_dev,
 				uint16_t ml_peerid)
@@ -463,6 +465,11 @@ QDF_STATUS mlo_dev_mlpeer_list_init(struct wlan_mlo_dev_context *ml_dev)
 		qdf_spinlock_create(&ml_dev->ap_ctx->assoc_list.list_lock);
 		qdf_list_create(&ml_dev->ap_ctx->assoc_list.peer_list,
 				WLAN_UMAC_PSOC_MAX_PEERS);
+		ml_dev->ap_ctx->assoc_list.is_timer_started = 0;
+		qdf_timer_init(NULL, &ml_dev->ap_ctx->assoc_list.rem_peer_mld_mac,
+			       wlan_mlo_ap_delete_assoc_list_entries,
+			       &ml_dev->ap_ctx->assoc_list,
+			       QDF_TIMER_TYPE_WAKE_APPS);
 	}
 
 	return QDF_STATUS_SUCCESS;
@@ -474,6 +481,11 @@ QDF_STATUS mlo_dev_mlpeer_list_deinit(struct wlan_mlo_dev_context *ml_dev)
 	struct wlan_mlo_peer_list *mlo_peer_list;
 
 	if (ml_dev->ap_ctx) {
+		if (ml_dev->ap_ctx->assoc_list.is_timer_started) {
+			ml_dev->ap_ctx->assoc_list.force_remove = 1;
+			wlan_mlo_ap_delete_assoc_list_entries((void *)&ml_dev->ap_ctx->assoc_list);
+		}
+		qdf_timer_free(&ml_dev->ap_ctx->assoc_list.rem_peer_mld_mac);
 		qdf_list_destroy(&ml_dev->ap_ctx->assoc_list.peer_list);
 		qdf_spinlock_destroy(&ml_dev->ap_ctx->assoc_list.list_lock);
 	}

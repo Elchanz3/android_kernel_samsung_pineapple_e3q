@@ -6,7 +6,7 @@
 
 #include "pci.h"
 
-#if IS_ENABLED(CONFIG_PCI_MSM)
+#if IS_ENABLED(CONFIG_PCI_MSM) || IS_ENABLED(CONFIG_PCIE_QCOM_ECAM)
 /**
  * _cnss_pci_enumerate() - Enumerate PCIe endpoints
  * @plat_priv: driver platform context pointer
@@ -29,6 +29,18 @@ int _cnss_pci_enumerate(struct cnss_plat_data *plat_priv, u32 rc_num);
  * Return: 0 for success, negative value for error
  */
 int cnss_pci_assert_perst(struct cnss_pci_data *pci_priv);
+
+/**
+ * cnss_pci_fmd_enable() - Update FMD status to PCIe
+ * @pci_priv: driver PCI bus context pointer
+ *
+ * This function shall call corresponding PCIe root complex driver API
+ * to update FMD status. The purpose of this API is to handle PERST
+ * during execution of FMD recipe.
+ *
+ * Return: 0 for success, negative value for error
+ */
+int cnss_pci_fmd_enable(struct cnss_pci_data *pci_priv);
 
 /**
  * cnss_pci_disable_pc() - Disable PCIe link power collapse from RC driver
@@ -103,16 +115,14 @@ int cnss_wlan_adsp_pc_enable(struct cnss_pci_data *pci_priv,
 			     bool control);
 int cnss_set_pci_link(struct cnss_pci_data *pci_priv, bool link_up);
 int cnss_pci_prevent_l1(struct device *dev);
+int __cnss_pci_prevent_l1(struct device *dev);
 void cnss_pci_allow_l1(struct device *dev);
+void __cnss_pci_allow_l1(struct device *dev);
 int cnss_pci_get_msi_assignment(struct cnss_pci_data *pci_priv);
-int cnss_pci_get_one_msi_assignment(struct cnss_pci_data *pci_priv);
-bool cnss_pci_fallback_one_msi(struct cnss_pci_data *pci_priv,
-			       int *num_vectors);
-bool cnss_pci_is_one_msi(struct cnss_pci_data *pci_priv);
-int cnss_pci_get_one_msi_mhi_irq_array_size(struct cnss_pci_data *pci_priv);
-bool cnss_pci_is_force_one_msi(struct cnss_pci_data *pci_priv);
+int cnss_pci_get_iommu_addr(struct cnss_pci_data *pci_priv, struct device_node *of_node);
 int cnss_pci_init_smmu(struct cnss_pci_data *pci_priv);
 void cnss_pci_update_drv_supported(struct cnss_pci_data *pci_priv);
+int cnss_pci_get_link_status(struct cnss_pci_data *pci_priv);
 
 /**
  * _cnss_pci_get_reg_dump() - Dump PCIe RC registers for debug
@@ -136,6 +146,11 @@ int _cnss_pci_enumerate(struct cnss_plat_data *plat_priv, u32 rc_num)
 int cnss_pci_assert_perst(struct cnss_pci_data *pci_priv)
 {
 	return -EOPNOTSUPP;
+}
+
+int cnss_pci_fmd_enable(struct cnss_pci_data *pci_priv)
+{
+	return 0;
 }
 
 int cnss_pci_disable_pc(struct cnss_pci_data *pci_priv, bool vote)
@@ -172,11 +187,20 @@ int cnss_set_pci_link(struct cnss_pci_data *pci_priv, bool link_up)
 	return 0;
 }
 
+static inline int __cnss_pci_prevent_l1(struct device *dev)
+{
+	return 0;
+}
+
 int cnss_pci_prevent_l1(struct device *dev)
 {
 	return 0;
 }
 EXPORT_SYMBOL(cnss_pci_prevent_l1);
+
+static inline void __cnss_pci_allow_l1(struct device *dev)
+{
+}
 
 void cnss_pci_allow_l1(struct device *dev)
 {
@@ -184,6 +208,11 @@ void cnss_pci_allow_l1(struct device *dev)
 EXPORT_SYMBOL(cnss_pci_allow_l1);
 
 int cnss_pci_get_msi_assignment(struct cnss_pci_data *pci_priv)
+{
+	return 0;
+}
+
+int cnss_pci_get_iommu_addr(struct cnss_pci_data *pci_priv, struct device_node *of_node)
 {
 	return 0;
 }
@@ -204,6 +233,10 @@ void cnss_pci_update_drv_supported(struct cnss_pci_data *pci_priv)
 	pci_priv->drv_supported = false;
 }
 
+int cnss_pci_get_link_status(struct cnss_pci_data *pci_priv)
+{
+	return 0;
+}
 #endif /* CONFIG_PCI_MSM */
 
 static inline bool cnss_pci_get_drv_supported(struct cnss_pci_data *pci_priv)
@@ -211,9 +244,23 @@ static inline bool cnss_pci_get_drv_supported(struct cnss_pci_data *pci_priv)
 	return pci_priv->drv_supported;
 }
 
-#if IS_ENABLED(CONFIG_ARCH_QCOM)
-int cnss_pci_of_reserved_mem_device_init(struct cnss_pci_data *pci_priv);
-int cnss_pci_wake_gpio_init(struct cnss_pci_data *pci_priv);
-void cnss_pci_wake_gpio_deinit(struct cnss_pci_data *pci_priv);
-#endif /* CONFIG_ARCH_QCOM */
+/**
+ * cnss_pci_is_sync_probe(): check whether PCIe device
+ * need to be present before registering cnss_pci_driver
+ *
+ * Currently SCMI power/PCIe enumeration is controlled
+ * by low level GearVM system, and upstream PCIe driver
+ * doesn't export enumeration API, like msm_pci_enumerate.
+ * So we have to power wlan power before PCIe, otherwise
+ * there doesn't have chances to do link training for wlan.
+ * It means PCIe wlan device isn't ready when register
+ * cnss_pci_driver. On the contrary, PCIe device should
+ * be present in downstream MSM PCIe driver when register
+ * cnss_pci_driver. This API is used to distinguish
+ * downstream/upstream PCIe driver case.
+ *
+ * Return: true for sync mode, false for unsync mode
+ */
+bool cnss_pci_is_sync_probe(void);
+
 #endif /* _CNSS_PCI_PLATFORM_H*/

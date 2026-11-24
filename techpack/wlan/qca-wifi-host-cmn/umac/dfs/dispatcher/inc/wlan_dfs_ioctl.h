@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011, 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2010, Atheros Communications Inc.
  * All Rights Reserved.
  *
@@ -96,9 +96,16 @@ struct dfsreq_nolelem {
 	uint32_t        nol_timeout_ms;
 };
 
+/**
+ * struct dfsreq_nolinfo - NOL information.
+ * @dfs_ch_nchans:     Number of channels present in NOL list.
+ * @dfs_nol:           Array of NOL elements.
+ * @cc:                CC of NOL detection.
+ */
 struct dfsreq_nolinfo {
 	uint32_t  dfs_ch_nchans;
 	struct dfsreq_nolelem dfs_nol[DFS_CHAN_MAX];
+	uint16_t cc;
 };
 
 /*
@@ -169,6 +176,7 @@ enum dfs_bangradar_types {
  * @is_chirp:       Chirp radar or not.
  * @freq_offset:    Frequency offset at which radar was found.
  * @detector_id:    Detector ID corresponding to primary/agile detectors.
+ * @is_fh_radar:    Frequency Hopping Radar type or not.
  */
 struct dfs_bangradar_params {
 	enum dfs_bangradar_types bangradar_type;
@@ -176,6 +184,7 @@ struct dfs_bangradar_params {
 	uint8_t is_chirp;
 	int32_t freq_offset;
 	uint8_t detector_id;
+	uint8_t is_fh_radar;
 };
 #define DFS_IOCTL_PARAM_NOVAL  65535
 #define DFS_IOCTL_PARAM_ENABLE 0x8000
@@ -356,7 +365,7 @@ struct synthetic_pulse {
 struct synthetic_seq {
 	uint8_t num_pulses;
 	uint32_t total_len_seq;
-	struct synthetic_pulse *pulse[0];
+	struct synthetic_pulse *pulse[];
 };
 
 /**
@@ -368,7 +377,7 @@ struct synthetic_seq {
 
 struct seq_store {
 	uint8_t num_sequence;
-	struct synthetic_seq *seq_arr[0];
+	struct synthetic_seq *seq_arr[];
 };
 #endif /* WLAN_DFS_PARTIAL_OFFLOAD && WLAN_DFS_SYNTHETIC_RADAR */
 

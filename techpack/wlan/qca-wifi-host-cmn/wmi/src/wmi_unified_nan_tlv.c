@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -23,16 +23,45 @@
 #include <nan_public_structs.h>
 #include <wmi_unified_nan_api.h>
 #include <wlan_nan_msg_common_v2.h>
+#include <wlan_nan_msg.h>
+
+/**
+ * wmi_nan_get_tlv_type() - get TLV type from NAN DE event
+ * @ptlv: pointer to TLV header
+ *
+ * Return: 16 bit TLV type
+ */
+static inline uint16_t wmi_nan_get_tlv_type(uint8_t *ptlv)
+{
+	return (uint16_t)((*ptlv & 0xFF) | ((*(ptlv + 1) & 0xFF) << 8));
+}
+
+/**
+ * wmi_nan_get_tlv_len() - get TLV length from NAN DE event
+ * @ptlv: pointer to TLV header
+ *
+ * Return: 16 bit TLV length
+ */
+static inline uint16_t wmi_nan_get_tlv_len(uint8_t *ptlv)
+{
+	return (uint16_t)((*(ptlv + 2) & 0xFF) | ((*(ptlv + 3) & 0xFF) << 8));
+}
 
 static QDF_STATUS
 extract_nan_event_rsp_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 			  struct nan_event_params *evt_params,
-			  uint8_t **msg_buf)
+			  uint8_t **msg_buf, uint32_t nan_config)
 {
 	WMI_NAN_EVENTID_param_tlvs *event;
 	wmi_nan_event_hdr *nan_rsp_event_hdr;
 	nan_msg_header_t *nan_msg_hdr;
 	wmi_nan_event_info *nan_evt_info;
+	uint8_t *ptlv;
+	tNanEventIndMsg *nan_evt_msg;
+	uint16_t tlv_type;
+	uint16_t tlv_len;
+	tpNanCapabilitiesRspMsg capabilities_rsp_msg;
+	tpNanCapabilitiesRspParams capabilities_rsp;
 
 	/*
 	 * This is how received evt looks like
@@ -73,6 +102,12 @@ extract_nan_event_rsp_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 			 nan_rsp_event_hdr->data_len);
 		return QDF_STATUS_E_INVAL;
 	}
+
+	if (!event->data) {
+		wmi_err("event data is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
 	nan_msg_hdr = (nan_msg_header_t *)event->data;
 
 	switch (nan_msg_hdr->msg_id) {
@@ -101,6 +136,52 @@ extract_nan_event_rsp_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 		break;
 	case NAN_MSG_ID_ERROR_RSP:
 		evt_params->evt_type = nan_event_id_error_rsp;
+		break;
+	case NAN_MSG_ID_DE_EVENT_IND:
+		evt_params->evt_type = nan_event_id_de_ind;
+		nan_evt_msg = (tNanEventIndMsg *)event->data;
+		ptlv = (uint8_t *)nan_evt_msg + sizeof(nan_msg_header_t);
+		if (!ptlv) {
+			wmi_err("DE event TLV is null");
+			return QDF_STATUS_E_NULL_VALUE;
+		}
+
+		tlv_type = wmi_nan_get_tlv_type(ptlv);
+		tlv_len = wmi_nan_get_tlv_len(ptlv);
+
+		if (tlv_len < QDF_MAC_ADDR_SIZE) {
+			wmi_err("TLV len %d is less than MAC addr size",
+				tlv_len);
+			return QDF_STATUS_E_INVAL;
+		}
+
+		if (evt_params->buf_len <
+		    sizeof(nan_msg_header_t) + WMI_TLV_HDR_SIZE + tlv_len) {
+			wmi_err("buf len %d is invalid", evt_params->buf_len);
+			return QDF_STATUS_E_INVAL;
+		}
+
+		switch (tlv_type) {
+		case NAN_TLV_TYPE_SELF_STA_MAC_ADDR:
+			ptlv += WMI_TLV_HDR_SIZE;
+			qdf_mem_copy(evt_params->nan_mac_addr.bytes, ptlv,
+				     QDF_MAC_ADDR_SIZE);
+			break;
+		default:
+			wmi_debug("not parsed tlv_type %d", tlv_type);
+			evt_params->evt_type = nan_event_id_generic_rsp;
+			break;
+		}
+		break;
+	case NAN_MSG_ID_CAPABILITIES_RSP:
+		evt_params->evt_type = nan_event_id_generic_rsp;
+		capabilities_rsp_msg = (tNanCapabilitiesRspMsg *)event->data;
+		capabilities_rsp = &capabilities_rsp_msg->capabilitiesRspParams;
+		wmi_debug("NAN pairing support: %d", nan_config);
+		if (!(nan_config & NAN_PARING_BIT)) {
+			capabilities_rsp->nanPairingSupported = 0;
+			wmi_err("NAN pairing support disabled");
+		}
 		break;
 	default:
 		evt_params->evt_type = nan_event_id_generic_rsp;
@@ -997,6 +1078,7 @@ static QDF_STATUS extract_ndp_confirm_tlv(wmi_unified_t wmi_handle,
 		rsp->ch[i].freq = event->ndp_channel_list[i].mhz;
 		rsp->ch[i].nss = event->nss_list[i];
 		ch_mode = WMI_GET_CHANNEL_MODE(&event->ndp_channel_list[i]);
+		rsp->ch[i].phymode = ch_mode;
 		rsp->ch[i].ch_width = wmi_get_ch_width_from_phy_mode(wmi_handle,
 								     ch_mode);
 		if (ndi_dbs) {
@@ -1224,6 +1306,7 @@ static QDF_STATUS extract_ndp_sch_update_tlv(wmi_unified_t wmi_handle,
 		ind->ch[i].freq = event->ndl_channel_list[i].mhz;
 		ind->ch[i].nss = event->nss_list[i];
 		ch_mode = WMI_GET_CHANNEL_MODE(&event->ndl_channel_list[i]);
+		ind->ch[i].phymode = ch_mode;
 		ind->ch[i].ch_width = wmi_get_ch_width_from_phy_mode(wmi_handle,
 								     ch_mode);
 		if (ndi_dbs) {

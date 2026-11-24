@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +28,7 @@
 
 struct vdev_mlme_obj;
 struct cnx_mgr;
+struct ml_rv_info;
 
 /* Requestor ID for multiple vdev restart */
 #define MULTIPLE_VDEV_RESTART_REQ_ID 0x1234
@@ -378,6 +379,7 @@ struct vdev_mlme_proto {
  * @he_curr_non_srg_pd_threshold: current configured NON-SRG PD threshold
  * @he_curr_srg_pd_threshold: current configured SRG PD threshold
  * @is_pd_threshold_present: PD threshold is present in SR enable command or not
+ * @disable_fd_in_6ghz_band: Disable FD in 6 GHz if OOB discovery is enabled
  */
 struct vdev_mlme_mgmt_generic {
 	uint32_t rts_threshold;
@@ -419,6 +421,7 @@ struct vdev_mlme_mgmt_generic {
 	int32_t he_curr_srg_pd_threshold;
 	bool is_pd_threshold_present;
 #endif
+	bool disable_fd_in_6ghz_band;
 };
 
 /**
@@ -721,7 +724,13 @@ enum vdev_start_resp_type {
  *                                      the first ml reconfig IE
  * @mlme_vdev_reconfig_timer_complete:  callback to process ml reconfing
  *                                      operation
+ * @mlme_vdev_reconfig_notify_standby: callback to notify to process standby
+ *                                      link removal
  * @mlme_vdev_notify_mlo_sync_wait_entry:
+ * @mlme_vdev_notify_link_update_event: callback for t2lm link enable/
+ *                                           disable event
+ * @mlme_vdev_init_down:                callback to process event down in init
+ *                                      state
  */
 struct vdev_mlme_ops {
 	QDF_STATUS (*mlme_vdev_validate_basic_params)(
@@ -806,8 +815,25 @@ struct vdev_mlme_ops {
 				uint16_t *tbtt_count, uint16_t bcn_int);
 	void (*mlme_vdev_reconfig_timer_complete)(
 				struct vdev_mlme_obj *vdev_mlme);
+	QDF_STATUS (*mlme_vdev_reconfig_notify_standby)(
+				struct vdev_mlme_obj *vdev_mlme,
+				struct ml_rv_info *reconfig_info);
 	QDF_STATUS (*mlme_vdev_notify_mlo_sync_wait_entry)(
 				struct vdev_mlme_obj *vdev_mlme);
+	QDF_STATUS (*mlme_vdev_notify_link_update_event)(
+				struct wlan_objmgr_vdev *vdev,
+				void *t2lm);
+	void (*mlme_vdev_init_down)(struct vdev_mlme_obj *vdev_mlme);
+};
+
+/**
+ * struct p2p_device_mode_data - p2p device mode data
+ * @p2p_dev_addr: p2p device mac address
+ * @seq_num: sequence number used for p2p device frames when it's using STA vdev
+ */
+struct p2p_device_mode_data {
+	struct qdf_mac_addr p2p_dev_addr;
+	uint16_t seq_num;
 };
 
 /**
@@ -824,6 +850,7 @@ struct vdev_mlme_ops {
  * @reg_tpc_obj:          Regulatory transmit power info
  * @ml_reconfig_timer: VDEV ml reconfig timer
  * @ml_reconfig_started:  Flag to indicate reconfig status for vdev
+ * @p2p_dev_data: STA vdev support for p2p device
  */
 struct vdev_mlme_obj {
 	struct vdev_mlme_proto proto;
@@ -842,6 +869,9 @@ struct vdev_mlme_obj {
 	struct reg_tpc_power_info reg_tpc_obj;
 	qdf_timer_t ml_reconfig_timer;
 	bool ml_reconfig_started;
+#ifdef CONVERGED_P2P_ENABLE
+	struct p2p_device_mode_data p2p_dev_data;
+#endif
 };
 
 /**

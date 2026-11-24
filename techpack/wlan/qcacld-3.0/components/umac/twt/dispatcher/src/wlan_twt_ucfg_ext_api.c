@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -54,6 +54,12 @@ ucfg_twt_cfg_set_responder(struct wlan_objmgr_psoc *psoc, bool val)
 }
 
 QDF_STATUS
+ucfg_twt_cfg_reset_responder(struct wlan_objmgr_psoc *psoc)
+{
+	return wlan_twt_cfg_reset_responder(psoc);
+}
+
+QDF_STATUS
 ucfg_twt_setup_req(struct wlan_objmgr_psoc *psoc,
 		   struct twt_add_dialog_param *params,
 		   void *context)
@@ -97,6 +103,15 @@ ucfg_twt_ac_pdev_param_send(struct wlan_objmgr_psoc *psoc,
 			    enum twt_traffic_ac twt_ac)
 {
 	return wlan_twt_ac_pdev_param_send(psoc, twt_ac);
+}
+
+QDF_STATUS
+ucfg_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+				  struct wlan_objmgr_vdev *vdev,
+				  bool unavailability_mode)
+{
+	return wlan_twt_send_unavailability_mode(psoc, vdev,
+						 unavailability_mode);
 }
 
 bool ucfg_twt_is_max_sessions_reached(struct wlan_objmgr_psoc *psoc,
@@ -248,3 +263,28 @@ bool ucfg_twt_get_pmo_allowed(struct wlan_objmgr_psoc *psoc)
 	return wlan_twt_get_pmo_allowed(psoc);
 }
 
+QDF_STATUS
+ucfg_twt_set_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+	return wlan_twt_set_requestor_enable_cmd_in_progress(psoc);
+}
+
+void
+ucfg_twt_reset_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+	return wlan_twt_reset_requestor_enable_cmd_in_progress(psoc);
+}
+
+QDF_STATUS
+ucfg_twt_tgt_caps_get_wake_dur_and_wake_intvl(
+				struct wlan_objmgr_psoc *psoc,
+				uint32_t *min_wake_dur,
+				uint32_t *max_wake_dur,
+				uint32_t *min_wake_intvl,
+				uint32_t *max_wake_intvl)
+{
+	return wlan_twt_tgt_caps_get_wake_dur_and_wake_intvl(psoc, min_wake_dur,
+							     max_wake_dur,
+							     min_wake_intvl,
+							     max_wake_intvl);
+}

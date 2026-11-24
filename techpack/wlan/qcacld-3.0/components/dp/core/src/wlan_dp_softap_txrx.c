@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -42,6 +42,10 @@
 #include <qdf_trace.h>
 #include <qdf_nbuf.h>
 #include <qdf_net_stats.h>
+
+#ifdef FEATURE_WDS
+#include <cdp_txrx_ctrl.h>
+#endif
 
 /* Preprocessor definitions and constants */
 #undef QCA_DP_SAP_DUMP_SK_BUFF
@@ -95,7 +99,7 @@ static inline void dp_softap_dump_nbuf(qdf_nbuf_t nbuf)
 
 /**
  * dp_softap_inspect_tx_eap_pkt() - Inspect eap pkt tx/tx-completion
- * @dp_intf: pointer to DP interface
+ * @dp_link: pointer to DP link
  * @nbuf: pointer to n/w buffer
  * @tx_comp: tx sending or tx completion
  *
@@ -103,14 +107,16 @@ static inline void dp_softap_dump_nbuf(qdf_nbuf_t nbuf)
  *
  * Return: void
  */
-static void dp_softap_inspect_tx_eap_pkt(struct wlan_dp_intf *dp_intf,
+static void dp_softap_inspect_tx_eap_pkt(struct wlan_dp_link *dp_link,
 					 qdf_nbuf_t nbuf,
 					 bool tx_comp)
 {
+	struct wlan_dp_intf *dp_intf = dp_link->dp_intf;
 	struct qdf_mac_addr *mac_addr;
 	uint8_t *data;
 	uint8_t auth_type, eap_code;
 	struct wlan_objmgr_peer *peer;
+	struct wlan_dp_peer_priv_context *priv_ctx;
 	struct wlan_dp_sta_info *sta_info;
 
 	if (qdf_likely(QDF_NBUF_CB_GET_PACKET_TYPE(nbuf) !=
@@ -127,7 +133,7 @@ static void dp_softap_inspect_tx_eap_pkt(struct wlan_dp_intf *dp_intf,
 	if (dp_intf->device_mode != QDF_P2P_GO_MODE)
 		return;
 
-	if (dp_intf->bss_state != BSS_INTF_START) {
+	if (dp_link->bss_state != BSS_INTF_START) {
 		dp_debug("BSS intf state is not START");
 		return;
 	}
@@ -148,11 +154,12 @@ static void dp_softap_inspect_tx_eap_pkt(struct wlan_dp_intf *dp_intf,
 		dp_err("Peer object not found");
 		return;
 	}
-	sta_info = dp_get_peer_priv_obj(peer);
-	if (!sta_info) {
+	priv_ctx = dp_get_peer_priv_obj(peer);
+	if (!priv_ctx) {
 		wlan_objmgr_peer_release_ref(peer, WLAN_DP_ID);
 		return;
 	}
+	sta_info = &priv_ctx->sta_info;
 
 	if (tx_comp) {
 		dp_info("eap_failure frm tx done" QDF_MAC_ADDR_FMT,
@@ -175,7 +182,7 @@ void dp_softap_check_wait_for_tx_eap_pkt(struct wlan_dp_intf *dp_intf,
 					 struct qdf_mac_addr *mac_addr)
 {
 	struct wlan_objmgr_peer *peer;
-	struct wlan_dp_sta_info *sta_info;
+	struct wlan_dp_peer_priv_context *priv_ctx;
 	QDF_STATUS qdf_status;
 
 	if (dp_intf->device_mode != QDF_P2P_GO_MODE)
@@ -189,9 +196,9 @@ void dp_softap_check_wait_for_tx_eap_pkt(struct wlan_dp_intf *dp_intf,
 		return;
 	}
 
-	sta_info = dp_get_peer_priv_obj(peer);
+	priv_ctx = dp_get_peer_priv_obj(peer);
 	if (qdf_atomic_test_bit(DP_PENDING_TYPE_EAP_FAILURE,
-				&sta_info->pending_eap_frm_type)) {
+				&priv_ctx->sta_info.pending_eap_frm_type)) {
 		dp_info("eap_failure frm pending" QDF_MAC_ADDR_FMT,
 			QDF_MAC_ADDR_REF(mac_addr->bytes));
 		qdf_status = qdf_wait_for_event_completion(
@@ -291,9 +298,12 @@ int dp_softap_inspect_dhcp_packet(struct wlan_dp_link *dp_link,
 	struct wlan_dp_intf *dp_intf = dp_link->dp_intf;
 	enum qdf_proto_subtype subtype = QDF_PROTO_INVALID;
 	struct wlan_objmgr_peer *peer;
+	struct wlan_dp_peer_priv_context *priv_ctx;
 	struct wlan_dp_sta_info *sta_info;
 	int errno = 0;
 	struct qdf_mac_addr *src_mac;
+	struct cdp_peer_output_param peer_info = {0};
+	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
 
 	if (((dp_intf->device_mode == QDF_SAP_MODE) ||
 	     (dp_intf->device_mode == QDF_P2P_GO_MODE)) &&
@@ -309,16 +319,28 @@ int dp_softap_inspect_dhcp_packet(struct wlan_dp_link *dp_link,
 						   src_mac->bytes,
 						   WLAN_DP_ID);
 		if (!peer) {
-			dp_err("Peer object not found");
+			cdp_peer_get_info_by_peer_addr(soc, src_mac->bytes, 0,
+						       &peer_info);
+
+			if (peer_info.state != OL_TXRX_PEER_STATE_INVALID &&
+			    peer_info.mld_peer) {
+				dp_debug("mld peer " QDF_MAC_ADDR_FMT
+					 " no dhcp inspect",
+					 QDF_MAC_ADDR_REF(src_mac->bytes));
+				return QDF_STATUS_E_INVAL;
+			}
+			dp_err("Peer " QDF_MAC_ADDR_FMT " object not found",
+			       QDF_MAC_ADDR_REF(src_mac->bytes));
 			return QDF_STATUS_E_INVAL;
 		}
 
-		sta_info = dp_get_peer_priv_obj(peer);
-		if (!sta_info) {
-			dp_err("Station not found");
+		priv_ctx = dp_get_peer_priv_obj(peer);
+		if (!priv_ctx) {
+			dp_err("Peer priv ctx not found");
 			wlan_objmgr_peer_release_ref(peer, WLAN_DP_ID);
 			return QDF_STATUS_E_INVAL;
 		}
+		sta_info = &priv_ctx->sta_info;
 
 		dp_info("ENTER: type=%d, phase=%d, nego_status=%d",
 			subtype,
@@ -463,13 +485,32 @@ void dp_wds_replace_peer_mac(void *soc, struct wlan_dp_link *dp_link,
 }
 #endif /* FEATURE_WDS*/
 
-static QDF_STATUS dp_softap_validate_peer_state(struct wlan_dp_link *dp_link,
-						qdf_nbuf_t nbuf)
+/**
+ * dp_softap_is_mlo_dev() - Check if dp link is mlo capable
+ * @dp_link: DP link context
+ *
+ * Return: true if mlo capable otherwise false.
+ */
+static inline bool
+dp_softap_is_mlo_dev(struct wlan_dp_link *dp_link)
+{
+	return wlan_vdev_mlme_feat_ext2_cap_get(dp_link->vdev,
+						WLAN_VDEV_FEXT2_MLO);
+}
+
+static QDF_STATUS
+dp_softap_validate_peer_state(struct wlan_dp_link *dp_link,
+			      qdf_nbuf_t nbuf,
+			      uint8_t *link_id)
 {
 	struct qdf_mac_addr *dest_mac_addr;
 	struct qdf_mac_addr mac_addr;
 	enum ol_txrx_peer_state peer_state;
 	void *soc;
+	struct cdp_peer_output_param peer_info = {0};
+	struct wlan_dp_link *dp_link_first = NULL;
+	struct wlan_dp_link *dp_link_next = NULL;
+	bool mlo_dev = false;
 
 	dest_mac_addr = (struct qdf_mac_addr *)(qdf_nbuf_data(nbuf) +
 						QDF_NBUF_DEST_MAC_OFFSET);
@@ -482,25 +523,50 @@ static QDF_STATUS dp_softap_validate_peer_state(struct wlan_dp_link *dp_link,
 	soc = cds_get_context(QDF_MODULE_ID_SOC);
 	QDF_BUG(soc);
 	dp_wds_replace_peer_mac(soc, dp_link, mac_addr.bytes);
-	peer_state = cdp_peer_state_get(soc, dp_link->link_id,
-					mac_addr.bytes);
 
-	if (peer_state == OL_TXRX_PEER_STATE_INVALID) {
-		dp_debug_rl("Failed to find right station");
-		return QDF_STATUS_E_FAILURE;
-	}
+	cdp_peer_get_info_by_peer_addr(soc, mac_addr.bytes, *link_id,
+				       &peer_info);
+	*link_id = peer_info.vdev_id;
+	peer_state = peer_info.state;
+
+	if (peer_state == OL_TXRX_PEER_STATE_AUTH)
+		return QDF_STATUS_SUCCESS;
+
+	if (peer_state == OL_TXRX_PEER_STATE_INVALID)
+		return dp_get_hlp_peer_state(dp_link->dp_intf, &mac_addr);
 
 	if (peer_state != OL_TXRX_PEER_STATE_CONN &&
 	    peer_state != OL_TXRX_PEER_STATE_AUTH) {
-		dp_debug_rl("Station not connected yet");
+		dp_err_rl("Station not connected yet");
 		return QDF_STATUS_E_FAILURE;
 	}
 
 	if (peer_state == OL_TXRX_PEER_STATE_CONN) {
 		if (qdf_ntohs(qdf_nbuf_get_protocol(nbuf)) != ETHERTYPE_PAE &&
 		    qdf_ntohs(qdf_nbuf_get_protocol(nbuf)) != ETHERTYPE_WAI) {
-			dp_debug_rl("NON-EAPOL/WAPI pkt in non-Auth state");
+			dp_err_rl("NON-EAPOL/WAPI pkt in non-Auth state");
 			return QDF_STATUS_E_FAILURE;
+		}
+	}
+
+	if (qdf_ntohs(qdf_nbuf_get_protocol(nbuf)) == ETHERTYPE_PAE) {
+		/*
+		 * update the sa for legacy link peer that
+		 * is not aware of mld address.
+		 */
+		mlo_dev = dp_softap_is_mlo_dev(dp_link);
+		if (!peer_info.mld_peer && mlo_dev) {
+			dp_for_each_link_held_safe(dp_link->dp_intf,
+						   dp_link_first,
+						   dp_link_next) {
+				if (dp_link_first->link_id == *link_id) {
+					qdf_mem_copy(qdf_nbuf_data(nbuf) +
+						     QDF_NBUF_SRC_MAC_OFFSET,
+						     &dp_link_first->mac_addr.bytes[0],
+						     QDF_MAC_ADDR_SIZE);
+					break;
+				}
+			}
 		}
 	}
 	return QDF_STATUS_SUCCESS;
@@ -632,6 +698,112 @@ dp_softap_inspect_traffic_end_indication_pkt(struct wlan_dp_intf *dp_intf,
 					     qdf_nbuf_t nbuf)
 {}
 #endif
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+static inline
+void dp_softap_fils_hlp_rx(struct wlan_dp_intf *dp_intf,
+			   qdf_nbuf_t netbuf)
+{
+	struct wlan_dp_psoc_context *dp_ctx = dp_intf->dp_ctx;
+
+	dp_ctx->dp_ops.dp_fils_hlp_rx(dp_intf->intf_id,
+				      dp_ctx->dp_ops.callback_ctx,
+				      netbuf);
+}
+#else
+static inline
+void dp_softap_fils_hlp_rx(struct wlan_dp_intf *dp_intf,
+			   qdf_nbuf_t netbuf)
+{ }
+
+#endif
+
+#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_FEATURE_MULTI_LINK_SAP) && \
+	(defined(WLAN_MCAST_MLO) || defined(WLAN_MCAST_MLO_SAP))
+/**
+ * dp_softap_init_exception_metadata() - Update parameter for exception metadata
+ * @nbuf: skb buffer
+ * @param: pointer to exception metadata
+ *
+ * Return: None
+ */
+static inline void
+dp_softap_init_exception_metadata(qdf_nbuf_t nbuf,
+				  struct cdp_tx_exception_metadata *param)
+{
+	qdf_nbuf_set_tx_ftype(nbuf, CB_FTYPE_MLO_MCAST);
+	param->tx_encap_type = CDP_INVALID_TX_ENCAP_TYPE;
+	param->sec_type = CDP_INVALID_SEC_TYPE;
+	param->peer_id = CDP_INVALID_PEER;
+	param->tid = CDP_INVALID_TID;
+	param->is_mlo_mcast = 1;
+}
+
+/**
+ * dp_softap_is_exception_path() - Check if it is exception path or not
+ * @dp_link: DP link handle
+ * @nbuf: skb buffer
+ * @param: pointer to exception metadata
+ *
+ * Return: true if it is exception path otherwise false
+ */
+static inline bool
+dp_softap_is_exception_path(struct wlan_dp_link *dp_link,
+			    qdf_nbuf_t nbuf,
+			    struct cdp_tx_exception_metadata *param)
+{
+	if (dp_softap_is_mlo_dev(dp_link)) {
+		/* mlo sap broadcast/multicast case */
+		if (QDF_NBUF_CB_GET_IS_BCAST(nbuf) ||
+		    QDF_NBUF_CB_GET_IS_MCAST(nbuf)) {
+			dp_softap_init_exception_metadata(nbuf,
+							  param);
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * dp_link_override() - Look for correct dp link
+ * @dp_intf: pointer to DP interface
+ * @cur_dp_link: DP link handle
+ * @link_id: input link id
+ *
+ * Return: return dp link if it's link id match otherwise return
+ * default one.
+ */
+static inline
+struct wlan_dp_link *dp_link_override(struct wlan_dp_intf *dp_intf,
+				      struct wlan_dp_link *cur_dp_link,
+				      uint8_t link_id)
+{
+	struct wlan_dp_link *dp_link;
+	struct wlan_dp_link *dp_link_next;
+
+	dp_for_each_link_held_safe(dp_intf, dp_link, dp_link_next) {
+		if (dp_link->link_id == link_id)
+			return dp_link;
+	}
+	return cur_dp_link;
+}
+
+#else
+static inline bool
+dp_softap_is_exception_path(struct wlan_dp_link *dp_link,
+			    qdf_nbuf_t nbuf,
+			    struct cdp_tx_exception_metadata *param)
+{
+	return false;
+}
+
+static inline
+struct wlan_dp_link *dp_link_override(struct wlan_dp_intf *dp_intf,
+				      struct wlan_dp_link *cur_dp_link,
+				      uint8_t link_id)
+{
+	return cur_dp_link;
+}
+#endif
 
 /**
  * dp_softap_start_xmit() - Transmit a frame
@@ -649,6 +821,9 @@ QDF_STATUS dp_softap_start_xmit(qdf_nbuf_t nbuf, struct wlan_dp_link *dp_link)
 	uint32_t num_seg;
 	struct dp_tx_rx_stats *stats = &dp_intf->dp_stats.tx_rx_stats;
 	int cpu = qdf_get_smp_processor_id();
+	uint8_t link_id = dp_link->link_id;
+	struct cdp_tx_exception_metadata tx_exc_metadata = {0};
+	bool except;
 
 	dest_mac_addr = (struct qdf_mac_addr *)(qdf_nbuf_data(nbuf) +
 						QDF_NBUF_DEST_MAC_OFFSET);
@@ -660,8 +835,12 @@ QDF_STATUS dp_softap_start_xmit(qdf_nbuf_t nbuf, struct wlan_dp_link *dp_link)
 
 	wlan_dp_pkt_add_timestamp(dp_intf, QDF_PKT_TX_DRIVER_ENTRY, nbuf);
 
-	if (QDF_IS_STATUS_ERROR(dp_softap_validate_peer_state(dp_link, nbuf)))
+	if (QDF_IS_STATUS_ERROR(dp_softap_validate_peer_state(dp_link,
+							      nbuf,
+							      &link_id)))
 		goto drop_pkt;
+
+	dp_link = dp_link_override(dp_intf, dp_link, link_id);
 
 	dp_softap_get_tx_resource(dp_link, nbuf);
 
@@ -684,12 +863,16 @@ QDF_STATUS dp_softap_start_xmit(qdf_nbuf_t nbuf, struct wlan_dp_link *dp_link)
 	QDF_NBUF_CB_TX_EXTRA_FRAG_FLAGS_NOTIFY_COMP(nbuf) = 0;
 
 	if (qdf_unlikely(QDF_NBUF_CB_GET_PACKET_TYPE(nbuf) ==
-			 QDF_NBUF_CB_PACKET_TYPE_DHCP))
+			 QDF_NBUF_CB_PACKET_TYPE_DHCP)) {
 		dp_softap_inspect_dhcp_packet(dp_link, nbuf, QDF_TX);
+		if (QDF_IS_STATUS_SUCCESS(dp_softap_handle_hlp(dp_intf,
+							       dest_mac_addr)))
+			return QDF_STATUS_SUCCESS;
+	}
 
 	if (qdf_unlikely(QDF_NBUF_CB_GET_PACKET_TYPE(nbuf) ==
 			 QDF_NBUF_CB_PACKET_TYPE_EAPOL)) {
-		dp_softap_inspect_tx_eap_pkt(dp_intf, nbuf, false);
+		dp_softap_inspect_tx_eap_pkt(dp_link, nbuf, false);
 		dp_event_eapol_log(nbuf, QDF_TX);
 	}
 
@@ -704,11 +887,26 @@ QDF_STATUS dp_softap_start_xmit(qdf_nbuf_t nbuf, struct wlan_dp_link *dp_link)
 		goto drop_pkt_and_release_skb;
 	}
 
-	if (dp_intf->txrx_ops.tx.tx(soc, dp_link->link_id, nbuf)) {
-		dp_debug("Failed to send packet to txrx for sta: "
-			 QDF_MAC_ADDR_FMT,
-			 QDF_MAC_ADDR_REF(dest_mac_addr->bytes));
-		goto drop_pkt_and_release_skb;
+	except = dp_softap_is_exception_path(dp_link, nbuf,
+					     &tx_exc_metadata);
+
+	if (qdf_likely(!except)) {
+		if (dp_intf->txrx_ops.tx.tx(soc, dp_link->link_id, nbuf)) {
+			dp_err_rl("Failed to send packet to txrx for sta: "
+				 QDF_MAC_ADDR_FMT,
+				 QDF_MAC_ADDR_REF(dest_mac_addr->bytes));
+			goto drop_pkt_and_release_skb;
+		}
+	} else {
+		if (dp_intf->txrx_ops.tx.tx_exception(soc,
+						      dp_link->link_id,
+						      nbuf,
+						      &tx_exc_metadata)) {
+			dp_err("Except path failed to send packet to txrx for sta: "
+				 QDF_MAC_ADDR_FMT,
+				 QDF_MAC_ADDR_REF(dest_mac_addr->bytes));
+			goto drop_pkt_and_release_skb;
+		}
 	}
 
 	return QDF_STATUS_SUCCESS;
@@ -772,7 +970,7 @@ void dp_softap_notify_tx_compl_cbk(qdf_nbuf_t nbuf,
 		dp_softap_notify_dhcp_ind(context, nbuf);
 	} else if (QDF_NBUF_CB_GET_PACKET_TYPE(nbuf) ==
 						QDF_NBUF_CB_PACKET_TYPE_EAPOL) {
-		dp_softap_inspect_tx_eap_pkt(dp_intf, nbuf, true);
+		dp_softap_inspect_tx_eap_pkt(dp_link, nbuf, true);
 	}
 }
 
@@ -867,7 +1065,7 @@ QDF_STATUS dp_softap_rx_packet_cbk(void *link_ctx, qdf_nbuf_t rx_buf)
 			is_eapol = true;
 
 		if (qdf_unlikely(is_eapol &&
-		    !(!qdf_mem_cmp(dp_intf->mac_addr.bytes,
+		    !(!qdf_mem_cmp(dp_link->mac_addr.bytes,
 				   qdf_nbuf_data(nbuf) +
 				   QDF_NBUF_DEST_MAC_OFFSET,
 				   QDF_MAC_ADDR_SIZE) ||
@@ -893,7 +1091,7 @@ QDF_STATUS dp_softap_rx_packet_cbk(void *link_ctx, qdf_nbuf_t rx_buf)
 					      0, QDF_RX));
 
 		if (dp_rx_pkt_tracepoints_enabled())
-			qdf_trace_dp_packet(nbuf, QDF_RX, NULL, 0);
+			qdf_trace_dp_packet(nbuf, QDF_RX, NULL, 0, 0);
 
 		qdf_nbuf_set_protocol_eth_tye_trans(nbuf);
 

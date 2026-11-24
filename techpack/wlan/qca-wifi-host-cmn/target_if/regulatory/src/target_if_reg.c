@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -371,8 +371,27 @@ static void tgt_reg_mem_free_fcc_rules(struct cur_regulatory_info *reg_info)
 {
 	qdf_mem_free(reg_info->fcc_rules_ptr);
 }
+
+/**
+ * tgt_reg_mem_free_addn_reg_rules_order() - Free addn_reg_rules_order
+ * @reg_info: Pointer to regulatory info
+ *
+ * Return: None
+ */
+static void tgt_reg_mem_free_addn_reg_rules_order(
+		struct cur_regulatory_info *reg_info)
+{
+	if (reg_info->addn_reg_rule_order)
+		qdf_mem_free(reg_info->addn_reg_rule_order);
+}
 #else
-static void tgt_reg_mem_free_fcc_rules(struct cur_regulatory_info *reg_info)
+static inline void tgt_reg_mem_free_fcc_rules(
+		struct cur_regulatory_info *reg_info)
+{
+}
+
+static inline void tgt_reg_mem_free_addn_reg_rules_order(
+		 struct cur_regulatory_info *reg_info)
 {
 }
 #endif
@@ -454,6 +473,7 @@ clean:
 	qdf_mem_free(reg_info->reg_rules_2g_ptr);
 	qdf_mem_free(reg_info->reg_rules_5g_ptr);
 	tgt_reg_mem_free_fcc_rules(reg_info);
+	tgt_reg_mem_free_addn_reg_rules_order(reg_info);
 
 	for (i = 0; i < REG_CURRENT_MAX_AP_TYPE; i++) {
 		qdf_mem_free(reg_info->reg_rules_6g_ap_ptr[i]);
@@ -1119,6 +1139,45 @@ target_if_reg_set_disable_upper_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc)
 
 	return QDF_STATUS_SUCCESS;
 }
+
+/**
+ * tgt_if_regulatory_is_both_psd_eirp_support_for_sp() - Check if for 6 GHz SP
+ * power mode both PSD and EIRP power are to be sent to the target.
+ * @psoc: Pointer to psoc
+ *
+ * Return: true if regdb if both PSD and EIRP are needed, else false.
+ */
+static bool
+tgt_if_regulatory_is_both_psd_eirp_support_for_sp(struct wlan_objmgr_psoc *psoc)
+{
+	wmi_unified_t wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+
+	if (!wmi_handle)
+		return false;
+
+	return wmi_service_enabled(wmi_handle,
+			wmi_service_both_psd_eirp_for_ap_sp_client_sp_support);
+}
+
+QDF_STATUS
+target_if_set_regulatory_is_both_psd_eirp_support_for_sp(
+						struct wlan_objmgr_psoc *psoc)
+{
+	struct wlan_lmac_if_reg_rx_ops *reg_rx_ops;
+
+	reg_rx_ops = target_if_regulatory_get_rx_ops(psoc);
+	if (!reg_rx_ops) {
+		target_if_err("reg_rx_ops is NULL");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (reg_rx_ops->reg_set_both_psd_eirp_support)
+		reg_rx_ops->reg_set_both_psd_eirp_support(
+		    psoc,
+		    tgt_if_regulatory_is_both_psd_eirp_support_for_sp(psoc));
+
+	return QDF_STATUS_SUCCESS;
+}
 #else
 static inline bool
 tgt_if_regulatory_is_lower_6g_edge_ch_supp(struct wlan_objmgr_psoc *psoc)
@@ -1385,6 +1444,15 @@ tgt_if_regulatory_unregister_rate2power_table_update_handler(
 			wmi_handle, wmi_pdev_set_tgtr2p_table_eventid);
 }
 
+QDF_STATUS target_if_register_afc_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
+{
+	struct wlan_lmac_if_afc_tx_ops *afc_ops = &tx_ops->afc_ops;
+
+	afc_ops->extract_netdev = NULL;
+
+	return QDF_STATUS_SUCCESS;
+}
+
 QDF_STATUS target_if_register_regulatory_tx_ops(
 		struct wlan_lmac_if_tx_ops *tx_ops)
 {
@@ -1442,6 +1510,8 @@ QDF_STATUS target_if_register_regulatory_tx_ops(
 
 	reg_ops->get_opclass_tbl_idx = NULL;
 
+	reg_ops->init_dfs_nol = NULL;
+
 	tgt_if_register_afc_callback(reg_ops);
 
 	reg_ops->is_chip_11be = tgt_if_reg_is_chip_11be_cap;
@@ -1455,6 +1525,8 @@ QDF_STATUS target_if_register_regulatory_tx_ops(
 	reg_ops->end_r2p_table_update_wait = NULL;
 
 	reg_ops->is_80p80_supported = NULL;
+
+	reg_ops->is_freq_80p80_supported = NULL;
 
 	return QDF_STATUS_SUCCESS;
 }

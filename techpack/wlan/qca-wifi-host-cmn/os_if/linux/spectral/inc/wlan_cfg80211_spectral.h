@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017, 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -48,26 +48,6 @@ extern const struct nla_policy
 #define SCAN_REQUESTED(type)    ((type == \
 	QCA_WLAN_VENDOR_ATTR_SPECTRAL_SCAN_REQUEST_TYPE_SCAN_AND_CONFIG) || \
 	(type == QCA_WLAN_VENDOR_ATTR_SPECTRAL_SCAN_REQUEST_TYPE_SCAN))
-
-/**
- * wlan_spectral_get_nl80211_chwidth() - Get nl80211_chan_width value for
- * channel width from enum phy_ch_width
- * @phy_chwidth: enum phy_ch_width channel width value
- *
- * Return: channel width converted to nl80211_chan_width
- */
-int
-wlan_spectral_get_nl80211_chwidth(uint8_t phy_chwidth);
-
-/**
- * wlan_spectral_get_phy_ch_width() - Convert channel width from
- * nl80211_chan_width to enum phy_ch_width
- * @nl_chwidth: nl80211 channel width value
- *
- * Return: channel width converted to phy_ch_width
- */
-uint8_t
-wlan_spectral_get_phy_ch_width(uint8_t nl_chwidth);
 
 /**
  * wlan_cfg80211_register_spectral_cmd_handler() - Registration api for spectral
@@ -190,4 +170,17 @@ QDF_STATUS wlan_cfg80211_spectral_scan_dma_debug_config(
 		struct wlan_objmgr_vdev *vdev,
 		struct nlattr **tb,
 		enum spectral_scan_mode sscan_mode);
+
+/**
+ * wlan_cfg80211_spectral_scan_complete_event - Trigger spectral scan
+ * completion event.
+ * @pdev:       Pointer to pdev
+ * @sptrl_event: spectral scan event structure
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_cfg80211_spectral_scan_complete_event
+				(struct wlan_objmgr_pdev *pdev,
+				 struct spectral_scan_event *sptrl_event);
 #endif

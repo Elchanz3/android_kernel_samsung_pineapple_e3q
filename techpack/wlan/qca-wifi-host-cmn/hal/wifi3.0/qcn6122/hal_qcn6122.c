@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -1560,9 +1560,8 @@ static inline qdf_iomem_t hal_get_window_address_6122(struct hal_soc *hal_soc,
 		new_offset = (hal_soc->dev_base_addr + (2 * WINDOW_START) +
 			  (offset & WINDOW_RANGE_MASK));
 	} else {
-		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_ERROR,
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
 			  "%s: ERROR: Accessing Wrong register\n", __func__);
-		qdf_assert_always(0);
 		return 0;
 	}
 	return new_offset;
@@ -1703,6 +1702,9 @@ hal_rx_flow_setup_fse_6122(uint8_t *rx_fst, uint32_t table_offset,
 	/* Reset all the other fields in FSE */
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY_9, RESERVED_9);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY_9, MSDU_DROP);
+	HAL_SET_FLD(fse, RX_FLOW_SEARCH_ENTRY_9, MSDU_DROP) |=
+		HAL_SET_FLD_SM(RX_FLOW_SEARCH_ENTRY_9, MSDU_DROP,
+			       flow->drop);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY_11, MSDU_COUNT);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY_12, MSDU_BYTE_COUNT);
 	HAL_CLR_FLD(fse, RX_FLOW_SEARCH_ENTRY_13, TIMESTAMP);
@@ -2345,8 +2347,8 @@ struct hal_hw_srng_config hw_srng_table_6122[] = {
 		.max_size = HAL_RXDMA_MAX_RING_SIZE,
 	},
 	{ /* RXDMA_MONITOR_STATUS */
-		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA1_STATBUF,
-		.max_rings = 1,
+		.start_ring_id = HAL_SRNG_WMAC1_SW2RXDMA0_STATBUF,
+		.max_rings = NUM_RXDMA_STATUS_RINGS_PER_PDEV,
 		.entry_size = sizeof(struct wbm_buffer_ring) >> 2,
 		.lmac_ring = TRUE,
 		.ring_dir = HAL_SRNG_SRC_RING,

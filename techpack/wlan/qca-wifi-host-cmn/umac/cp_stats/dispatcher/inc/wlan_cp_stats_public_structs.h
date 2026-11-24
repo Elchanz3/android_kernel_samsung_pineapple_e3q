@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -53,6 +53,8 @@
  * @rx_mpdu_per_sp: Average number of MPDU's received successfully
  * @tx_bytes_per_sp: Average number of bytes transmitted successfully
  * @rx_bytes_per_sp: Average number of bytes received successfully
+ * @avg_eosp_sp_dur_us: Average EOSP SP time
+ * @eosp_sp_count: Number of EOSP TWT SP's
  */
 struct twt_infra_cp_stats_event {
 	uint8_t vdev_id;
@@ -67,6 +69,8 @@ struct twt_infra_cp_stats_event {
 	uint32_t rx_mpdu_per_sp;
 	uint32_t tx_bytes_per_sp;
 	uint32_t rx_bytes_per_sp;
+	uint32_t avg_eosp_sp_dur_us;
+	uint32_t eosp_sp_count;
 };
 #endif /* WLAN_SUPPORT_TWT */
 
@@ -151,6 +155,23 @@ struct bmiss_infra_cp_stats_event  {
  * units in percentage.
  * @dl_inbss_airtime_non_ac: dl inBSS airtime occupied by non-AC traffic,
  * units in percentage.
+ * @traffic_condition_used_per_ac: array for traffic condition used in
+ * estimating the available airtime value.
+ * @payload_ratio_dl_ac_be: ac_be payload ratio in dl
+ * @payload_ratio_dl_ac_bk: ac_bk payload ratio in dl
+ * @payload_ratio_dl_ac_vi: ac_vi payload ratio in dl
+ * @payload_ratio_dl_ac_vo: ac_vo payload ratio in dl
+ * @payload_ratio_ul_ac_be: ac_be payload ratio in ul
+ * @payload_ratio_ul_ac_bk: ac_bk payload ratio in ul
+ * @payload_ratio_ul_ac_vi: ac_vi payload ratio in ul
+ * @payload_ratio_ul_ac_vo: ac_vo payload ratio in ul
+ * @error_margin_per_ac: array for Error margin of the estimated AA per AC,
+ * @num_of_dl_asymmetric_clients_per_ac: array for number of clients per AC,
+ * which would be considered to estimate the available airtime value
+ * during imbalanced UL traffic scenarios.
+ * @num_of_ul_asymmetric_clients_per_ac: array for number of clients per AC,
+ * which would be considered to estimate the available airtime value
+ * during imbalanced DL traffic scenarios.
  */
 struct ctrl_path_pmlo_telemetry_stats_struct {
 	uint32_t pdev_id;
@@ -171,6 +192,18 @@ struct ctrl_path_pmlo_telemetry_stats_struct {
 		 link_idle_airtime : 8,
 		 ul_inbss_airtime_non_ac : 8,
 		 dl_inbss_airtime_non_ac : 8;
+	uint32_t traffic_condition_used_per_ac[WIFI_AC_MAX];
+	uint32_t payload_ratio_dl_ac_be : 8,
+		 payload_ratio_dl_ac_bk : 8,
+		 payload_ratio_dl_ac_vi : 8,
+		 payload_ratio_dl_ac_vo : 8;
+	uint32_t payload_ratio_ul_ac_be : 8,
+		 payload_ratio_ul_ac_bk : 8,
+		 payload_ratio_ul_ac_vi : 8,
+		 payload_ratio_ul_ac_vo : 8;
+	uint32_t error_margin_per_ac[WIFI_AC_MAX];
+	uint32_t num_of_dl_asymmetric_clients_per_ac[WIFI_AC_MAX];
+	uint32_t num_of_ul_asymmetric_clients_per_ac[WIFI_AC_MAX];
 };
 #endif
 

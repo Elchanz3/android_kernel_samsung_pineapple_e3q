@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -829,7 +829,7 @@ static void lim_clear_mbssid_info(struct wlan_objmgr_vdev *vdev)
 {
 	struct scan_mbssid_info mbssid_info = {0};
 
-	mlme_set_mbssid_info(vdev, &mbssid_info);
+	mlme_set_mbssid_info(vdev, &mbssid_info, INVALID_CHANNEL_NUM);
 }
 
 /**
@@ -1125,7 +1125,7 @@ void lim_dump_session_info(struct mac_context *mac_ctx,
 
 	pe_nofl_debug(" MaxTxPwr %d RMF %d force_20_24 %d UAPSD flag 0x%2x auth type %d privacy %d",
 		      pe_session->maxTxPower, pe_session->limRmfEnabled,
-		      pe_session->force_24ghz_in_ht20,
+		      wlan_cm_get_force_20mhz_in_24ghz(pe_session->vdev),
 		      pe_session->gUapsdPerAcBitmask,
 		      mac_ctx->mlme_cfg->wep_params.auth_type,
 		      mac_ctx->mlme_cfg->wep_params.is_privacy_enabled);

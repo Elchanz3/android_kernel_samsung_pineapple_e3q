@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2019, 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -127,10 +127,24 @@ struct peer_cp_stats {
 };
 
 /**
+ * struct cp_stats_cfg_params - define CP stats INI configuration parameters
+ * @chipset_stats_enable: CP stats enable chipset stats logging from ini config
+ * @chipset_stats_push_rbs_delay_val_ms : User delay in ms
+ * @chipset_stats_push_rbs_delay_interval : Represent after how many RB node
+ *					    User delay is applicable
+ */
+struct cp_stats_cfg_params {
+	bool chipset_stats_enable;
+	size_t chipset_stats_push_rbs_delay_val_ms;
+	size_t chipset_stats_push_rbs_delay_interval;
+};
+
+/**
  * struct cp_stats_context - defines cp stats global context object
  * @csc_lock: lock to protect object
  * @psoc_obj: pointer to psoc
  * @psoc_cs: pointer to cp stats at psoc
+ * @host_params: Structure for INI variables
  * @cp_stats_ctx_init: callback pointer to init cp stats global ctx
  * @cp_stats_ctx_deinit: callback pointer to deinit cp stats global ctx
  * @cp_stats_psoc_obj_init:callback pointer to init cp stats obj on psoc create
@@ -155,6 +169,7 @@ struct cp_stats_context {
 	qdf_spinlock_t csc_lock;
 	struct wlan_objmgr_psoc *psoc_obj;
 	struct psoc_cp_stats    *psoc_cs;
+	struct cp_stats_cfg_params host_params;
 	QDF_STATUS (*cp_stats_ctx_init)(struct cp_stats_context *ctx);
 	QDF_STATUS (*cp_stats_ctx_deinit)(struct cp_stats_context *ctx);
 	QDF_STATUS (*cp_stats_psoc_obj_init)(struct psoc_cp_stats *psoc_cs);

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -52,6 +52,16 @@ struct wlan_objmgr_vdev;
 
 #define NAN_SER_CMD_TIMEOUT 4000
 #define NDP_SERVICE_ID_LEN 6
+
+#define NAN_PASN_PEER_CREATE 0x0c
+#define NAN_PASN_PEER_DELETE 0x0d
+
+#define NAN_5GHZ_SOCIAL_CH_149_FREQ 5745
+#define NAN_5GHZ_SOCIAL_CH_44_FREQ 5220
+#define NAN_2GHZ_SOCIAL_CH_FREQ 2437
+
+#define NAN_PARING_BIT 1
+
 /**
  * enum nan_discovery_msg_type - NAN msg type
  * @NAN_GENERIC_REQ: Type for all the NAN requests other than enable/disable
@@ -62,6 +72,18 @@ enum nan_discovery_msg_type {
 	NAN_GENERIC_REQ = 0,
 	NAN_ENABLE_REQ  = 1,
 	NAN_DISABLE_REQ = 2,
+};
+
+/**
+ * enum nan_pasn_msg_type - NAN PASN msg type
+ * @NAN_PASN_PEER_CREATE_REQ: Request type for creating PASN peer
+ * @NAN_PASN_PEER_DELETE_REQ: Request type for deleting PASN peer
+ * @NAN_PASN_PEER_DELETE_ALL_REQ: Request type for deleting all PASN peer
+ */
+enum nan_pasn_msg_type {
+	NAN_PASN_PEER_CREATE_REQ     = 0,
+	NAN_PASN_PEER_DELETE_REQ     = 1,
+	NAN_PASN_PEER_DELETE_ALL_REQ = 2,
 };
 
 /**
@@ -322,12 +344,14 @@ struct peer_nan_datapath_map {
 
 /**
  * struct nan_datapath_channel_info - ndp channel and channel bandwidth
+ * @phymode: Channel phymode(wmi_channel_phymode) of the npd connection
  * @freq: channel freq in mhz of the ndp connection
  * @ch_width: channel width (wmi_channel_width) of the ndp connection
  * @nss: nss used for ndp connection
  * @mac_id: MAC ID associated with the NDP channel
  */
 struct nan_datapath_channel_info {
+	uint32_t phymode;
 	uint32_t freq;
 	uint32_t ch_width;
 	uint32_t nss;
@@ -519,12 +543,14 @@ struct nan_datapath_end_all_ndps {
  * @nan_event_id_enable_rsp: NAN Enable Response event ID
  * @nan_event_id_disable_ind: NAN Disable Indication event ID
  * @nan_event_id_generic_rsp: All remaining NAN events, treated as passthrough
+ * @nan_event_id_de_ind: Discovery Engine event Indication
  */
 enum nan_event_id_types {
 	nan_event_id_error_rsp = 0,
 	nan_event_id_enable_rsp,
 	nan_event_id_disable_ind,
 	nan_event_id_generic_rsp,
+	nan_event_id_de_ind,
 };
 
 /**
@@ -535,6 +561,7 @@ enum nan_event_id_types {
  * @mac_id: MAC ID associated with NAN Discovery from NAN Enable Response event
  * @vdev_id: vdev id of the interface created for NAN discovery
  * @buf_len: Event buffer length
+ * @nan_mac_addr: NAN MAC address which is randomized by target
  * @buf: Event buffer starts here
  */
 struct nan_event_params {
@@ -544,6 +571,7 @@ struct nan_event_params {
 	uint8_t mac_id;
 	uint8_t vdev_id;
 	uint32_t buf_len;
+	struct qdf_mac_addr nan_mac_addr;
 	/* Variable length, do not add anything after this */
 	uint8_t buf[];
 };
@@ -564,7 +592,6 @@ struct nan_msg_hdr {
 	uint16_t reserved[3];
 };
 
-#define NAN_STATUS_SUCCESS 0
 #define NAN_STATUS_UNSUPPORTED_CONCURRENCY_NAN_DISABLED 12
 
 /**
@@ -675,6 +702,18 @@ struct nan_datapath_end_indication_event {
 struct nan_dump_msg {
 	uint8_t *msg;
 	uint32_t data_len;
+};
+
+/**
+ * struct nan_pasn_peer_req - A NAN PASN peer request for the Target
+ * @psoc: Pointer to the psoc object
+ * @peer_addr: peer mac address
+ * @vdev_id: vdev id
+ */
+struct nan_pasn_peer_req {
+	struct wlan_objmgr_psoc *psoc;
+	struct qdf_mac_addr peer_addr;
+	uint8_t vdev_id;
 };
 
 /**
@@ -795,6 +834,30 @@ struct nan_datapath_host_event {
 };
 
 /**
+ * struct nan_pasn_peer_ops - structure of pasn peer for nan component
+ * @nan_pasn_peer_create_cb: callback to send pasn peer create request
+ * @nan_pasn_peer_delete_cb: callback to send pasn peer delete request
+ * @nan_pasn_peer_delete_all_cb: callback to send pasn peer delete all request
+ * @nan_pasn_peer_delete_all_complete_cb: callback to when pasn peer delete all
+ * response received.
+ */
+struct nan_pasn_peer_ops {
+	QDF_STATUS (*nan_pasn_peer_create_cb)(struct wlan_objmgr_psoc *psoc,
+					      struct qdf_mac_addr *peer_addr,
+					      uint8_t vdev_id,
+					      uint8_t pasn_peer_msg_type);
+	QDF_STATUS (*nan_pasn_peer_delete_cb)(struct wlan_objmgr_psoc *psoc,
+					      uint8_t vdev_id,
+					      struct qdf_mac_addr *peer_addr,
+					      uint8_t pasn_peer_msg_type,
+					      bool objmgr_peer_delete);
+	QDF_STATUS (*nan_pasn_peer_delete_all_cb)(
+						struct wlan_objmgr_vdev *vdev);
+	QDF_STATUS (*nan_pasn_peer_delete_all_complete_cb)(
+						struct wlan_objmgr_vdev *vdev);
+};
+
+/**
  * struct nan_callbacks - struct containing callback to non-converged driver
  * @os_if_nan_event_handler: OS IF Callback for handling NAN Discovery events
  * @os_if_ndp_event_handler: OS IF Callback for handling NAN Datapath events
@@ -816,6 +879,7 @@ struct nan_datapath_host_event {
  * @nan_concurrency_update: Callback to handle nan concurrency
  * @set_mc_list: HDD callback to set multicast peer list
  * @nan_sr_concurrency_update: Callback to handle nan SR(Spatial Reuse)
+ * @pasn_peer_ops: structure contains the callbacks for pasn peer
  * concurrency
  */
 struct nan_callbacks {
@@ -847,6 +911,7 @@ struct nan_callbacks {
 #ifdef WLAN_FEATURE_SR
 	void (*nan_sr_concurrency_update)(struct nan_event_params *nan_evt);
 #endif
+	struct nan_pasn_peer_ops pasn_peer_ops;
 };
 
 /**
@@ -883,19 +948,31 @@ struct wlan_nan_rx_ops {
  * @ndi_txbf_supported: Target supports NAN Datapath with TX beamforming
  * by Fw or not.
  * @mlo_sta_nan_ndi_allowed: MLO STA + NAN + NDI concurrency is supported
+ * @nan_pairing_peer_create_cap: create NAN pairing peer in host when it is true
+ * @sta_sap_ndp_support: supports STA + SAP + NDP
+ * @sta_p2p_ndp_conc: Target supports STA+P2P+NAN+NDP concurrency
+ * @caps: uint32_t to dump the capabilities
  */
 struct nan_tgt_caps {
-	uint32_t nan_conc_control:1;
-	uint32_t nan_dbs_supported:1;
-	uint32_t ndi_dbs_supported:1;
-	uint32_t nan_sap_supported:1;
-	uint32_t ndi_sap_supported:1;
-	uint32_t nan_vdev_allowed:1;
-	uint32_t sta_nan_ndi_ndi_allowed:1;
-	uint32_t ndi_txbf_supported:1;
+	union  {
+		struct {
+			uint32_t nan_conc_control:1;
+			uint32_t nan_dbs_supported:1;
+			uint32_t ndi_dbs_supported:1;
+			uint32_t nan_sap_supported:1;
+			uint32_t ndi_sap_supported:1;
+			uint32_t nan_vdev_allowed:1;
+			uint32_t sta_nan_ndi_ndi_allowed:1;
+			uint32_t ndi_txbf_supported:1;
 #ifdef WLAN_FEATURE_11BE_MLO
-	uint32_t mlo_sta_nan_ndi_allowed:1;
+			uint32_t mlo_sta_nan_ndi_allowed:1;
 #endif
+			uint32_t nan_pairing_peer_create_cap:1;
+			uint32_t sta_sap_ndp_support:1;
+			uint32_t sta_p2p_ndp_conc:1;
+		};
+		uint32_t caps;
+	};
 };
 
 #endif

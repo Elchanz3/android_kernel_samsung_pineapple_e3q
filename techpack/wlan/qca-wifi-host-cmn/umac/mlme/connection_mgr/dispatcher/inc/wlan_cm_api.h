@@ -209,6 +209,15 @@ bool wlan_cm_is_vdev_disconnecting(struct wlan_objmgr_vdev *vdev);
 bool wlan_cm_is_vdev_disconnected(struct wlan_objmgr_vdev *vdev);
 
 /**
+ * wlan_cm_is_vdev_idle_due_to_link_switch() - Check if VDEV is in IDLE
+ * due to link switch sub-state.
+ * @vdev: VDEV objmgr pointer
+ *
+ * Return: bool
+ */
+bool wlan_cm_is_vdev_idle_due_to_link_switch(struct wlan_objmgr_vdev *vdev);
+
+/**
  * wlan_cm_is_vdev_roaming() - check if vdev is in roaming state
  * @vdev: vdev pointer
  *
@@ -258,6 +267,16 @@ bool wlan_cm_is_link_switch_disconnect_resp(struct wlan_cm_discon_rsp *resp);
  */
 bool wlan_cm_is_link_switch_connect_resp(struct wlan_cm_connect_resp *resp);
 
+/**
+ * wlan_cm_trigger_panic_on_cmd_timeout() - Trigger recovery on CM command
+ * timeout.
+ * @vdev: VDEV object manager
+ * @reason: Hang reason code
+ *
+ * Return: void
+ */
+void wlan_cm_trigger_panic_on_cmd_timeout(struct wlan_objmgr_vdev *vdev,
+					  enum qdf_hang_reason reason);
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
 /**
  * wlan_cm_is_vdev_roam_started() - check if vdev is in roaming state and

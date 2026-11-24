@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -234,6 +234,32 @@ enum wlan_epcs_frame {
 		CFG_VALUE_OR_DEFAULT, \
 		"PMF SA query retry interval for SAP")
 
+#ifdef WLAN_FEATURE_11BE
+/*
+ * oem_eht_mlo_crypto_bitmap - OEM control to allow various EHT connection
+ * options using bitmap based on following ENUM (Name of ENUM to be added)
+ * @Min: 0x0
+ * @Max: 0xFFFFFFFF
+ * @Default: 0x20008 - To allow MLO WPA2-PMF cap APs and WPA3-SAE w/o H2E cap
+ *
+ * This INI is used to control the driver candidate selection and EHT
+ * connection choice based on OEM configuration. The bitmap follows the
+ * implementation from wlan_crypto_oem_eht_mlo_config enum
+ */
+#define CFG_OEM_EHT_MLO_CRYPTO_BITMAP CFG_INI_UINT( \
+		"oem_eht_mlo_crypto_bitmap", \
+		0x0, \
+		0xFFFFFFFF, \
+		0x20008, \
+		CFG_VALUE_OR_DEFAULT, \
+		"OEM control to allow/disallow crypto to EHT configuration")
+
+#define CFG_OEM_EHT_MLO_CRYPTO_BITMAP_SUPPORTED \
+			CFG(CFG_OEM_EHT_MLO_CRYPTO_BITMAP)
+#else
+#define CFG_OEM_EHT_MLO_CRYPTO_BITMAP_SUPPORTED
+#endif
+
 /*
  * <ini>
  * enable_rtt_mac_randomization - Enable/Disable rtt mac randomization
@@ -318,28 +344,35 @@ enum wlan_epcs_frame {
 		0, \
 		"rf test mode Enable Flag")
 
-#ifdef CONFIG_BAND_6GHZ
 /*
- * disable_vlp_sta_conn_to_sp_ap - Disable VLP STA connection to SP AP
- * @Min: 0
- * @Max: 1
- * @Default: 0
+ * rf_mode_force_pwr_type - Force 6 GHz power type for RF mode enabled case
+ * @Min: -1
+ * @Max: 2
+ * @Default: -1
  *
- * This cfg is used to disable connection when AP is operating in 6 GHz
- * SP mode but STA doesn't support SP mode and supports VLP mode.
+ * This cfg is used to set force power type for RF mode enabled case
+ * as below.
  *
- * Related: None
+ * rf_mode_force_pwr_type -> Force power type
+ * -1 -> Use AP and STA intersected power type
+ *  0 -> Force LPI power
+ *  1 -> Force SP power
+ *  2 -> Force VLP power
  *
- * Supported Feature: STA
+ *  For rf_mode_force_pwr_type 1 and 2 if STA doesn't support SP and VLP
+ *  power respectively for connection frequency try to force LPI power.
+ *
+ *  Related: None
+ *
+ *  Supported Feature: STA
  */
-#define CFG_DISABLE_VLP_STA_CONN_TO_SP_AP CFG_BOOL( \
-		"disable_vlp_sta_conn_to_sp_ap", \
-		0, \
-		"disable vlp sta conn to sp ap")
-#define CFG_DIS_VLP_STA_CONN_TO_SP_AP	CFG(CFG_DISABLE_VLP_STA_CONN_TO_SP_AP)
-#else
-#define CFG_DIS_VLP_STA_CONN_TO_SP_AP
-#endif
+#define CFG_RF_MODE_FORCE_PWR_TYPE CFG_INT( \
+		"rf_mode_force_pwr_type", \
+		-1, \
+		2, \
+		-1, \
+		CFG_VALUE_OR_DEFAULT, \
+		"rf test mode force power type")
 
 #ifdef CONFIG_BAND_6GHZ
 /*
@@ -364,28 +397,53 @@ enum wlan_epcs_frame {
 #define CFG_6GHZ_STD_CONN_POLICY
 #endif
 
-#ifdef WLAN_FEATURE_11BE_MLO
+#ifdef CONFIG_BAND_6GHZ
 /*
- * emlsr_mode_enable - Enable eMLSR mode support
+ * relaxed_lpi_conn_policy - Enable relaxed LPI connection policy
  * @Min: 0
  * @Max: 1
  * @Default: 0
  *
- * This cfg is used to enable eMLSR mode
- * If 0 - MLMR mode (Default mode)
- * If 1 - eMLSR mode
+ * This ini is used to set relaxed LPI connection policy where STA can connect
+ * in LPI with a 6 GHz AP which didn't advertise 6 GHz power info or invalid
+ * power type.
  *
  * Related: None
  *
- * Supported Feature: STA
+ * Supported feature: STA
  */
-#define CFG_EMLSR_MODE_ENABLE CFG_BOOL( \
-		"emlsr_mode_enable", \
+#define CFG_RELAXED_LPI_CONNECTION_POLICY CFG_INI_BOOL( \
+		"relaxed_lpi_conn_policy", \
 		0, \
-		"eMLSR mode enable flag")
-#define CFG_EMLSR_MODE_ENABLED	CFG(CFG_EMLSR_MODE_ENABLE)
+		"Relaxed LPI connection policy")
+#define CFG_RELAXED_LPI_CONN_POLICY CFG(CFG_RELAXED_LPI_CONNECTION_POLICY)
 #else
-#define CFG_EMLSR_MODE_ENABLED
+#define CFG_RELAXED_LPI_CONN_POLICY
+#endif
+
+#ifdef WLAN_FEATURE_11BE_MLO
+/*
+ * sap_emlsr_mode_enable - Enable sap eMLSR mode support
+ * @Min: 0
+ * @Max: 1
+ * @Default: 1
+ *
+ * This cfg is used to enable sap eMLSR mode
+ * If 0 - MLMR mode
+ * If 1 - eMLSR mode (Default mode)
+ *
+ * Related: None
+ *
+ * Supported Feature: SAP
+ */
+#define CFG_SAP_EMLSR_MODE_ENABLE CFG_INI_BOOL( \
+		"sap_emlsr_mode_enable", \
+		1, \
+		"SAP eMLSR mode enable flag")
+#define CFG_SAP_EMLSR_MODE_ENABLED	CFG(CFG_SAP_EMLSR_MODE_ENABLE)
+
+#else
+#define CFG_SAP_EMLSR_MODE_ENABLED
 #endif
 
 /*
@@ -1231,10 +1289,53 @@ enum wlan_epcs_frame {
 #define CFG_T2LM_NEGOTIATION_SUPPORTED
 #endif
 
+/*
+ * <ini>
+ *
+ * enable_reduce_pwr_scan - Enable/Disable reduced power scan mode
+ * @Min: 0 Disable
+ * @Max: 1 Enable
+ * @Default: 0
+ *
+ * Related: None
+ *
+ *
+ * </ini>
+ */
+#define CFG_REDUCE_PWR_SCAN_MODE CFG_INI_BOOL( \
+	"enable_reduce_pwr_scan", \
+	1, \
+	"Reduce power scan mode")
+
+/*
+ * <ini>
+ * offload_ml_roam_partner_bringup_to_host - Enable/Disable the bringup of the
+ * partner vdev link to the host during MLO roaming.
+ * @Min: 0
+ * @Max: 1
+ * @Default: 1
+ *
+ * This ini is used to enable/disable the roam time optimization by which the
+ * host driver brings up the partner vdev post roam completion.
+ *
+ * Related: None
+ *
+ * Supported Feature: Roam, MLO
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+ #define CFG_PARTNER_BRINGUP_OFFLOAD_TO_HOST CFG_INI_BOOL( \
+				"offload_ml_roam_partner_bringup_to_host", \
+				0, \
+				"Enable disable MLO roaming optimization")
+
 #define CFG_GENERIC_ALL \
 	CFG(CFG_ENABLE_DEBUG_PACKET_LOG) \
 	CFG(CFG_PMF_SA_QUERY_MAX_RETRIES) \
 	CFG(CFG_PMF_SA_QUERY_RETRY_INTERVAL) \
+	CFG_OEM_EHT_MLO_CRYPTO_BITMAP_SUPPORTED \
 	CFG(CFG_ENABLE_RTT_MAC_RANDOMIZATION) \
 	CFG(CFG_RTT3_ENABLE) \
 	CFG(CFG_11H_SUPPORT_ENABLED) \
@@ -1266,12 +1367,15 @@ enum wlan_epcs_frame {
 	CFG(CFG_WLS_6GHZ_CAPABLE) \
 	CFG(CFG_MONITOR_MODE_CONCURRENCY) \
 	CFG(CFG_RF_TEST_MODE_SUPP_ENABLED) \
+	CFG(CFG_RF_MODE_FORCE_PWR_TYPE) \
 	CFG_WDS_MODE_ALL \
 	CFG(CFG_TX_RETRY_MULTIPLIER) \
 	CFG(CFG_MGMT_FRAME_HW_TX_RETRY_COUNT) \
 	CFG_6GHZ_STD_CONN_POLICY \
-	CFG_EMLSR_MODE_ENABLED \
+	CFG_SAP_EMLSR_MODE_ENABLED \
 	CFG_SR_ENABLE_MODES_ALL \
-	CFG_T2LM_NEGOTIATION_SUPPORTED\
-	CFG_DIS_VLP_STA_CONN_TO_SP_AP
+	CFG_T2LM_NEGOTIATION_SUPPORTED \
+	CFG_RELAXED_LPI_CONN_POLICY \
+	CFG(CFG_REDUCE_PWR_SCAN_MODE) \
+	CFG(CFG_PARTNER_BRINGUP_OFFLOAD_TO_HOST)
 #endif /* __CFG_MLME_GENERIC_H */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -66,6 +66,8 @@
 #define PMO_MAC_ACTION_FST            18
 #define PMO_MAC_ACTION_RVS            19
 #define PMO_MAC_ACTION_VHT            21
+#define PMO_MAC_ACTION_EHT            36
+#define PMO_MAC_ACTION_PROT_EHT       37
 #define PMO_VENDOR_PROTECTED          126
 #define PMO_MAC_ACTION_MAX            256
 
@@ -98,6 +100,8 @@
  * PMO_ACTION_FST             18      1
  * PMO_ACTION_RVS             19      1
  * PMO_ACTION_VHT             21      1
+ * PMO_MAC_ACTION_EHT         36      1
+ * PMO_MAC_ACTION_PROT_EHT    37      1
  * PMO_VENDOR_PROTECTED       126     1
  * ----------------------------+------+-------+
  */
@@ -113,7 +117,9 @@
 			 (1 << PMO_MAC_ACTION_RVS) | \
 			 (1 << PMO_MAC_ACTION_VHT))
 
-#define ALLOWED_ACTION_FRAMES_BITMAP1   0x0
+#define ALLOWED_ACTION_FRAMES_BITMAP1 \
+			 ((1 << (PMO_MAC_ACTION_EHT % 32)) |\
+			 (1 << (PMO_MAC_ACTION_PROT_EHT % 32)))
 #define ALLOWED_ACTION_FRAMES_BITMAP2   0x0
 #define ALLOWED_ACTION_FRAMES_BITMAP3 \
 		(1 << (PMO_VENDOR_PROTECTED % 32))
@@ -143,6 +149,12 @@
 
 #define DROP_PUBLIC_ACTION_FRAME_BITMAP \
 		(1 << PMO_MAC_ACTION_MEASUREMENT_PILOT)
+
+/* Bitmask to drop BTM action frames */
+#define DROP_WNM_ACTION_FRAME_BITMAP \
+		((1 << WNM_BSS_TM_QUERY) | \
+		 (1 << WNM_BSS_TM_REQUEST) |\
+		 (1 << WNM_BSS_TM_RESPONSE))
 
 #ifndef ANI_SUPPORT_11H
 /*

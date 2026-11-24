@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -112,6 +112,21 @@ extern "C" {
 /* Pebble */
 #ifndef TARGET_TYPE_QCN6432
 #define TARGET_TYPE_QCN6432   39
+#endif
+
+/* Orne */
+#ifndef TARGET_TYPE_WCN7750
+#define TARGET_TYPE_WCN7750	40
+#endif
+
+/* Marina */
+#ifndef TARGET_TYPE_QCA5424
+#define TARGET_TYPE_QCA5424   41
+#endif
+
+/* Cologne */
+#ifndef TARGET_TYPE_QCC2072
+#define TARGET_TYPE_QCC2072 42
 #endif
 
 #ifdef __cplusplus

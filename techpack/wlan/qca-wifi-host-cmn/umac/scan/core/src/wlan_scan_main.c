@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -22,6 +23,7 @@
 #include <wlan_scan_ucfg_api.h>
 #include <wlan_scan_utils_api.h>
 #include "wlan_scan_main.h"
+#include <wlan_scan_tgt_api.h>
 
 QDF_STATUS wlan_scan_psoc_created_notification(struct wlan_objmgr_psoc *psoc,
 						void *arg_list)
@@ -29,7 +31,7 @@ QDF_STATUS wlan_scan_psoc_created_notification(struct wlan_objmgr_psoc *psoc,
 	struct wlan_scan_obj *scan_obj;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 
-	scan_obj = qdf_mem_malloc_atomic(sizeof(struct wlan_scan_obj));
+	scan_obj = qdf_mem_common_alloc(sizeof(struct wlan_scan_obj));
 	if (!scan_obj) {
 		scm_err("Failed to allocate memory");
 		return QDF_STATUS_E_NOMEM;
@@ -67,7 +69,7 @@ QDF_STATUS wlan_scan_psoc_destroyed_notification(
 	if (QDF_IS_STATUS_ERROR(status))
 		scm_err("Failed to detach psoc scan component");
 
-	qdf_mem_free(scan_obj);
+	qdf_mem_common_free(scan_obj);
 
 	return status;
 }
@@ -122,3 +124,22 @@ QDF_STATUS wlan_scan_vdev_destroyed_notification(
 
 	return status;
 }
+
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+bool scm_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev)
+{
+	return tgt_scan_get_cached_scan_report_fw_cap(pdev);
+}
+
+QDF_STATUS scm_scan_request_cached_scan_report(struct wlan_objmgr_pdev *pdev)
+{
+	return tgt_scan_request_cached_scan_report(pdev);
+}
+
+QDF_STATUS scm_scan_cached_scan_report_ev_handler(struct wlan_objmgr_pdev *pdev,
+						  void *cached_scan_report)
+{
+	wlan_scan_cached_scan_report_ev_handler(pdev, cached_scan_report);
+	return QDF_STATUS_SUCCESS;
+}
+#endif

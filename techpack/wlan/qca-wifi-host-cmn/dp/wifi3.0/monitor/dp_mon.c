@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,6 +26,7 @@
 #include <dp_internal.h>
 #include "htt_ppdu_stats.h"
 #include "dp_cal_client_api.h"
+#include "wlan_utility.h"
 #if defined(DP_CON_MON)
 #ifndef REMOVE_PKT_LOG
 #include <pktlog_ac_api.h>
@@ -60,10 +61,13 @@
 static inline void
 dp_pdev_disable_mcopy_code(struct dp_pdev *pdev)
 {
+	uint8_t mac_id = 0;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	mon_pdev->mcopy_mode = M_COPY_DISABLED;
-	mon_pdev->mvdev = NULL;
+	mon_mac->mvdev = NULL;
+	mon_mac->vdev_id = DP_INVALID_VDEV_ID;
 }
 
 static inline void
@@ -92,12 +96,14 @@ dp_reset_mcopy_mode(struct dp_pdev *pdev)
 static QDF_STATUS
 dp_config_mcopy_mode(struct dp_pdev *pdev, int val)
 {
+	uint8_t mac_id = 0;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 	struct dp_mon_ops *mon_ops;
 	struct cdp_mon_ops *cdp_ops;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
-	if (mon_pdev->mvdev)
+	if (mon_mac->mvdev)
 		return QDF_STATUS_E_RESOURCES;
 
 	mon_pdev->mcopy_mode = val;
@@ -169,10 +175,12 @@ dp_reset_undecoded_metadata_capture(struct dp_pdev *pdev)
 static QDF_STATUS
 dp_enable_undecoded_metadata_capture(struct dp_pdev *pdev, int val)
 {
+	uint8_t mac_id = 0;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
-	if (!mon_pdev->mvdev) {
+	if (!mon_mac->mvdev) {
 		qdf_err("monitor_pdev is NULL");
 		return QDF_STATUS_E_RESOURCES;
 	}
@@ -216,16 +224,17 @@ QDF_STATUS dp_reset_monitor_mode(struct cdp_soc_t *soc_hdl,
 		dp_get_pdev_from_soc_pdev_id_wifi3((struct dp_soc *)soc,
 						   pdev_id);
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
-	struct dp_mon_pdev *mon_pdev;
+	struct dp_mon_mac *mon_mac;
+	uint8_t mac_id = 0;
 
 	if (!pdev)
 		return QDF_STATUS_E_FAILURE;
 
-	mon_pdev = pdev->monitor_pdev;
-	qdf_spin_lock_bh(&mon_pdev->mon_lock);
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+	qdf_spin_lock_bh(&mon_mac->mon_lock);
 	status = dp_reset_monitor_mode_unlock(soc_hdl, pdev_id,
 					      special_monitor);
-	qdf_spin_unlock_bh(&mon_pdev->mon_lock);
+	qdf_spin_unlock_bh(&mon_mac->mon_lock);
 
 	return status;
 }
@@ -239,8 +248,11 @@ QDF_STATUS dp_reset_monitor_mode_unlock(struct cdp_soc_t *soc_hdl,
 		dp_get_pdev_from_soc_pdev_id_wifi3((struct dp_soc *)soc,
 						   pdev_id);
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct dp_mon_mac *mon_mac;
 	struct dp_mon_pdev *mon_pdev;
 	struct cdp_mon_ops *cdp_ops;
+	uint8_t num_dst_rings = soc->wlan_cfg_ctx->num_rxdma_dst_rings_per_pdev;
+	uint8_t mac_id;
 
 	if (!pdev)
 		return QDF_STATUS_E_FAILURE;
@@ -260,8 +272,6 @@ QDF_STATUS dp_reset_monitor_mode_unlock(struct cdp_soc_t *soc_hdl,
 				     sizeof(struct hal_rx_mon_desc_info));
 #endif
 	}
-
-	mon_pdev->mvdev = NULL;
 
 	/*
 	 * Lite monitor mode, smart monitor mode and monitor
@@ -293,7 +303,32 @@ QDF_STATUS dp_reset_monitor_mode_unlock(struct cdp_soc_t *soc_hdl,
 				   soc);
 	}
 
+	for (mac_id = 0; mac_id < num_dst_rings; mac_id++) {
+		mon_mac = dp_get_mon_mac(pdev, mac_id);
+		mon_mac->mvdev = NULL;
+		mon_mac->vdev_id = DP_INVALID_VDEV_ID;
+	}
+
 	mon_pdev->monitor_configured = false;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+dp_pdev_set_mu_sniffer(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
+		       uint32_t mode)
+{
+	struct dp_soc *soc = (struct dp_soc *)soc_hdl;
+	struct dp_pdev *pdev =
+		dp_get_pdev_from_soc_pdev_id_wifi3((struct dp_soc *)soc,
+						   pdev_id);
+	struct dp_mon_pdev *mon_pdev;
+
+	if (!pdev || !pdev->monitor_pdev)
+		return QDF_STATUS_E_FAILURE;
+
+	mon_pdev = pdev->monitor_pdev;
+	mon_pdev->mu_sniffer_enabled = mode;
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -306,6 +341,7 @@ dp_pdev_set_advance_monitor_filter(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 	/* Many monitor VAPs can exists in a system but only one can be up at
 	 * anytime
 	 */
+	uint8_t mac_id = 0;
 	struct dp_soc *soc = (struct dp_soc *)soc_hdl;
 	struct dp_vdev *vdev;
 	struct dp_pdev *pdev =
@@ -313,12 +349,14 @@ dp_pdev_set_advance_monitor_filter(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 						   pdev_id);
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct dp_mon_pdev *mon_pdev;
+	struct dp_mon_mac *mon_mac;
 
 	if (!pdev || !pdev->monitor_pdev)
 		return QDF_STATUS_E_FAILURE;
 
 	mon_pdev = pdev->monitor_pdev;
-	vdev = mon_pdev->mvdev;
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+	vdev = mon_mac->mvdev;
 
 	if (!vdev)
 		return QDF_STATUS_E_FAILURE;
@@ -326,13 +364,6 @@ dp_pdev_set_advance_monitor_filter(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_WARN,
 		  "pdev=%pK, pdev_id=%d, soc=%pK vdev=%pK",
 		  pdev, pdev_id, soc, vdev);
-
-	/*Check if current pdev's monitor_vdev exists */
-	if (!mon_pdev->mvdev) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			  "vdev=%pK", vdev);
-		qdf_assert(vdev);
-	}
 
 	/* update filter mode, type in pdev structure */
 	mon_pdev->mon_filter_mode = filter_val->mode;
@@ -502,12 +533,13 @@ QDF_STATUS dp_vdev_set_monitor_mode(struct cdp_soc_t *dp_soc,
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct dp_mon_pdev *mon_pdev;
 	struct cdp_mon_ops *cdp_ops;
+	int8_t mac_id = MAX_NUM_LMAC_HW - 1;
+	struct dp_mon_mac *mon_mac;
 
 	if (!vdev)
 		return QDF_STATUS_E_FAILURE;
 
 	pdev = vdev->pdev;
-
 	if (!pdev || !pdev->monitor_pdev) {
 		dp_vdev_unref_delete(soc, vdev, DP_MOD_ID_CDP);
 		return QDF_STATUS_E_FAILURE;
@@ -515,7 +547,17 @@ QDF_STATUS dp_vdev_set_monitor_mode(struct cdp_soc_t *dp_soc,
 
 	mon_pdev = pdev->monitor_pdev;
 
-	mon_pdev->mvdev = vdev;
+	/* Clear chan_num of all mon_mac and leave mac_id to 0
+	 * to make sure mon_mac is always the first one
+	 */
+	while (mac_id >= 0) {
+		mon_mac = dp_get_mon_mac(pdev, mac_id);
+		mon_mac->mon_chan_num = INVALID_MON_CHAN_NUM;
+		mac_id--;
+	}
+
+	mon_mac->mvdev = vdev;
+	mon_mac->vdev_id = vdev->vdev_id;
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_WARN,
 		  "pdev=%pK, pdev_id=%d, soc=%pK vdev=%pK\n",
@@ -566,13 +608,18 @@ QDF_STATUS dp_vdev_set_monitor_mode(struct cdp_soc_t *dp_soc,
 	if (cdp_ops  && cdp_ops->soc_config_full_mon_mode)
 		cdp_ops->soc_config_full_mon_mode((struct cdp_pdev *)pdev,
 						  DP_FULL_MON_ENABLE);
-	dp_mon_filter_setup_mon_mode(pdev);
-	status = dp_mon_filter_update(pdev);
+
+	if (!dp_mon_mode_local_pkt_capture(soc)) {
+		dp_mon_filter_setup_mon_mode(pdev);
+		status = dp_mon_filter_update(pdev);
+	}
+
 	if (status != QDF_STATUS_SUCCESS) {
 		dp_cdp_err("%pK: Failed to reset monitor filters", soc);
 		dp_mon_filter_reset_mon_mode(pdev);
 		mon_pdev->monitor_configured = false;
-		mon_pdev->mvdev = NULL;
+		mon_mac->mvdev = NULL;
+		mon_mac->vdev_id = DP_INVALID_VDEV_ID;
 	}
 
 fail:
@@ -673,10 +720,12 @@ dp_config_debug_sniffer(struct dp_pdev *pdev, int val)
 QDF_STATUS
 dp_mon_config_undecoded_metadata_capture(struct dp_pdev *pdev, int val)
 {
+	uint8_t mac_id = 0;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
-	if (!mon_pdev->mvdev && !mon_pdev->scan_spcl_vap_configured) {
+	if (!mon_mac->mvdev && !mon_pdev->scan_spcl_vap_configured) {
 		qdf_err("No monitor or Special vap, undecoded capture not supported");
 		return QDF_STATUS_E_RESOURCES;
 	}
@@ -735,14 +784,20 @@ dp_monitor_mode_ring_config(struct dp_soc *soc, uint8_t mac_for_pdev,
 static uint8_t dp_get_mon_vdev_from_pdev_wifi3(struct cdp_soc_t *soc_hdl,
 		uint8_t pdev_id)
 {
+	struct dp_mon_mac *mon_mac;
 	struct dp_soc *soc = cdp_soc_t_to_dp_soc(soc_hdl);
 	struct dp_pdev *pdev = dp_get_pdev_from_soc_pdev_id_wifi3(soc, pdev_id);
+	uint8_t mac_id = 0;
 
-	if (qdf_unlikely(!pdev || !pdev->monitor_pdev ||
-				!pdev->monitor_pdev->mvdev))
+	if (qdf_unlikely(!pdev || !pdev->monitor_pdev))
 		return -EINVAL;
 
-	return pdev->monitor_pdev->mvdev->vdev_id;
+	/* return 1st mon vdev id */
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+	if (qdf_unlikely(!mon_mac->mvdev))
+		return -EINVAL;
+
+	return mon_mac->mvdev->vdev_id;
 }
 
 #if defined(QCA_TX_CAPTURE_SUPPORT) || defined(QCA_ENHANCED_STATS_SUPPORT)
@@ -816,16 +871,17 @@ QDF_STATUS dp_pdev_get_rx_mon_stats(struct cdp_soc_t *soc_hdl, uint8_t pdev_id,
 {
 	struct dp_soc *soc = (struct dp_soc *)soc_hdl;
 	struct dp_pdev *pdev = dp_get_pdev_from_soc_pdev_id_wifi3(soc, pdev_id);
-	struct dp_mon_pdev *mon_pdev;
+	struct dp_mon_mac *mon_mac;
+	uint8_t mac_id = 0;
 
 	if (!pdev)
 		return QDF_STATUS_E_FAILURE;
 
-	mon_pdev = pdev->monitor_pdev;
-	if (!mon_pdev)
+	if (!pdev->monitor_pdev)
 		return QDF_STATUS_E_FAILURE;
 
-	qdf_mem_copy(stats, &mon_pdev->rx_mon_stats,
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+	qdf_mem_copy(stats, &mon_mac->rx_mon_stats,
 		     sizeof(struct cdp_pdev_mon_stats));
 
 	return QDF_STATUS_SUCCESS;
@@ -1000,13 +1056,12 @@ print_ppdu_eth_type_mode_dl_ul(
 }
 
 static inline void
-dp_print_pdev_eht_ppdu_cnt(struct dp_pdev *pdev)
+dp_print_pdev_eht_ppdu_cnt(struct dp_mon_mac *mon_mac)
 {
 	struct cdp_pdev_mon_stats *rx_mon_stats;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 	uint32_t ppdu_type_mode;
 
-	rx_mon_stats = &mon_pdev->rx_mon_stats;
+	rx_mon_stats = &mon_mac->rx_mon_stats;
 	DP_PRINT_STATS("Monitor EHT PPDU  Count");
 	for (ppdu_type_mode = 0; ppdu_type_mode < CDP_EHT_TYPE_MODE_MAX;
 	     ppdu_type_mode++) {
@@ -1016,12 +1071,11 @@ dp_print_pdev_eht_ppdu_cnt(struct dp_pdev *pdev)
 }
 
 static inline void
-dp_print_pdev_mpdu_stats(struct dp_pdev *pdev)
+dp_print_pdev_mpdu_stats(struct dp_mon_mac *mon_mac)
 {
 	struct cdp_pdev_mon_stats *rx_mon_stats;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 
-	rx_mon_stats = &mon_pdev->rx_mon_stats;
+	rx_mon_stats = &mon_mac->rx_mon_stats;
 	DP_PRINT_STATS("Monitor MPDU Count");
 	dp_print_pdev_mpdu_pkt_type(rx_mon_stats);
 }
@@ -1033,98 +1087,103 @@ dp_print_pdev_rx_mon_stats(struct dp_pdev *pdev)
 	uint32_t *stat_ring_ppdu_ids;
 	uint32_t *dest_ring_ppdu_ids;
 	int i, idx;
+	struct dp_mon_mac *mon_mac;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	uint8_t mac_id = 0;
+	uint8_t num_rxdma_dst_rings =
+		pdev->soc->wlan_cfg_ctx->num_rxdma_dst_rings_per_pdev;
 
-	rx_mon_stats = &mon_pdev->rx_mon_stats;
+	for (mac_id = 0; mac_id < num_rxdma_dst_rings; mac_id++) {
+		mon_mac = dp_get_mon_mac(pdev, mac_id);
+		rx_mon_stats = &mon_mac->rx_mon_stats;
 
-	DP_PRINT_STATS("PDEV Rx Monitor Stats:\n");
+		DP_PRINT_STATS("MAC %u PDEV Rx Monitor Stats:\n", mac_id);
+		DP_PRINT_STATS("status_ppdu_compl_cnt = %d",
+			       rx_mon_stats->status_ppdu_compl);
+		DP_PRINT_STATS("status_ppdu_start_cnt = %d",
+			       rx_mon_stats->status_ppdu_start);
+		DP_PRINT_STATS("status_ppdu_end_cnt = %d",
+			       rx_mon_stats->status_ppdu_end);
+		DP_PRINT_STATS("status_ppdu_start_mis_cnt = %d",
+			       rx_mon_stats->status_ppdu_start_mis);
+		DP_PRINT_STATS("status_ppdu_end_mis_cnt = %d",
+			       rx_mon_stats->status_ppdu_end_mis);
+		DP_PRINT_STATS("start_user_info_cnt = %d",
+			       rx_mon_stats->start_user_info_cnt);
+		DP_PRINT_STATS("end_user_stats_cnt = %d",
+			       rx_mon_stats->end_user_stats_cnt);
+		DP_PRINT_STATS("status_ppdu_done_cnt = %d",
+			       rx_mon_stats->status_ppdu_done);
+		DP_PRINT_STATS("dest_ppdu_done_cnt = %d",
+			       rx_mon_stats->dest_ppdu_done);
+		DP_PRINT_STATS("dest_mpdu_done_cnt = %d",
+			       rx_mon_stats->dest_mpdu_done);
+		DP_PRINT_STATS("tlv_tag_status_err_cnt = %u",
+			       rx_mon_stats->tlv_tag_status_err);
+		DP_PRINT_STATS("mon status DMA not done WAR count= %u",
+			       rx_mon_stats->status_buf_done_war);
+		DP_PRINT_STATS("dest_mpdu_drop_cnt = %d",
+			       rx_mon_stats->dest_mpdu_drop);
+		DP_PRINT_STATS("dup_mon_linkdesc_cnt = %d",
+			       rx_mon_stats->dup_mon_linkdesc_cnt);
+		DP_PRINT_STATS("dup_mon_buf_cnt = %d",
+			       rx_mon_stats->dup_mon_buf_cnt);
+		DP_PRINT_STATS("mon_rx_buf_reaped = %u",
+			       rx_mon_stats->mon_rx_bufs_reaped_dest);
+		DP_PRINT_STATS("mon_rx_buf_replenished = %u",
+			       rx_mon_stats->mon_rx_bufs_replenished_dest);
+		DP_PRINT_STATS("ppdu_id_mismatch = %u",
+			       rx_mon_stats->ppdu_id_mismatch);
+		DP_PRINT_STATS("mpdu_ppdu_id_match_cnt = %d",
+			       rx_mon_stats->ppdu_id_match);
+		DP_PRINT_STATS("ppdus dropped frm status ring = %d",
+			       rx_mon_stats->status_ppdu_drop);
+		DP_PRINT_STATS("ppdus dropped frm dest ring = %d",
+			       rx_mon_stats->dest_ppdu_drop);
+		DP_PRINT_STATS("mpdu_ppdu_id_mismatch_drop = %u",
+			       rx_mon_stats->mpdu_ppdu_id_mismatch_drop);
+		DP_PRINT_STATS("mpdu_decap_type_invalid = %u",
+			       rx_mon_stats->mpdu_decap_type_invalid);
+		DP_PRINT_STATS("pending_desc_count = %u",
+			       rx_mon_stats->pending_desc_count);
+		stat_ring_ppdu_ids =
+			(uint32_t *)qdf_mem_malloc(sizeof(uint32_t) *
+						   MAX_PPDU_ID_HIST);
+		dest_ring_ppdu_ids =
+			(uint32_t *)qdf_mem_malloc(sizeof(uint32_t) *
+						   MAX_PPDU_ID_HIST);
 
-	DP_PRINT_STATS("status_ppdu_compl_cnt = %d",
-		       rx_mon_stats->status_ppdu_compl);
-	DP_PRINT_STATS("status_ppdu_start_cnt = %d",
-		       rx_mon_stats->status_ppdu_start);
-	DP_PRINT_STATS("status_ppdu_end_cnt = %d",
-		       rx_mon_stats->status_ppdu_end);
-	DP_PRINT_STATS("status_ppdu_start_mis_cnt = %d",
-		       rx_mon_stats->status_ppdu_start_mis);
-	DP_PRINT_STATS("status_ppdu_end_mis_cnt = %d",
-		       rx_mon_stats->status_ppdu_end_mis);
+		if (!stat_ring_ppdu_ids || !dest_ring_ppdu_ids)
+			DP_PRINT_STATS("Unable to allocate ppdu id hist mem\n");
 
-	DP_PRINT_STATS("start_user_info_cnt = %d",
-		       rx_mon_stats->start_user_info_cnt);
-	DP_PRINT_STATS("end_user_stats_cnt = %d",
-		       rx_mon_stats->end_user_stats_cnt);
+		qdf_spin_lock_bh(&mon_mac->mon_lock);
+		idx = rx_mon_stats->ppdu_id_hist_idx;
+		qdf_mem_copy(stat_ring_ppdu_ids,
+			     rx_mon_stats->stat_ring_ppdu_id_hist,
+			     sizeof(uint32_t) * MAX_PPDU_ID_HIST);
+		qdf_mem_copy(dest_ring_ppdu_ids,
+			     rx_mon_stats->dest_ring_ppdu_id_hist,
+			     sizeof(uint32_t) * MAX_PPDU_ID_HIST);
+		qdf_spin_unlock_bh(&mon_mac->mon_lock);
 
-	DP_PRINT_STATS("status_ppdu_done_cnt = %d",
-		       rx_mon_stats->status_ppdu_done);
-	DP_PRINT_STATS("dest_ppdu_done_cnt = %d",
-		       rx_mon_stats->dest_ppdu_done);
-	DP_PRINT_STATS("dest_mpdu_done_cnt = %d",
-		       rx_mon_stats->dest_mpdu_done);
-	DP_PRINT_STATS("tlv_tag_status_err_cnt = %u",
-		       rx_mon_stats->tlv_tag_status_err);
-	DP_PRINT_STATS("mon status DMA not done WAR count= %u",
-		       rx_mon_stats->status_buf_done_war);
-	DP_PRINT_STATS("dest_mpdu_drop_cnt = %d",
-		       rx_mon_stats->dest_mpdu_drop);
-	DP_PRINT_STATS("dup_mon_linkdesc_cnt = %d",
-		       rx_mon_stats->dup_mon_linkdesc_cnt);
-	DP_PRINT_STATS("dup_mon_buf_cnt = %d",
-		       rx_mon_stats->dup_mon_buf_cnt);
-	DP_PRINT_STATS("mon_rx_buf_reaped = %u",
-		       rx_mon_stats->mon_rx_bufs_reaped_dest);
-	DP_PRINT_STATS("mon_rx_buf_replenished = %u",
-		       rx_mon_stats->mon_rx_bufs_replenished_dest);
-	DP_PRINT_STATS("ppdu_id_mismatch = %u",
-		       rx_mon_stats->ppdu_id_mismatch);
-	DP_PRINT_STATS("mpdu_ppdu_id_match_cnt = %d",
-		       rx_mon_stats->ppdu_id_match);
-	DP_PRINT_STATS("ppdus dropped frm status ring = %d",
-		       rx_mon_stats->status_ppdu_drop);
-	DP_PRINT_STATS("ppdus dropped frm dest ring = %d",
-		       rx_mon_stats->dest_ppdu_drop);
-	DP_PRINT_STATS("mpdu_ppdu_id_mismatch_drop = %u",
-		       rx_mon_stats->mpdu_ppdu_id_mismatch_drop);
-	DP_PRINT_STATS("mpdu_decap_type_invalid = %u",
-		       rx_mon_stats->mpdu_decap_type_invalid);
-	DP_PRINT_STATS("pending_desc_count = %u",
-		       rx_mon_stats->pending_desc_count);
-	stat_ring_ppdu_ids =
-		(uint32_t *)qdf_mem_malloc(sizeof(uint32_t) * MAX_PPDU_ID_HIST);
-	dest_ring_ppdu_ids =
-		(uint32_t *)qdf_mem_malloc(sizeof(uint32_t) * MAX_PPDU_ID_HIST);
+		DP_PRINT_STATS("PPDU Id history:");
+		DP_PRINT_STATS("stat_ring_ppdu_ids\t dest_ring_ppdu_ids");
+		for (i = 0; i < MAX_PPDU_ID_HIST; i++) {
+			idx = (idx + 1) & (MAX_PPDU_ID_HIST - 1);
+			DP_PRINT_STATS("%*u\t%*u", 16,
+				       rx_mon_stats->stat_ring_ppdu_id_hist[idx], 16,
+				       rx_mon_stats->dest_ring_ppdu_id_hist[idx]);
+		}
+		qdf_mem_free(stat_ring_ppdu_ids);
+		qdf_mem_free(dest_ring_ppdu_ids);
+		DP_PRINT_STATS("mon_rx_dest_stuck = %d",
+			       rx_mon_stats->mon_rx_dest_stuck);
 
-	if (!stat_ring_ppdu_ids || !dest_ring_ppdu_ids)
-		DP_PRINT_STATS("Unable to allocate ppdu id hist mem\n");
-
-	qdf_spin_lock_bh(&mon_pdev->mon_lock);
-	idx = rx_mon_stats->ppdu_id_hist_idx;
-	qdf_mem_copy(stat_ring_ppdu_ids,
-		     rx_mon_stats->stat_ring_ppdu_id_hist,
-		     sizeof(uint32_t) * MAX_PPDU_ID_HIST);
-	qdf_mem_copy(dest_ring_ppdu_ids,
-		     rx_mon_stats->dest_ring_ppdu_id_hist,
-		     sizeof(uint32_t) * MAX_PPDU_ID_HIST);
-	qdf_spin_unlock_bh(&mon_pdev->mon_lock);
-
-	DP_PRINT_STATS("PPDU Id history:");
-	DP_PRINT_STATS("stat_ring_ppdu_ids\t dest_ring_ppdu_ids");
-	for (i = 0; i < MAX_PPDU_ID_HIST; i++) {
-		idx = (idx + 1) & (MAX_PPDU_ID_HIST - 1);
-		DP_PRINT_STATS("%*u\t%*u", 16,
-			       rx_mon_stats->stat_ring_ppdu_id_hist[idx], 16,
-			       rx_mon_stats->dest_ring_ppdu_id_hist[idx]);
+		dp_pdev_get_undecoded_capture_stats(mon_pdev, rx_mon_stats);
+		dp_print_pdev_mpdu_stats(mon_mac);
+		dp_print_pdev_eht_ppdu_cnt(mon_mac);
 	}
-	qdf_mem_free(stat_ring_ppdu_ids);
-	qdf_mem_free(dest_ring_ppdu_ids);
-	DP_PRINT_STATS("mon_rx_dest_stuck = %d",
-		       rx_mon_stats->mon_rx_dest_stuck);
-
-	dp_pdev_get_undecoded_capture_stats(mon_pdev, rx_mon_stats);
 	dp_mon_rx_print_advanced_stats(pdev->soc, pdev);
-
-	dp_print_pdev_mpdu_stats(pdev);
-	dp_print_pdev_eht_ppdu_cnt(pdev);
 
 }
 
@@ -1152,11 +1211,13 @@ dp_set_hybrid_pktlog_enable(struct dp_pdev *pdev,
 	struct wlan_cfg_dp_soc_ctxt *soc_cfg_ctx;
 	struct dp_mon_ops *mon_ops = NULL;
 	uint16_t num_buffers;
+	uint8_t mac_id = 0;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	/* Nothing needs to be done if monitor mode is
 	 * enabled
 	 */
-	if (mon_pdev->mvdev)
+	if (mon_mac->mvdev)
 		return false;
 
 	mon_ops = dp_mon_ops_get(pdev->soc);
@@ -1219,6 +1280,7 @@ int dp_set_pktlog_wifi3(struct dp_pdev *pdev, uint32_t event,
 	uint8_t mac_id = 0;
 	struct dp_mon_ops *mon_ops;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	soc = pdev->soc;
 	mon_ops = dp_mon_ops_get(soc);
@@ -1238,7 +1300,7 @@ int dp_set_pktlog_wifi3(struct dp_pdev *pdev, uint32_t event,
 			/* Nothing needs to be done if monitor mode is
 			 * enabled
 			 */
-			if (mon_pdev->mvdev)
+			if (mon_mac->mvdev)
 				return 0;
 
 			if (mon_pdev->rx_pktlog_mode == DP_RX_PKTLOG_FULL)
@@ -1263,7 +1325,7 @@ int dp_set_pktlog_wifi3(struct dp_pdev *pdev, uint32_t event,
 			/* Nothing needs to be done if monitor mode is
 			 * enabled
 			 */
-			if (mon_pdev->mvdev)
+			if (mon_mac->mvdev)
 				return 0;
 
 			if (mon_pdev->rx_pktlog_mode == DP_RX_PKTLOG_LITE)
@@ -1303,7 +1365,7 @@ int dp_set_pktlog_wifi3(struct dp_pdev *pdev, uint32_t event,
 			/* Nothing needs to be done if monitor mode is
 			 * enabled
 			 */
-			if (mon_pdev->mvdev)
+			if (mon_mac->mvdev)
 				return 0;
 
 			if (mon_pdev->rx_pktlog_cbf)
@@ -1349,7 +1411,7 @@ int dp_set_pktlog_wifi3(struct dp_pdev *pdev, uint32_t event,
 			/* Nothing needs to be done if monitor mode is
 			 * enabled
 			 */
-			if (mon_pdev->mvdev)
+			if (mon_mac->mvdev)
 				return 0;
 
 			if (mon_pdev->rx_pktlog_mode == DP_RX_PKTLOG_DISABLED)
@@ -1485,6 +1547,57 @@ dp_peer_get_tx_rx_stats(struct dp_peer *peer,
 }
 #endif
 
+static uint8_t dp_mon_get_802_11_sec_hdr_len(uint8_t enc_type)
+{
+	switch (enc_type) {
+	case cdp_sec_type_wep40:
+	case cdp_sec_type_wep104:
+	case cdp_sec_type_wep128:
+		return (dp_f_wep.ic_header + dp_f_wep.ic_trailer +
+			dp_f_wep.ic_miclen);
+	case cdp_sec_type_tkip:
+		return (dp_f_tkip.ic_header + dp_f_tkip.ic_trailer +
+			dp_f_tkip.ic_miclen);
+	case cdp_sec_type_aes_ccmp:
+		return (dp_f_ccmp.ic_header + dp_f_ccmp.ic_trailer +
+			dp_f_ccmp.ic_miclen);
+	case cdp_sec_type_wapi:
+	case cdp_sec_type_aes_ccmp_256:
+	case cdp_sec_type_aes_gcmp:
+	case cdp_sec_type_aes_gcmp_256:
+		return (dp_f_gcmp.ic_header + dp_f_gcmp.ic_trailer +
+			dp_f_gcmp.ic_miclen);
+	default:
+		return 0;
+	}
+}
+
+uint8_t
+dp_mon_get_802_11_hdr_length(struct cdp_rx_stats_ppdu_user *ppdu_user)
+{
+	uint8_t wifi_hdr_len = 0;
+	uint16_t fc = 0;
+
+	wifi_hdr_len = sizeof(struct ieee80211_frame);
+
+	if (!ppdu_user->frame_control_info_valid)
+		return wifi_hdr_len;
+
+	fc = ppdu_user->frame_control;
+
+	if ((((fc & DP_RX_MON_DSTODS_MASK) >> DP_RX_MON_DSTODS_BITS) &
+		IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_DSTODS) {
+		wifi_hdr_len += QDF_MAC_ADDR_SIZE;
+	}
+
+	if (fc & QDF_IEEE80211_FC0_SUBTYPE_QOS)
+		wifi_hdr_len += DP_RX_MON_QOS_LEN;
+
+	wifi_hdr_len += dp_mon_get_802_11_sec_hdr_len(ppdu_user->enc_type);
+
+	return wifi_hdr_len;
+}
+
 QDF_STATUS dp_peer_stats_notify(struct dp_pdev *dp_pdev, struct dp_peer *peer)
 {
 	struct cdp_interface_peer_stats peer_stats_intf = {0};
@@ -1505,10 +1618,12 @@ QDF_STATUS dp_peer_stats_notify(struct dp_pdev *dp_pdev, struct dp_peer *peer)
 
 	mon_peer_stats = &peer->monitor_peer->stats;
 
-	if (mon_peer_stats->rx.last_snr != mon_peer_stats->rx.snr)
+	if (mon_peer_stats->tx.last_ack_rssi !=
+			mon_peer_stats->tx.prev_ack_rssi)
 		peer_stats_intf.rssi_changed = true;
 
-	if ((mon_peer_stats->rx.snr && peer_stats_intf.rssi_changed) ||
+	if ((mon_peer_stats->tx.last_ack_rssi &&
+	     peer_stats_intf.rssi_changed) ||
 	    (mon_peer_stats->tx.tx_rate &&
 	     mon_peer_stats->tx.tx_rate != mon_peer_stats->tx.last_tx_rate)) {
 		qdf_mem_copy(peer_stats_intf.peer_mac, peer->mac_addr.raw,
@@ -1519,6 +1634,7 @@ QDF_STATUS dp_peer_stats_notify(struct dp_pdev *dp_pdev, struct dp_peer *peer)
 		peer_stats_intf.peer_tx_rate = mon_peer_stats->tx.tx_rate;
 		peer_stats_intf.peer_rssi = mon_peer_stats->rx.snr;
 		peer_stats_intf.ack_rssi = mon_peer_stats->tx.last_ack_rssi;
+		peer_stats_intf.avg_ack_rssi = CDP_SNR_OUT(mon_peer_stats->tx.avg_ack_rssi);
 		dp_peer_get_tx_rx_stats(peer, &peer_stats_intf);
 		peer_stats_intf.per = tgt_peer->stats.tx.last_per;
 		peer_stats_intf.free_buff = INVALID_FREE_BUFF;
@@ -1544,9 +1660,11 @@ static
 struct dp_vdev *dp_rx_nac_filter(struct dp_pdev *pdev,
 				 uint8_t *rx_pkt_hdr)
 {
+	uint8_t mac_id = 0;
 	struct ieee80211_frame *wh;
 	struct dp_neighbour_peer *peer = NULL;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	wh = (struct ieee80211_frame *)rx_pkt_hdr;
 
@@ -1569,7 +1687,7 @@ struct dp_vdev *dp_rx_nac_filter(struct dp_pdev *pdev,
 
 				qdf_spin_unlock_bh(&mon_pdev->neighbour_peer_mutex);
 
-			return mon_pdev->mvdev;
+			return mon_mac->mvdev;
 		}
 	}
 	qdf_spin_unlock_bh(&mon_pdev->neighbour_peer_mutex);
@@ -2083,11 +2201,14 @@ QDF_STATUS dp_rx_populate_cbf_hdr(struct dp_soc *soc,
 	uint32_t data_size, hdr_size, ppdu_id, align4byte;
 	struct dp_pdev *pdev = dp_get_pdev_for_lmac_id(soc, mac_id);
 	uint32_t *msg_word;
+	struct dp_mon_mac *mon_mac;
 
 	if (!pdev)
 		return QDF_STATUS_E_INVAL;
 
-	ppdu_id = pdev->monitor_pdev->ppdu_info.com_info.ppdu_id;
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+
+	ppdu_id = mon_mac->ppdu_info.com_info.ppdu_id;
 
 	hdr_size = HTT_T2H_PPDU_STATS_IND_HDR_SIZE
 		+ qdf_offsetof(htt_ppdu_stats_rx_mgmtctrl_payload_tlv, payload);
@@ -2150,8 +2271,10 @@ void dp_pdev_clear_link_airtime_stats(struct dp_pdev *pdev)
 {
 	uint8_t ac;
 
-	for (ac = 0; ac < WME_AC_MAX; ac++)
-		pdev->stats.telemetry_stats.link_airtime[ac] = 0;
+	for (ac = 0; ac < WME_AC_MAX; ac++) {
+		pdev->stats.telemetry_stats.tx_link_airtime[ac] = 0;
+		pdev->stats.telemetry_stats.rx_link_airtime[ac] = 0;
+	}
 }
 
 /**
@@ -2170,6 +2293,10 @@ void dp_peer_update_telemetry_stats(struct dp_soc *soc,
 	struct dp_mon_peer *mon_peer = NULL;
 	uint8_t ac;
 	uint64_t current_time = qdf_get_log_timestamp();
+	uint32_t remn, time_diff, usage;
+	uint16_t usage_per_sec;
+	struct dp_mon_peer_airtime_stats *stat_airtime;
+	struct dp_mon_peer_airtime_consumption *consump;
 
 	vdev = peer->vdev;
 	if (!vdev)
@@ -2181,29 +2308,57 @@ void dp_peer_update_telemetry_stats(struct dp_soc *soc,
 
 	mon_peer = peer->monitor_peer;
 	if (qdf_likely(mon_peer)) {
+		stat_airtime = &mon_peer->stats.airtime_stats;
+		time_diff = (uint32_t)(current_time -
+					stat_airtime->last_update_time);
 		for (ac = 0; ac < WME_AC_MAX; ac++) {
-			mon_peer->stats.airtime_stats.tx_airtime_consumption[ac].avg_consumption_per_sec =
-				(uint8_t)qdf_do_div((uint64_t)(mon_peer->stats.airtime_stats.tx_airtime_consumption[ac].consumption * 100),
-						    (uint32_t)(current_time - mon_peer->stats.airtime_stats.last_update_time));
-			mon_peer->stats.airtime_stats.rx_airtime_consumption[ac].avg_consumption_per_sec =
-				(uint8_t)qdf_do_div((uint64_t)(mon_peer->stats.airtime_stats.rx_airtime_consumption[ac].consumption * 100),
-						    (uint32_t)(current_time - mon_peer->stats.airtime_stats.last_update_time));
+			consump = &stat_airtime->tx_airtime_consumption[ac];
+			usage = consump->consumption;
+			usage_per_sec = (uint8_t)qdf_do_div((uint64_t)
+						(usage * 100), time_diff);
+			remn = qdf_do_div_rem((uint64_t)
+						(usage * 100), time_diff);
+			if (remn < time_diff / 2) {
+				if (remn && usage_per_sec == 0)
+					usage_per_sec++;
+			} else {
+				if (usage_per_sec < 100)
+					usage_per_sec++;
+			}
+			consump->avg_consumption_per_sec = usage_per_sec;
 			/* Store each peer airtime consumption in pdev
-			 * link_airtime to calculate pdev's total airtime
+			 * tx_link_airtime to calculate pdev's total tx airtime
 			 * consumption
 			 */
-			DP_STATS_INC(
-				pdev,
-				telemetry_stats.link_airtime[ac],
-				mon_peer->stats.airtime_stats.tx_airtime_consumption[ac].consumption);
-			DP_STATS_INC(
-				pdev,
-				telemetry_stats.link_airtime[ac],
-				mon_peer->stats.airtime_stats.rx_airtime_consumption[ac].consumption);
-			mon_peer->stats.airtime_stats.tx_airtime_consumption[ac].consumption = 0;
-			mon_peer->stats.airtime_stats.rx_airtime_consumption[ac].consumption = 0;
+			DP_STATS_INC(pdev,
+				     telemetry_stats.tx_link_airtime[ac],
+				     consump->consumption);
+			consump->consumption = 0;
+
+			consump = &stat_airtime->rx_airtime_consumption[ac];
+			usage = consump->consumption;
+			usage_per_sec = (uint8_t)qdf_do_div((uint64_t)
+						(usage * 100), time_diff);
+			remn = qdf_do_div_rem((uint64_t)
+						(usage * 100), time_diff);
+			if (remn < time_diff / 2) {
+				if (remn && usage_per_sec == 0)
+					usage_per_sec++;
+			} else {
+				if (usage_per_sec < 100)
+					usage_per_sec++;
+			}
+			consump->avg_consumption_per_sec = usage_per_sec;
+			/* Store each peer airtime consumption in pdev
+			 * rx_link_airtime to calculate pdev's total rx airtime
+			 * consumption
+			 */
+			DP_STATS_INC(pdev,
+				     telemetry_stats.rx_link_airtime[ac],
+				     consump->consumption);
+			consump->consumption = 0;
 		}
-		mon_peer->stats.airtime_stats.last_update_time = current_time;
+		stat_airtime->last_update_time = current_time;
 	}
 }
 
@@ -3105,7 +3260,8 @@ dp_ppdu_desc_user_deter_stats_update(struct dp_pdev *pdev,
 	if (qdf_unlikely(!mon_peer))
 		return;
 
-	if (ppdu_desc->txmode_type == TX_MODE_TYPE_UNKNOWN)
+	if (ppdu_desc->txmode_type == TX_MODE_TYPE_UNKNOWN ||
+	    ppdu_desc->txmode >= TX_MODE_UL_MAX)
 		return;
 
 	if (ppdu_desc->txmode_type == TX_MODE_TYPE_UL &&
@@ -3173,6 +3329,24 @@ dp_ppdu_desc_user_deter_stats_update(struct dp_pdev *pdev,
 		}
 	}
 }
+
+/**
+ * dp_pdev_update_erp_tx_stats - Update pdev erp tx stats
+ * @pdev: Datapath pdev handle
+ * @ppdu: PPDU descriptor
+ *
+ * Return: None
+ */
+static inline void
+dp_pdev_update_erp_tx_stats(
+		struct dp_pdev *pdev,
+		struct cdp_tx_completion_ppdu_user *ppdu)
+{
+	DP_STATS_INC(pdev, erp_stats.tx_data_msdu_cnt,
+		     ppdu->success_msdus);
+	DP_STATS_INC(pdev, erp_stats.total_tx_data_bytes,
+		     ppdu->success_bytes);
+}
 #else
 static inline
 void dp_ppdu_desc_get_txmode(struct cdp_tx_completion_ppdu *ppdu)
@@ -3201,6 +3375,12 @@ dp_pdev_telemetry_stats_update(
 static inline void
 dp_pdev_update_deter_stats(struct dp_pdev *pdev,
 			   struct cdp_tx_completion_ppdu *ppdu)
+{ }
+
+static inline void
+dp_pdev_update_erp_tx_stats(
+		struct dp_pdev *pdev,
+		struct cdp_tx_completion_ppdu_user *ppdu)
 { }
 #endif
 
@@ -3236,7 +3416,7 @@ dp_tx_stats_update(struct dp_pdev *pdev, struct dp_peer *peer,
 	num_msdu = ppdu->num_msdu;
 	num_mpdu = ppdu->mpdu_success;
 	mpdu_tried = ppdu->mpdu_tried_ucast + ppdu->mpdu_tried_mcast;
-	mpdu_failed = mpdu_tried - num_mpdu;
+	mpdu_failed = ppdu->mpdu_failed;
 	tx_byte_count = ppdu->success_bytes;
 
 	/* If the peer statistics are already processed as part of
@@ -3325,8 +3505,17 @@ dp_tx_stats_update(struct dp_pdev *pdev, struct dp_peer *peer,
 
 	DP_STATS_INCC(mon_peer, tx.stbc, num_msdu, ppdu->stbc);
 	DP_STATS_INCC(mon_peer, tx.ldpc, num_msdu, ppdu->ldpc);
-	if (!(ppdu->is_mcast) && ppdu->ack_rssi_valid)
+	if (!(ppdu->is_mcast) && ppdu->ack_rssi_valid && (ppdu_desc->ack_rssi < 0x80)) {
 		DP_STATS_UPD(mon_peer, tx.last_ack_rssi, ppdu_desc->ack_rssi);
+
+		if (qdf_unlikely(mon_peer->stats.tx.avg_ack_rssi == CDP_INVALID_SNR)) {
+			mon_peer->stats.tx.avg_ack_rssi =
+				CDP_SNR_IN(mon_peer->stats.tx.last_ack_rssi);
+		} else {
+			CDP_SNR_UPDATE_AVG(mon_peer->stats.tx.avg_ack_rssi,
+					mon_peer->stats.tx.last_ack_rssi);
+		}
+	}
 
 	if (!ppdu->is_mcast) {
 		DP_STATS_INC(mon_peer, tx.tx_ucast_success.num, num_msdu);
@@ -3376,7 +3565,12 @@ dp_tx_stats_update(struct dp_pdev *pdev, struct dp_peer *peer,
 
 	dp_pdev_telemetry_stats_update(pdev, ppdu);
 
+	dp_pdev_update_erp_tx_stats(pdev, ppdu);
+
 	dp_peer_stats_notify(pdev, peer);
+
+	if (!(ppdu->is_mcast) && ppdu->ack_rssi_valid)
+		DP_STATS_UPD(mon_peer, tx.prev_ack_rssi, ppdu_desc->ack_rssi);
 
 	ratekbps = mon_peer->stats.tx.tx_rate;
 	DP_STATS_UPD(mon_peer, tx.last_tx_rate, ratekbps);
@@ -4682,6 +4876,8 @@ dp_ppdu_desc_user_phy_tx_time_update(struct dp_pdev *pdev,
 				user->nss * user->ru_tones) / nss_ru_width_sum;
 	}
 
+	DP_STATS_INC(mon_peer, tx.tx_ppdu_duration, user->phy_tx_time_us);
+
 	dp_ppdu_desc_user_airtime_consumption_update(peer, user);
 }
 #else
@@ -5511,7 +5707,14 @@ dp_ppdu_stats_ind_handler(struct htt_soc *soc,
 void
 dp_mon_set_bsscolor(struct dp_pdev *pdev, uint8_t bsscolor)
 {
-	pdev->monitor_pdev->rx_mon_recv_status.bsscolor = bsscolor;
+	/*
+	 * mac_id value is required where per MAC mon_mac handle
+	 * is needed in single pdev multiple MAC case.
+	 */
+	uint8_t mac_id = 0;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
+
+	mon_mac->rx_mon_recv_status.bsscolor = bsscolor;
 }
 
 bool dp_pdev_get_filter_ucast_data(struct cdp_pdev *pdev_handle)
@@ -5571,6 +5774,8 @@ QDF_STATUS dp_mon_soc_cfg_init(struct dp_soc *soc)
 	case TARGET_TYPE_MANGO:
 	case TARGET_TYPE_PEACH:
 	case TARGET_TYPE_WCN6450:
+	case TARGET_TYPE_WCN7750:
+	case TARGET_TYPE_QCC2072:
 		/* do nothing */
 		break;
 	case TARGET_TYPE_QCA8074:
@@ -5601,6 +5806,7 @@ QDF_STATUS dp_mon_soc_cfg_init(struct dp_soc *soc)
 		mon_soc->hw_nac_monitor_support = 1;
 		break;
 	case TARGET_TYPE_QCN9224:
+	case TARGET_TYPE_QCA5424:
 	case TARGET_TYPE_QCA5332:
 	case TARGET_TYPE_QCN6432:
 		wlan_cfg_set_mon_delayed_replenish_entries(soc->wlan_cfg_ctx,
@@ -5638,11 +5844,14 @@ static void dp_mon_pdev_per_target_config(struct dp_pdev *pdev)
 	case TARGET_TYPE_QCN9224:
 	case TARGET_TYPE_QCA5332:
 	case TARGET_TYPE_QCN6432:
+	case TARGET_TYPE_QCA5424:
 	case TARGET_TYPE_MANGO:
 		mon_pdev->is_tlv_hdr_64_bit = true;
 		mon_pdev->tlv_hdr_size = HAL_RX_TLV64_HDR_SIZE;
 		break;
 	case TARGET_TYPE_PEACH:
+	case TARGET_TYPE_WCN7750:
+	case TARGET_TYPE_QCC2072:
 	default:
 		mon_pdev->is_tlv_hdr_64_bit = false;
 		mon_pdev->tlv_hdr_size = HAL_RX_TLV32_HDR_SIZE;
@@ -5771,6 +5980,11 @@ QDF_STATUS dp_mon_pdev_attach(struct dp_pdev *pdev)
 		goto fail0;
 	}
 
+	wlan_minidump_log(mon_pdev, sizeof(*mon_pdev), soc->ctrl_psoc,
+			  WLAN_MD_DP_MON_PDEV, "dp_mon_pdev");
+	wlan_minidump_log(soc->monitor_soc, sizeof(*soc->monitor_soc),
+			  soc->ctrl_psoc, WLAN_MD_DP_MON_SOC, "dp_mon_soc");
+
 	pdev->monitor_pdev = mon_pdev;
 	mon_ops = dp_mon_ops_get(pdev->soc);
 	if (!mon_ops) {
@@ -5827,12 +6041,14 @@ QDF_STATUS dp_mon_pdev_detach(struct dp_pdev *pdev)
 {
 	struct dp_mon_pdev *mon_pdev;
 	struct dp_mon_ops *mon_ops = NULL;
+	struct dp_soc *soc;
 
 	if (!pdev) {
 		dp_mon_err("pdev is NULL");
 		return QDF_STATUS_E_FAILURE;
 	}
 
+	soc = pdev->soc;
 	mon_pdev = pdev->monitor_pdev;
 	if (!mon_pdev) {
 		dp_mon_err("Monitor pdev is NULL");
@@ -5845,6 +6061,11 @@ QDF_STATUS dp_mon_pdev_detach(struct dp_pdev *pdev)
 		return QDF_STATUS_E_FAILURE;
 	}
 
+	wlan_minidump_remove(mon_pdev, sizeof(*mon_pdev), pdev->soc->ctrl_psoc,
+			     WLAN_MD_DP_MON_PDEV, "dp_mon_pdev");
+	wlan_minidump_remove(soc->monitor_soc, sizeof(*soc->monitor_soc),
+			     soc->ctrl_psoc, WLAN_MD_DP_MON_SOC, "dp_mon_soc");
+
 	if (mon_ops->mon_rx_ppdu_info_cache_destroy)
 		mon_ops->mon_rx_ppdu_info_cache_destroy(pdev);
 	if (mon_ops->rx_mon_desc_pool_free)
@@ -5856,20 +6077,6 @@ QDF_STATUS dp_mon_pdev_detach(struct dp_pdev *pdev)
 	dp_context_free_mem(pdev->soc, DP_MON_PDEV_TYPE, mon_pdev);
 	pdev->monitor_pdev = NULL;
 	return QDF_STATUS_SUCCESS;
-}
-
-static void dp_mon_pdev_filter_init(struct dp_mon_pdev *mon_pdev)
-{
-	if (!mon_pdev)
-		return;
-
-	mon_pdev->mon_filter_mode = MON_FILTER_ALL;
-	mon_pdev->fp_mgmt_filter = FILTER_MGMT_ALL;
-	mon_pdev->fp_ctrl_filter = FILTER_CTRL_ALL;
-	mon_pdev->fp_data_filter = FILTER_DATA_ALL;
-	mon_pdev->mo_mgmt_filter = FILTER_MGMT_ALL;
-	mon_pdev->mo_ctrl_filter = FILTER_CTRL_ALL;
-	mon_pdev->mo_data_filter = FILTER_DATA_ALL;
 }
 
 #ifdef WLAN_TX_PKT_CAPTURE_ENH
@@ -5986,6 +6193,60 @@ void dp_mon_register_lpc_ops_1_0(struct dp_mon_ops *mon_ops)
 }
 #endif
 
+/**
+ * dp_ch_band_lmac_id_mapping_init() - Initialize lmac band mapping
+ * @pdev: dp pdev handle
+ *
+ * Return: None
+ *
+ */
+static inline void
+dp_ch_band_lmac_id_mapping_init(struct dp_pdev *pdev)
+{
+	int target_type = hal_get_target_type(pdev->soc->hal_soc);
+
+	switch (target_type) {
+	case TARGET_TYPE_QCA6750:
+	case TARGET_TYPE_WCN6450:
+	case TARGET_TYPE_WCN7750:
+	case TARGET_TYPE_QCC2072:
+		pdev->ch_band_lmac_id_mapping[REG_BAND_2G] = DP_MAC0_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_5G] = DP_MAC0_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_6G] = DP_MAC0_LMAC_ID;
+		break;
+	case TARGET_TYPE_KIWI:
+	case TARGET_TYPE_MANGO:
+	case TARGET_TYPE_PEACH:
+		pdev->ch_band_lmac_id_mapping[REG_BAND_2G] = DP_MAC0_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_5G] = DP_MAC0_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_6G] = DP_MAC0_LMAC_ID;
+		break;
+	default:
+		pdev->ch_band_lmac_id_mapping[REG_BAND_2G] = DP_MAC1_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_5G] = DP_MAC0_LMAC_ID;
+		pdev->ch_band_lmac_id_mapping[REG_BAND_6G] = DP_MAC0_LMAC_ID;
+		break;
+	}
+}
+
+#if defined(FEATURE_ML_MONITOR_MODE_SUPPORT) || \
+	defined(FEATURE_ML_LOCAL_PKT_CAPTURE)
+static inline void
+dp_init_mon_chan_band(struct dp_mon_pdev *mon_pdev)
+{
+	uint8_t mac_id;
+
+	for (mac_id = 0; mac_id < MAX_NUM_LMAC_HW; mac_id++)
+		mon_pdev->mon_mac[mac_id].mon_chan_band = REG_BAND_UNKNOWN;
+}
+#else
+static inline void
+dp_init_mon_chan_band(struct dp_mon_pdev *mon_pdev)
+{
+	mon_pdev->mon_mac.mon_chan_band = REG_BAND_UNKNOWN;
+}
+#endif
+
 QDF_STATUS dp_mon_pdev_init(struct dp_pdev *pdev)
 {
 	struct dp_mon_pdev *mon_pdev;
@@ -6029,7 +6290,7 @@ QDF_STATUS dp_mon_pdev_init(struct dp_pdev *pdev)
 	qdf_spinlock_create(&mon_pdev->ppdu_stats_lock);
 	qdf_spinlock_create(&mon_pdev->neighbour_peer_mutex);
 	mon_pdev->monitor_configured = false;
-	mon_pdev->mon_chan_band = REG_BAND_UNKNOWN;
+	dp_init_mon_chan_band(mon_pdev);
 
 	TAILQ_INIT(&mon_pdev->neighbour_peers_list);
 	mon_pdev->neighbour_peers_added = false;
@@ -6088,6 +6349,7 @@ QDF_STATUS dp_mon_pdev_init(struct dp_pdev *pdev)
 
 	mon_pdev->is_dp_mon_pdev_initialized = true;
 	dp_mon_set_local_pkt_capture_running(mon_pdev, false);
+	dp_ch_band_lmac_id_mapping_init(pdev);
 
 	return QDF_STATUS_SUCCESS;
 
@@ -6175,9 +6437,15 @@ QDF_STATUS dp_mon_vdev_attach(struct dp_vdev *vdev)
 		return QDF_STATUS_E_NOMEM;
 	}
 
-	if (pdev && pdev->monitor_pdev &&
-	    pdev->monitor_pdev->scan_spcl_vap_configured)
-		dp_scan_spcl_vap_stats_attach(mon_vdev);
+	if (pdev) {
+		if (pdev->monitor_pdev &&
+		    pdev->monitor_pdev->scan_spcl_vap_configured)
+			dp_scan_spcl_vap_stats_attach(mon_vdev);
+
+		wlan_minidump_log(mon_vdev, sizeof(*mon_vdev),
+				  pdev->soc->ctrl_psoc, WLAN_MD_DP_MON_VDEV,
+				  "dp_mon_vdev");
+	}
 
 	vdev->monitor_vdev = mon_vdev;
 
@@ -6189,6 +6457,8 @@ QDF_STATUS dp_mon_vdev_detach(struct dp_vdev *vdev)
 	struct dp_mon_vdev *mon_vdev = vdev->monitor_vdev;
 	struct dp_pdev *pdev = vdev->pdev;
 	struct dp_mon_ops *mon_ops = dp_mon_ops_get(pdev->soc);
+	uint8_t mac_id;
+	struct dp_mon_mac *mon_mac;
 
 	if (!mon_ops)
 		return QDF_STATUS_E_FAILURE;
@@ -6199,12 +6469,23 @@ QDF_STATUS dp_mon_vdev_detach(struct dp_vdev *vdev)
 	if (pdev->monitor_pdev->scan_spcl_vap_configured)
 		dp_scan_spcl_vap_stats_detach(mon_vdev);
 
+	wlan_minidump_remove(mon_vdev, sizeof(*mon_vdev), pdev->soc->ctrl_psoc,
+			     WLAN_MD_DP_MON_VDEV, "dp_mon_vdev");
 	qdf_mem_free(mon_vdev);
 	vdev->monitor_vdev = NULL;
-	/* set mvdev to NULL only if detach is called for monitor/special vap
-	 */
-	if (pdev->monitor_pdev->mvdev == vdev)
-		pdev->monitor_pdev->mvdev = NULL;
+	pdev->monitor_pdev->mon_fcs_cap = 0;
+
+	/* For ML LPC case both mon mac mvdev points to same vdev */
+	for (mac_id = 0; mac_id < MAX_NUM_LMAC_HW; mac_id++) {
+		mon_mac = dp_get_mon_mac(pdev, mac_id);
+		/* set mvdev to NULL only if detach is called for
+		 * monitor/special vap
+		 */
+		if (mon_mac->mvdev == vdev) {
+			mon_mac->mvdev = NULL;
+			mon_mac->vdev_id = DP_INVALID_VDEV_ID;
+		}
+	}
 
 	if (mon_ops->mon_lite_mon_vdev_delete)
 		mon_ops->mon_lite_mon_vdev_delete(pdev, vdev);
@@ -6304,6 +6585,7 @@ QDF_STATUS dp_mon_peer_attach(struct dp_peer *peer)
 {
 	struct dp_mon_peer *mon_peer;
 	struct dp_pdev *pdev;
+	struct dp_soc *soc;
 
 	mon_peer = (struct dp_mon_peer *)qdf_mem_malloc(sizeof(*mon_peer));
 	if (!mon_peer) {
@@ -6313,6 +6595,9 @@ QDF_STATUS dp_mon_peer_attach(struct dp_peer *peer)
 
 	peer->monitor_peer = mon_peer;
 	pdev = peer->vdev->pdev;
+	soc = pdev->soc;
+	wlan_minidump_log(mon_peer, sizeof(*mon_peer), soc->ctrl_psoc,
+			  WLAN_MD_DP_MON_PEER, "dp_mon_peer");
 	/*
 	 * In tx_monitor mode, filter may be set for unassociated peer
 	 * when unassociated peer get associated peer need to
@@ -6322,6 +6607,7 @@ QDF_STATUS dp_mon_peer_attach(struct dp_peer *peer)
 
 	DP_STATS_INIT(mon_peer);
 	DP_STATS_UPD(mon_peer, rx.avg_snr, CDP_INVALID_SNR);
+	DP_STATS_UPD(mon_peer, tx.avg_ack_rssi, CDP_INVALID_SNR);
 
 	dp_mon_peer_attach_notify(peer);
 
@@ -6332,12 +6618,15 @@ QDF_STATUS dp_mon_peer_attach(struct dp_peer *peer)
 QDF_STATUS dp_mon_peer_detach(struct dp_peer *peer)
 {
 	struct dp_mon_peer *mon_peer = peer->monitor_peer;
+	struct dp_pdev *pdev;
 
 	if (!mon_peer)
 		return QDF_STATUS_SUCCESS;
 
+	pdev = peer->vdev->pdev;
 	dp_mon_peer_detach_notify(peer);
-
+	wlan_minidump_remove(mon_peer, sizeof(*mon_peer), pdev->soc->ctrl_psoc,
+			     WLAN_MD_DP_MON_PEER, "dp_mon_peer");
 	qdf_mem_free(mon_peer);
 	peer->monitor_peer = NULL;
 
@@ -6381,6 +6670,7 @@ void dp_mon_peer_reset_stats(struct dp_peer *peer)
 
 	DP_STATS_CLR(mon_peer);
 	DP_STATS_UPD(mon_peer, rx.avg_snr, CDP_INVALID_SNR);
+	DP_STATS_UPD(mon_peer, tx.avg_ack_rssi, CDP_INVALID_SNR);
 }
 
 void dp_mon_peer_get_stats(struct dp_peer *peer, void *arg,
@@ -6488,6 +6778,25 @@ dp_mon_peer_get_stats_param(struct dp_peer *peer, enum cdp_peer_stats_type type,
 
 	return ret;
 }
+
+#ifdef QCA_PEER_EXT_STATS
+void dp_mon_peer_get_tx_ext_stats(struct dp_peer *peer,
+				  struct cdp_telemetry_peer_tx_ext_stats *stats)
+{
+	uint8_t pkt_type_index, mcs_index;
+
+	if (!peer->monitor_peer)
+		return;
+
+	stats->avg_ack_rssi = CDP_SNR_OUT(peer->monitor_peer->stats.tx.avg_ack_rssi);
+	for (pkt_type_index = 0; pkt_type_index < DOT11_MAX; pkt_type_index++) {
+		for (mcs_index = 0; mcs_index < MAX_MCS; mcs_index++) {
+			stats->packet_type[pkt_type_index].mcs_count[mcs_index] =
+			peer->monitor_peer->stats.tx.pkt_type[pkt_type_index].mcs_count[mcs_index];
+		}
+	}
+}
+#endif
 #endif
 
 void dp_mon_ops_register(struct dp_soc *soc)
@@ -6513,6 +6822,8 @@ void dp_mon_ops_register(struct dp_soc *soc)
 	case TARGET_TYPE_QCA5018:
 	case TARGET_TYPE_QCN6122:
 	case TARGET_TYPE_WCN6450:
+	case TARGET_TYPE_WCN7750:
+	case TARGET_TYPE_QCC2072:
 		dp_mon_ops_register_1_0(mon_soc);
 		dp_mon_ops_register_cmn_2_0(mon_soc);
 		dp_mon_ops_register_tx_2_0(mon_soc);
@@ -6520,6 +6831,7 @@ void dp_mon_ops_register(struct dp_soc *soc)
 	case TARGET_TYPE_QCN9224:
 	case TARGET_TYPE_QCA5332:
 	case TARGET_TYPE_QCN6432:
+	case TARGET_TYPE_QCA5424:
 #if defined(WLAN_PKT_CAPTURE_TX_2_0) || defined(WLAN_PKT_CAPTURE_RX_2_0)
 		dp_mon_ops_register_2_0(mon_soc);
 #endif
@@ -6579,6 +6891,8 @@ void dp_mon_cdp_ops_register(struct dp_soc *soc)
 	case TARGET_TYPE_QCA5018:
 	case TARGET_TYPE_QCN6122:
 	case TARGET_TYPE_WCN6450:
+	case TARGET_TYPE_WCN7750:
+	case TARGET_TYPE_QCC2072:
 		dp_mon_cdp_ops_register_1_0(ops);
 #if defined(WLAN_CFR_ENABLE) && defined(WLAN_ENH_CFR_ENABLE)
 		dp_cfr_filter_register_1_0(ops);
@@ -6591,6 +6905,7 @@ void dp_mon_cdp_ops_register(struct dp_soc *soc)
 	case TARGET_TYPE_QCN9224:
 	case TARGET_TYPE_QCA5332:
 	case TARGET_TYPE_QCN6432:
+	case TARGET_TYPE_QCA5424:
 #if defined(WLAN_PKT_CAPTURE_TX_2_0) || defined(WLAN_PKT_CAPTURE_RX_2_0)
 		dp_mon_cdp_ops_register_2_0(ops);
 #if defined(WLAN_CFR_ENABLE) && defined(WLAN_ENH_CFR_ENABLE)
@@ -6917,6 +7232,7 @@ void dp_mon_feature_ops_deregister(struct dp_soc *soc)
 	mon_ops->rx_enable_mpdu_logging = NULL;
 	mon_ops->rx_enable_fpmo = NULL;
 	mon_ops->mon_neighbour_peers_detach = NULL;
+	mon_ops->rx_config_packet_type_subtype = NULL;
 	mon_ops->mon_vdev_set_monitor_mode_buf_rings = NULL;
 	mon_ops->mon_vdev_set_monitor_mode_rings = NULL;
 #ifdef QCA_ENHANCED_STATS_SUPPORT
@@ -7030,6 +7346,7 @@ dp_check_and_dump_full_mon_info(struct dp_soc *soc, struct dp_pdev *pdev,
 	struct hal_rx_mon_desc_info desc_info = {0};
 	struct dp_rx_desc *rx_desc;
 	uint64_t ppdu_id = 0;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	if (!mon_soc) {
 		dp_err("Monitor soc is NULL\n");
@@ -7056,7 +7373,7 @@ dp_check_and_dump_full_mon_info(struct dp_soc *soc, struct dp_pdev *pdev,
 	hal_soc = soc->hal_soc;
 
 	if (!war)
-		qdf_spin_lock_bh(&mon_pdev->mon_lock);
+		qdf_spin_lock_bh(&mon_mac->mon_lock);
 
 	mon_status_srng = soc->rxdma_mon_status_ring[mac_id].hal_srng;
 	if (!mon_status_srng)
@@ -7121,19 +7438,19 @@ dp_check_and_dump_full_mon_info(struct dp_soc *soc, struct dp_pdev *pdev,
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "mismatch: %d\n",
-		  mon_pdev->rx_mon_stats.ppdu_id_mismatch);
+		  mon_mac->rx_mon_stats.ppdu_id_mismatch);
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "status_ppdu_drop: %d\n",
-		  mon_pdev->rx_mon_stats.status_ppdu_drop);
+		  mon_mac->rx_mon_stats.status_ppdu_drop);
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "dest_ppdu_drop: %d\n",
-		  mon_pdev->rx_mon_stats.dest_ppdu_drop);
+		  mon_mac->rx_mon_stats.dest_ppdu_drop);
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "tlv_tag_status_err: %d\n",
-		  mon_pdev->rx_mon_stats.tlv_tag_status_err);
+		  mon_mac->rx_mon_stats.tlv_tag_status_err);
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "status_buf_done_war: %d\n",
-		  mon_pdev->rx_mon_stats.status_buf_done_war);
+		  mon_mac->rx_mon_stats.status_buf_done_war);
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "soc[%pK] pdev[%pK] mac_id[%d]\n",
@@ -7211,5 +7528,20 @@ dump_mon_destination_ring:
 
 unlock_monitor:
 	if (!war)
-		qdf_spin_unlock_bh(&mon_pdev->mon_lock);
+		qdf_spin_unlock_bh(&mon_mac->mon_lock);
+}
+
+QDF_STATUS dp_rx_mon_config_fcs_cap(struct dp_pdev *pdev, uint8_t value)
+{
+	uint8_t mac_id = 0;
+	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
+
+	if (!mon_mac->mvdev)
+		return QDF_STATUS_E_NOSUPPORT;
+
+	qdf_err("mon_fcs_cap: %d ", value);
+	mon_pdev->mon_fcs_cap = value;
+
+	return QDF_STATUS_SUCCESS;
 }

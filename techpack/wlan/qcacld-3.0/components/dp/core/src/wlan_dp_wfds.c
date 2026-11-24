@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -37,9 +37,9 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 {
 	struct dp_direct_link_context *direct_link_ctx =
 					dl_wfds->direct_link_ctx;
+	struct wlan_dp_psoc_context *dp_ctx = direct_link_ctx->dp_ctx;
 	struct wlan_qmi_wfds_config_req_msg *info;
-	struct dp_soc *dp_soc =
-		wlan_psoc_get_dp_handle(dl_wfds->direct_link_ctx->dp_ctx->psoc);
+	struct dp_soc *dp_soc = wlan_psoc_get_dp_handle(dp_ctx->psoc);
 	struct hif_opaque_softc *hif_ctx;
 	qdf_device_t qdf_dev;
 	void *hal_soc;
@@ -49,9 +49,12 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 	struct hif_ce_ring_info *srng_info;
 	struct hal_srng_params srng_params = {0};
 	hal_ring_handle_t refill_ring;
+	qdf_dma_addr_t fw_lpass_mem_iova = 0;
+	qdf_size_t fw_lpass_mem_size;
+	uint16_t lpass_sid = 0;
 	uint8_t i;
 
-	qdf_dev = dl_wfds->direct_link_ctx->dp_ctx->qdf_dev;
+	qdf_dev = dp_ctx->qdf_dev;
 
 	if (!dp_soc || !dp_soc->hif_handle || !qdf_dev)
 		return QDF_STATUS_E_FAILURE;
@@ -81,16 +84,19 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 	dl_wfds->iommu_cfg.shadow_wrptr_paddr = info->shadow_wrptr_mem_paddr;
 	dl_wfds->iommu_cfg.shadow_wrptr_map_size = info->shadow_wrptr_mem_size;
 
-	pld_audio_smmu_map(qdf_dev->dev,
-			   qdf_mem_paddr_from_dmaaddr(qdf_dev,
-						      info->shadow_rdptr_mem_paddr),
-			   info->shadow_rdptr_mem_paddr,
-			   info->shadow_rdptr_mem_size);
-	pld_audio_smmu_map(qdf_dev->dev,
-			   qdf_mem_paddr_from_dmaaddr(qdf_dev,
-						      info->shadow_wrptr_mem_paddr),
-			   info->shadow_wrptr_mem_paddr,
-			   info->shadow_wrptr_mem_size);
+	if (!dl_wfds->is_audio_shared_iommu_group)
+		pld_audio_smmu_map(qdf_dev->dev,
+				   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+							      info->shadow_rdptr_mem_paddr),
+				   info->shadow_rdptr_mem_paddr,
+				   info->shadow_rdptr_mem_size);
+
+	if (!dl_wfds->is_audio_shared_iommu_group)
+		pld_audio_smmu_map(qdf_dev->dev,
+				   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+							      info->shadow_wrptr_mem_paddr),
+				   info->shadow_wrptr_mem_paddr,
+				   info->shadow_wrptr_mem_size);
 
 	info->ce_info_len = QMI_WFDS_CE_MAX_SRNG;
 	status = hif_get_direct_link_ce_srng_info(hif_ctx, ce_info,
@@ -120,11 +126,12 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 		dl_wfds->iommu_cfg.direct_link_srng_ring_map_size[i] =
 			srng_info->entry_size * srng_info->num_entries * 4;
 
-		pld_audio_smmu_map(qdf_dev->dev,
-				   qdf_mem_paddr_from_dmaaddr(qdf_dev,
-							      srng_info->ring_base_paddr),
-				   srng_info->ring_base_paddr,
-				   dl_wfds->iommu_cfg.direct_link_srng_ring_map_size[i]);
+		if (!dl_wfds->is_audio_shared_iommu_group)
+			pld_audio_smmu_map(qdf_dev->dev,
+					   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+								      srng_info->ring_base_paddr),
+					   srng_info->ring_base_paddr,
+					   dl_wfds->iommu_cfg.direct_link_srng_ring_map_size[i]);
 	}
 
 	refill_ring = direct_link_ctx->direct_link_refill_ring_hdl->hal_srng;
@@ -141,11 +148,12 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 	dl_wfds->iommu_cfg.direct_link_refill_ring_map_size =
 		srng_params.entry_size * srng_params.num_entries * 4;
 
-	pld_audio_smmu_map(qdf_dev->dev,
-			   qdf_mem_paddr_from_dmaaddr(qdf_dev,
-						      srng_params.ring_base_paddr),
-			   srng_params.ring_base_paddr,
-			   dl_wfds->iommu_cfg.direct_link_refill_ring_map_size);
+	if (!dl_wfds->is_audio_shared_iommu_group)
+		pld_audio_smmu_map(qdf_dev->dev,
+				   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+							      srng_params.ring_base_paddr),
+				   srng_params.ring_base_paddr,
+				   dl_wfds->iommu_cfg.direct_link_refill_ring_map_size);
 
 	info->rx_refill_ring.hp_paddr =
 				hal_srng_get_hp_addr(hal_soc, refill_ring);
@@ -158,8 +166,77 @@ dp_wfds_send_config_msg(struct dp_direct_link_wfds_context *dl_wfds)
 	qdf_assert(info.pci_slot >= 0);
 	info->lpass_ep_id = direct_link_ctx->lpass_ep_id;
 
-	status = wlan_qmi_wfds_send_config_msg(direct_link_ctx->dp_ctx->psoc,
-					       info);
+	pld_get_fw_lpass_shared_mem(qdf_dev->dev, &fw_lpass_mem_iova,
+				    &fw_lpass_mem_size);
+
+	if (fw_lpass_mem_iova) {
+		dl_wfds->fw_lpass_shared_mem_pa = fw_lpass_mem_iova;
+		dl_wfds->fw_lpass_shared_mem_size = fw_lpass_mem_size;
+
+		if (!dl_wfds->is_audio_shared_iommu_group)
+			pld_audio_smmu_map(qdf_dev->dev,
+					   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+								      fw_lpass_mem_iova),
+					   fw_lpass_mem_iova,
+					   fw_lpass_mem_size);
+
+		info->fw_shared_wrmem_paddr_valid = 1;
+		info->fw_shared_wrmem_paddr = fw_lpass_mem_iova;
+		info->fw_shared_wrmem_size_valid = 1;
+		info->fw_shared_wrmem_size = DP_WFDS_FW_LPASS_SHARED_MEM_SEG_SIZE;
+
+		info->fw_shared_rdmem_paddr_valid = 1;
+		info->fw_shared_rdmem_paddr = fw_lpass_mem_iova +
+			DP_WFDS_FW_LPASS_SHARED_MEM_RDMEM_OFFSET;
+		info->fw_shared_rdmem_size_valid = 1;
+		info->fw_shared_rdmem_size = DP_WFDS_FW_LPASS_SHARED_MEM_SEG_SIZE;
+	} else {
+		dp_err("Unable to get fw_lpass shared memory info");
+	}
+
+	dl_wfds->apss_lpass_shared_mem_size =
+				DP_WFDS_APSS_LPASS_SHARED_MEM_SIZE;
+	dl_wfds->apss_lpass_shared_mem_va =
+		qdf_mem_alloc_consistent(qdf_dev, qdf_dev->dev,
+					 dl_wfds->apss_lpass_shared_mem_size,
+					 &dl_wfds->apss_lpass_shared_mem_pa);
+	if (dl_wfds->apss_lpass_shared_mem_va) {
+		info->apss_shared_wrmem_paddr_valid = 1;
+		info->apss_shared_wrmem_paddr = dl_wfds->apss_lpass_shared_mem_pa;
+		info->apss_shared_wrmem_size_valid = 1;
+		info->apss_shared_wrmem_size = DP_WFDS_APSS_LPASS_SHARED_MEM_SIZE;
+
+		if (!dl_wfds->is_audio_shared_iommu_group)
+			pld_audio_smmu_map(qdf_dev->dev,
+					   qdf_mem_paddr_from_dmaaddr(qdf_dev,
+								      info->apss_shared_wrmem_paddr),
+					   info->apss_shared_wrmem_paddr,
+					   info->apss_shared_wrmem_size);
+	} else {
+		dp_err("Unable to allocate apss_lpass shared memory");
+	}
+
+	if (qdf_dev->bus_type == QDF_BUS_TYPE_PCI) {
+		info->target_type_valid = 1;
+		info->target_type = QMI_WFDS_TARGET_TYPE_DISCRETE_V01;
+	} else if (qdf_dev->bus_type == QDF_BUS_TYPE_IPCI) {
+		info->target_type_valid = 1;
+		info->target_type = QMI_WFDS_TARGET_TYPE_INTG_V01;
+	} else {
+		dp_err("Direct link not supported for %d bus type",
+		       qdf_dev->bus_type);
+	}
+
+	status = pld_get_direct_link_sid(qdf_dev->dev, &lpass_sid);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		info->wfds_lpass_sid_valid = 1;
+		info->wfds_lpass_sid = lpass_sid;
+		dp_info("Direct link LPASS SID value:%u", info->wfds_lpass_sid);
+	} else {
+		dp_err("Unable to get LPASS SID value");
+	}
+
+	status = wlan_qmi_wfds_send_config_msg(dp_ctx->psoc, info);
 	qdf_mem_free(info);
 
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -222,10 +299,11 @@ dp_wfds_req_mem_msg(struct dp_direct_link_wfds_context *dl_wfds)
 			while (num_pages--) {
 				info->mem_arena_page_info[i].page_dma_addr[num_pages] =
 							dma_addr[num_pages];
-				pld_audio_smmu_map(qdf_dev->dev,
-						   qdf_mem_paddr_from_dmaaddr(qdf_dev, dma_addr[num_pages]),
-						   dma_addr[num_pages],
-						   buf_size);
+				if (!dl_wfds->is_audio_shared_iommu_group)
+					pld_audio_smmu_map(qdf_dev->dev,
+							   qdf_mem_paddr_from_dmaaddr(qdf_dev, dma_addr[num_pages]),
+							   dma_addr[num_pages],
+							   buf_size);
 			}
 
 			qdf_mem_free(dma_addr);
@@ -243,10 +321,11 @@ dp_wfds_req_mem_msg(struct dp_direct_link_wfds_context *dl_wfds)
 			info->mem_arena_page_info[i].page_dma_addr[num_pages] =
 					pages->dma_pages[num_pages].page_p_addr;
 
-			pld_audio_smmu_map(qdf_dev->dev,
-					qdf_mem_paddr_from_dmaaddr(qdf_dev, pages->dma_pages[num_pages].page_p_addr),
-					pages->dma_pages[num_pages].page_p_addr,
-					pages->page_size);
+			if (!dl_wfds->is_audio_shared_iommu_group)
+				pld_audio_smmu_map(qdf_dev->dev,
+						qdf_mem_paddr_from_dmaaddr(qdf_dev, pages->dma_pages[num_pages].page_p_addr),
+						pages->dma_pages[num_pages].page_p_addr,
+						pages->page_size);
 		}
 	}
 
@@ -540,11 +619,15 @@ dp_wfds_handle_ipcc_map_n_cfg_ind(struct wlan_qmi_wfds_ipcc_map_n_cfg_ind_msg *i
 	pld_smmu_map(qdf_ctx->dev, ipcc_msg->ipcc_ce_info[0].ipcc_trig_addr,
 		     &dl_wfds->ipcc_dma_addr, sizeof(uint32_t));
 
-	for (i = 0; i < ipcc_msg->ipcc_ce_info_len; i++)
+	dl_wfds->ipcc_ce_id_len = ipcc_msg->ipcc_ce_info_len;
+
+	for (i = 0; i < ipcc_msg->ipcc_ce_info_len; i++) {
+		dl_wfds->ipcc_ce_id[i] = ipcc_msg->ipcc_ce_info[i].ce_id;
 		hif_set_irq_config_by_ceid(hif_ctx,
 				      ipcc_msg->ipcc_ce_info[i].ce_id,
 				      dl_wfds->ipcc_dma_addr,
 				      ipcc_msg->ipcc_ce_info[i].ipcc_trig_data);
+	}
 
 	dp_wfds_event_post(dl_wfds, DP_WFDS_IPCC_MAP_N_CFG, NULL);
 }
@@ -553,9 +636,17 @@ QDF_STATUS dp_wfds_new_server(void)
 {
 	struct dp_direct_link_wfds_context *dl_wfds = gp_dl_wfds_ctx;
 	void *htc_handle = cds_get_context(QDF_MODULE_ID_HTC);
+	struct wlan_dp_psoc_context *dp_ctx;
+	QDF_STATUS status;
 
 	if (!dl_wfds || !htc_handle)
 		return QDF_STATUS_E_INVAL;
+
+	dp_ctx = dl_wfds->direct_link_ctx->dp_ctx;
+	if (!pld_audio_is_direct_link_supported(dp_ctx->qdf_dev->dev)) {
+		dp_info("Audio Direct link cap not supported");
+		return QDF_STATUS_E_NOSUPPORT;
+	}
 
 	qdf_atomic_set(&dl_wfds->wfds_state, DP_WFDS_SVC_CONNECTED);
 
@@ -563,13 +654,44 @@ QDF_STATUS dp_wfds_new_server(void)
 	dp_debug("Connected to WFDS QMI service, state: 0x%x",
 		 qdf_atomic_read(&dl_wfds->wfds_state));
 
-	return dp_wfds_event_post(dl_wfds, DP_WFDS_NEW_SERVER, NULL);
+	dp_rx_handle_buf_pool_audio_smmu_mapping(wlan_psoc_get_dp_handle(dp_ctx->psoc),
+						 wlan_objmgr_pdev_get_pdev_id(dp_ctx->pdev),
+						 true);
+
+	if (dp_ctx->dp_ops.dp_register_lpass_ssr_notifier) {
+		status =
+		    dp_ctx->dp_ops.dp_register_lpass_ssr_notifier(dp_ctx->psoc);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			dp_err("DP LPASS SSR notifier registration failed %d",
+			       status);
+			goto lpass_ssr_notifier_failed;
+		}
+	}
+
+	status = dp_wfds_event_post(dl_wfds, DP_WFDS_NEW_SERVER, NULL);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		dp_err("DP WFDS event post failed %d", status);
+		goto wfds_event_post_failed;
+	}
+
+	return status;
+
+wfds_event_post_failed:
+	if (dp_ctx->dp_ops.dp_unregister_lpass_ssr_notifier)
+		dp_ctx->dp_ops.dp_unregister_lpass_ssr_notifier(dp_ctx->psoc);
+
+lpass_ssr_notifier_failed:
+	htc_vote_link_down(htc_handle, HTC_LINK_VOTE_DIRECT_LINK_USER_ID);
+	qdf_atomic_set(&dl_wfds->wfds_state, DP_WFDS_SVC_DISCONNECTED);
+
+	return status;
 }
 
 void dp_wfds_del_server(void)
 {
 	struct dp_direct_link_wfds_context *dl_wfds = gp_dl_wfds_ctx;
-	qdf_device_t qdf_ctx = dl_wfds->direct_link_ctx->dp_ctx->qdf_dev;
+	struct wlan_dp_psoc_context *dp_ctx = dl_wfds->direct_link_ctx->dp_ctx;
+	qdf_device_t qdf_ctx = dp_ctx->qdf_dev;
 	void *htc_handle = cds_get_context(QDF_MODULE_ID_HTC);
 	void *hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 	enum dp_wfds_state dl_wfds_state;
@@ -586,9 +708,15 @@ void dp_wfds_del_server(void)
 		       DP_WFDS_SVC_DISCONNECTED);
 
 	if (dl_wfds_state >= DP_WFDS_SVC_IPCC_MAP_N_CFG_DONE &&
-	    dl_wfds->ipcc_dma_addr)
+	    dl_wfds->ipcc_dma_addr) {
+		for (i = 0; i < dl_wfds->ipcc_ce_id_len; i++)
+			hif_set_irq_config_by_ceid(hif_ctx,
+						   dl_wfds->ipcc_ce_id[i],
+						   0, 0);
+
 		pld_smmu_unmap(qdf_ctx->dev, dl_wfds->ipcc_dma_addr,
 			       sizeof(uint32_t));
+	}
 
 	if (dl_wfds_state >= DP_WFDS_SVC_MEM_CONFIG_DONE) {
 		uint64_t *dma_addr = NULL;
@@ -604,9 +732,10 @@ void dp_wfds_del_server(void)
 			mp_info = &dl_wfds->mem_arena_pages[i];
 			for (page_idx = 0; page_idx < mp_info->num_pages;
 			     page_idx++)
-				pld_audio_smmu_unmap(qdf_ctx->dev,
-				       mp_info->dma_pages[page_idx].page_p_addr,
-				       mp_info->page_size);
+				if (!dl_wfds->is_audio_shared_iommu_group)
+					pld_audio_smmu_unmap(qdf_ctx->dev,
+					mp_info->dma_pages[page_idx].page_p_addr,
+					mp_info->page_size);
 
 			dp_wfds_free_mem_arena(dl_wfds, i);
 		}
@@ -620,30 +749,58 @@ void dp_wfds_del_server(void)
 								     &buf_size);
 		qdf_assert(dma_addr);
 
-		while (num_pages--)
-			pld_audio_smmu_unmap(qdf_ctx->dev, dma_addr[num_pages],
-					     buf_size);
+		if (!dl_wfds->is_audio_shared_iommu_group) {
+			while (num_pages--)
+				pld_audio_smmu_unmap(qdf_ctx->dev,
+						     dma_addr[num_pages],
+						     buf_size);
+		}
 
 		qdf_mem_free(dma_addr);
 	}
 
 	if (dl_wfds_state >= DP_WFDS_SVC_CONFIG_DONE) {
-		pld_audio_smmu_unmap(qdf_ctx->dev,
-				     dl_wfds->iommu_cfg.shadow_rdptr_paddr,
-				     dl_wfds->iommu_cfg.shadow_rdptr_map_size);
-		pld_audio_smmu_unmap(qdf_ctx->dev,
-				     dl_wfds->iommu_cfg.shadow_wrptr_paddr,
-				     dl_wfds->iommu_cfg.shadow_wrptr_map_size);
-
-		for (i = 0; i < QMI_WFDS_CE_MAX_SRNG; i++)
+		if (!dl_wfds->is_audio_shared_iommu_group) {
 			pld_audio_smmu_unmap(qdf_ctx->dev,
+				dl_wfds->iommu_cfg.shadow_rdptr_paddr,
+				dl_wfds->iommu_cfg.shadow_rdptr_map_size);
+			pld_audio_smmu_unmap(qdf_ctx->dev,
+				dl_wfds->iommu_cfg.shadow_wrptr_paddr,
+				dl_wfds->iommu_cfg.shadow_wrptr_map_size);
+
+			for (i = 0; i < QMI_WFDS_CE_MAX_SRNG; i++)
+				pld_audio_smmu_unmap(qdf_ctx->dev,
 				dl_wfds->iommu_cfg.direct_link_srng_ring_base_paddr[i],
 				dl_wfds->iommu_cfg.direct_link_srng_ring_map_size[i]);
 
-		pld_audio_smmu_unmap(qdf_ctx->dev,
+			pld_audio_smmu_unmap(qdf_ctx->dev,
 			dl_wfds->iommu_cfg.direct_link_refill_ring_base_paddr,
 			dl_wfds->iommu_cfg.direct_link_refill_ring_map_size);
+
+			if (dl_wfds->fw_lpass_shared_mem_pa)
+				pld_audio_smmu_unmap(qdf_ctx->dev,
+				dl_wfds->fw_lpass_shared_mem_pa,
+				dl_wfds->fw_lpass_shared_mem_size);
+
+			if (dl_wfds->apss_lpass_shared_mem_pa)
+				pld_audio_smmu_unmap(qdf_ctx->dev,
+				dl_wfds->apss_lpass_shared_mem_pa,
+				dl_wfds->apss_lpass_shared_mem_size);
+		}
+
+		if (dl_wfds->apss_lpass_shared_mem_va)
+			qdf_mem_free_consistent(qdf_ctx, qdf_ctx->dev,
+						dl_wfds->apss_lpass_shared_mem_size,
+						dl_wfds->apss_lpass_shared_mem_va,
+						dl_wfds->apss_lpass_shared_mem_pa, 0);
 	}
+
+	if (dp_ctx->dp_ops.dp_unregister_lpass_ssr_notifier)
+		dp_ctx->dp_ops.dp_unregister_lpass_ssr_notifier(dp_ctx->psoc);
+
+	dp_rx_handle_buf_pool_audio_smmu_mapping(wlan_psoc_get_dp_handle(dp_ctx->psoc),
+						 wlan_objmgr_pdev_get_pdev_id(dp_ctx->pdev),
+						 false);
 
 	htc_vote_link_down(htc_handle, HTC_LINK_VOTE_DIRECT_LINK_USER_ID);
 }
@@ -652,6 +809,7 @@ QDF_STATUS dp_wfds_init(struct dp_direct_link_context *dp_direct_link_ctx)
 {
 	struct dp_direct_link_wfds_context *dl_wfds;
 	QDF_STATUS status;
+	qdf_device_t qdf_dev = dp_direct_link_ctx->dp_ctx->qdf_dev;
 
 	dl_wfds = qdf_mem_malloc(sizeof(*dl_wfds));
 	if (!dl_wfds) {
@@ -687,6 +845,8 @@ QDF_STATUS dp_wfds_init(struct dp_direct_link_context *dp_direct_link_ctx)
 	dp_direct_link_ctx->dl_wfds = dl_wfds;
 	dl_wfds->direct_link_ctx = dp_direct_link_ctx;
 	gp_dl_wfds_ctx = dl_wfds;
+	dl_wfds->is_audio_shared_iommu_group =
+			pld_is_audio_shared_iommu_group(qdf_dev->dev);
 	dp_debug("WFDS QMI init successful");
 
 	return status;
@@ -720,21 +880,21 @@ void dp_wfds_deinit(struct dp_direct_link_context *dp_direct_link_ctx,
 
 	dp_debug("WFDS QMI deinit");
 
-	qdf_flush_workqueue(0, dl_wfds->wfds_wq);
-	qdf_destroy_workqueue(0, dl_wfds->wfds_wq);
-
-	qdf_flush_work(&dl_wfds->wfds_work);
-	qdf_destroy_work(0, &dl_wfds->wfds_work);
-
-	qdf_spinlock_destroy(&dl_wfds->wfds_event_list_lock);
-	qdf_list_destroy(&dl_wfds->wfds_event_list);
-
 	if (qdf_atomic_read(&dl_wfds->wfds_state) !=
 	    DP_WFDS_SVC_DISCONNECTED)
 		wlan_qmi_wfds_send_misc_req_msg(dp_direct_link_ctx->dp_ctx->psoc,
 						is_ssr);
 
 	wlan_qmi_wfds_deinit(dp_direct_link_ctx->dp_ctx->psoc);
+
+	qdf_flush_work(&dl_wfds->wfds_work);
+	qdf_destroy_work(0, &dl_wfds->wfds_work);
+
+	qdf_flush_workqueue(0, dl_wfds->wfds_wq);
+	qdf_destroy_workqueue(0, dl_wfds->wfds_wq);
+
+	qdf_spinlock_destroy(&dl_wfds->wfds_event_list_lock);
+	qdf_list_destroy(&dl_wfds->wfds_event_list);
 	gp_dl_wfds_ctx = NULL;
 
 	qdf_mem_free(dl_wfds);

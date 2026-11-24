@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -71,6 +71,10 @@
 
 #ifdef WLAN_CFR_ENABLE
 #include "wlan_cfr_tgt_api.h"
+#endif
+
+#ifdef WLAN_WIFI_RADAR_ENABLE
+#include "wlan_wifi_radar_tgt_api.h"
 #endif
 
 #ifdef WIFI_POS_CONVERGED
@@ -306,6 +310,29 @@ wlan_lmac_if_sa_api_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
 }
 #endif
 
+#ifdef WLAN_WIFI_RADAR_ENABLE
+/**
+ * wlan_lmac_if_wifi_radar_rx_ops_register() - Function to register
+ *					       wifi radar RX ops
+ * @rx_ops: Pointer to wlan_lmac_if_rx_ops
+ */
+static void
+wlan_lmac_if_wifi_radar_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+	struct wlan_lmac_if_wifi_radar_rx_ops *wifi_radar_rx_ops =
+			&rx_ops->wifi_radar_rx_ops;
+
+	/* wifi_radar rx ops */
+	wifi_radar_rx_ops->wifi_radar_support_set = tgt_wifi_radar_support_set;
+	wifi_radar_rx_ops->wifi_radar_info_send = tgt_wifi_radar_info_send;
+}
+#else
+static void
+wlan_lmac_if_wifi_radar_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+}
+#endif
+
 #ifdef WLAN_CFR_ENABLE
 /**
  * wlan_lmac_if_cfr_rx_ops_register() - Function to register CFR RX ops
@@ -391,6 +418,15 @@ static void wlan_lmac_if_register_super_chan_display(
 		wlan_reg_display_super_chan_list;
 }
 
+static void wlan_lmac_if_register_both_psd_eirp_preferred(
+					struct wlan_lmac_if_rx_ops *rx_ops)
+{
+	rx_ops->reg_rx_ops.reg_set_both_psd_eirp_support =
+				tgt_reg_set_both_psd_eirp_preferred_support;
+	rx_ops->reg_rx_ops.reg_get_both_psd_eirp_support =
+				tgt_reg_get_both_psd_eirp_preferred_support;
+}
+
 #ifdef CONFIG_AFC_SUPPORT
 static void wlan_lmac_if_register_afc_handlers(
 					struct wlan_lmac_if_rx_ops *rx_ops)
@@ -422,6 +458,11 @@ static inline void wlan_lmac_if_register_afc_handlers(
 }
 
 static inline void wlan_lmac_if_register_super_chan_display(
+					struct wlan_lmac_if_rx_ops *rx_ops)
+{
+}
+
+static inline void wlan_lmac_if_register_both_psd_eirp_preferred(
 					struct wlan_lmac_if_rx_ops *rx_ops)
 {
 }
@@ -541,8 +582,13 @@ static void wlan_lmac_if_umac_reg_rx_ops_register(
 
 	wlan_lmac_if_register_super_chan_display(rx_ops);
 
+	wlan_lmac_if_register_both_psd_eirp_preferred(rx_ops);
+
 	rx_ops->reg_rx_ops.reg_r2p_table_update_response_handler =
 		tgt_reg_process_r2p_table_update_response;
+
+	rx_ops->reg_rx_ops.reg_is_5dot9_ghz_supported =
+		wlan_reg_is_5dot9_ghz_supported;
 }
 
 #ifdef CONVERGED_P2P_ENABLE
@@ -579,6 +625,8 @@ static void wlan_lmac_if_umac_rx_ops_register_p2p(
 	rx_ops->p2p.noa_ev_handler = tgt_p2p_noa_event_cb;
 	rx_ops->p2p.add_mac_addr_filter_evt_handler =
 		tgt_p2p_add_mac_addr_status_event_cb;
+	rx_ops->p2p.ap_assist_dfs_group_bmiss_ev_handler =
+			tgt_p2p_ap_assist_dfs_group_bmiss_ev_handler;
 	wlan_lmac_if_umac_rx_ops_register_p2p_mcc_quota(rx_ops);
 }
 #else
@@ -1048,6 +1096,20 @@ wlan_lmac_if_dbam_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
 }
 #endif /* WLAN_FEATURE_DBAM_CONFIG */
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+static inline void
+wlan_lmac_if_cached_scan_report_rx_ops_reg(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+	rx_ops->scan.cached_scan_report_ev_handler =
+			tgt_scan_cached_scan_report_ev_handler;
+}
+#else
+static inline void
+wlan_lmac_if_cached_scan_report_rx_ops_reg(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+}
+#endif
+
 /**
  * wlan_lmac_if_umac_rx_ops_register() - UMAC rx handler register
  * @rx_ops: Pointer to rx_ops structure to be populated
@@ -1074,6 +1136,7 @@ wlan_lmac_if_umac_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
 	/* scan rx ops */
 	rx_ops->scan.scan_ev_handler = tgt_scan_event_handler;
 	rx_ops->scan.scan_set_max_active_scans = tgt_scan_set_max_active_scans;
+	wlan_lmac_if_cached_scan_report_rx_ops_reg(rx_ops);
 
 	wlan_lmac_if_atf_rx_ops_register(rx_ops);
 
@@ -1084,6 +1147,8 @@ wlan_lmac_if_umac_rx_ops_register(struct wlan_lmac_if_rx_ops *rx_ops)
 	wlan_lmac_if_sa_api_rx_ops_register(rx_ops);
 
 	wlan_lmac_if_cfr_rx_ops_register(rx_ops);
+
+	wlan_lmac_if_wifi_radar_rx_ops_register(rx_ops);
 
 	wlan_lmac_if_crypto_rx_ops_register(rx_ops);
 	/* wifi_pos rx ops */

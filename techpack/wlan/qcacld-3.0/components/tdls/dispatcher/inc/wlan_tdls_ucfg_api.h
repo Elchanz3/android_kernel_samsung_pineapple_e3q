@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -95,6 +95,15 @@ void ucfg_tdls_update_fw_wideband_capability(struct wlan_objmgr_psoc *psoc,
  * Return: true if fw supports tdls wideband
  */
 bool ucfg_tdls_is_fw_wideband_capable(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_tdls_get_current_mode() - Get current tdls mode
+ * @psoc: psoc object
+ *
+ * Return: current tdls mode
+ */
+enum tdls_feature_mode
+ucfg_tdls_get_current_mode(struct wlan_objmgr_psoc *psoc);
 
 #ifdef WLAN_FEATURE_11AX
 /**
@@ -323,28 +332,6 @@ QDF_STATUS ucfg_tdls_set_operating_mode(
 			struct tdls_set_mode_params *set_mode_params);
 
 /**
- * ucfg_tdls_update_rx_pkt_cnt() - update rx pkt count
- * @vdev: tdls vdev object
- * @mac_addr: peer mac address
- * @dest_mac_addr: dest mac address
- *
- * Return: None
- */
-void ucfg_tdls_update_rx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr,
-				 struct qdf_mac_addr *dest_mac_addr);
-
-/**
- * ucfg_tdls_update_tx_pkt_cnt() - update tx pkt count
- * @vdev: tdls vdev object
- * @mac_addr: peer mac address
- *
- * Return: None
- */
-void ucfg_tdls_update_tx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr);
-
-/**
  * ucfg_tdls_antenna_switch() - tdls antenna switch
  * @vdev: tdls vdev object
  * @mode: antenna mode
@@ -480,6 +467,25 @@ bool ucfg_tdls_check_is_tdls_allowed(struct wlan_objmgr_vdev *vdev);
 void ucfg_tdls_set_user_tdls_enable(struct wlan_objmgr_vdev *vdev,
 				    bool is_user_tdls_enable);
 
+/*
+ * ucfg_tdls_is_vdev_allowed_to_tx() - ucg api to check if the VDEV is active
+ * and authenticated to send mgmt frames
+ * @vdev: Pointer to vdev object
+ *
+ * Return: true or false
+ */
+bool ucfg_tdls_is_vdev_allowed_to_tx(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * ucfg_tdls_is_key_install_allowed() - ucfg API to check if key_install request
+ * is allowed for TDLS peer in current state.
+ * @vdev: Vdev object pointer
+ * @mac_addr: Mac address of the peer
+ *
+ * Return: True if key_install can be allowed
+ */
+bool ucfg_tdls_is_key_install_allowed(struct wlan_objmgr_vdev *vdev,
+				      struct qdf_mac_addr *mac_addr);
 #else
 static inline
 bool ucfg_tdls_link_vdev_is_matching(struct wlan_objmgr_vdev *vdev)
@@ -538,19 +544,6 @@ QDF_STATUS ucfg_tdls_psoc_disable(struct wlan_objmgr_psoc *psoc)
 }
 
 static inline
-void ucfg_tdls_update_rx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr,
-				 struct qdf_mac_addr *dest_mac_addr)
-{
-}
-
-static inline
-void ucfg_tdls_update_tx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr)
-{
-}
-
-static inline
 QDF_STATUS ucfg_tdls_teardown_links(struct wlan_objmgr_psoc *psoc)
 {
 	return QDF_STATUS_SUCCESS;
@@ -603,6 +596,12 @@ static inline
 bool  ucfg_tdls_is_fw_11ax_capable(struct wlan_objmgr_psoc *psoc)
 {
 return false;
+}
+
+bool ucfg_tdls_is_key_install_allowed(struct wlan_objmgr_vdev *vdev,
+				      struct qdf_mac_addr *mac_addr)
+{
+	return false;
 }
 #endif /* FEATURE_WLAN_TDLS */
 #endif

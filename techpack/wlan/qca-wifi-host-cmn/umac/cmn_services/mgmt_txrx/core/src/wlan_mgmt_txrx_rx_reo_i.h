@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -972,6 +972,7 @@ struct reo_scheduler_debug_info {
  * in progress
  * @mlo_grp_id: MLO Group ID which it belongs to
  * @context_id: Context identifier
+ * @dynamic_reo_deinit: Is Dynamic reo de-initialized
  */
 struct mgmt_rx_reo_context {
 	struct mgmt_rx_reo_ingress_list ingress_list;
@@ -992,6 +993,7 @@ struct mgmt_rx_reo_context {
 	bool simulation_in_progress;
 	uint8_t mlo_grp_id;
 	qdf_atomic_t context_id;
+	bool dynamic_reo_deinit;
 };
 
 /**
@@ -1304,28 +1306,28 @@ mgmt_rx_reo_get_pdev_id(struct mgmt_rx_event_params *rx_params)
 }
 
 /**
- * mgmt_rx_reo_init_context() - Initialize the management rx-reorder context
+ * mgmt_rx_reo_create_context() - Create the management rx-reorder context
  * @ml_grp_id: MLO Group ID to be initialized
  *
- * API to initialize each global management rx-reorder context object per group
+ * API to Create each global management rx-reorder context object per group
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS
-mgmt_rx_reo_init_context(uint8_t ml_grp_id);
+mgmt_rx_reo_create_context(uint8_t ml_grp_id);
 
 /**
- * mgmt_rx_reo_deinit_context() - De initialize the management rx-reorder
+ * mgmt_rx_reo_destroy_context() - Destroy the management rx-reorder
  * context
  * @ml_grp_id: MLO Group ID to be deinitialized
  *
- * API to de initialize each global management rx-reorder context object per
+ * API to destroy each global management rx-reorder context object per
  * group
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS
-mgmt_rx_reo_deinit_context(uint8_t ml_grp_id);
+mgmt_rx_reo_destroy_context(uint8_t ml_grp_id);
 
 /**
  * mgmt_rx_reo_is_simulation_in_progress() - API to check whether
@@ -1567,5 +1569,15 @@ mgmt_rx_reo_validate_mlo_link_info(struct wlan_objmgr_psoc *psoc);
  */
 QDF_STATUS
 mgmt_rx_reo_release_frames(uint8_t mlo_grp_id, uint32_t link_bitmap);
+
+/**
+ * wlan_mgmt_rx_reo_is_fpmo_war_applicable - check if reo frame is
+ * invalid and timestamp is zero
+ * @mgmt_rx_reo_params: management rx reo parameters
+ *
+ * Return: True or False
+ */
+bool wlan_mgmt_rx_reo_is_fpmo_war_applicable(
+			struct mgmt_rx_reo_params *mgmt_rx_reo_params);
 #endif /* WLAN_MGMT_RX_REO_SUPPORT */
 #endif /* _WLAN_MGMT_TXRX_RX_REO_I_H */

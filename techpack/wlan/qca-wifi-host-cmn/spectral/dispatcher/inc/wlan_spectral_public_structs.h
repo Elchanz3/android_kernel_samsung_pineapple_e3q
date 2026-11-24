@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011,2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -58,6 +58,7 @@
 #define SPECTRAL_SCAN_BIN_SCALE_DEFAULT        (0x1)
 #define SPECTRAL_SCAN_DBM_ADJ_DEFAULT          (0x0)
 #define SPECTRAL_SCAN_CHN_MASK_DEFAULT         (0x1)
+#define SPECTRAL_SCAN_CMPL_TIMEOUT_DEFAULT     (0x0)
 #else
 /*
  * Static default values for spectral state and configuration.
@@ -91,6 +92,7 @@
 #define SPECTRAL_SCAN_CHN_MASK_DEFAULT         (1)
 #define SPECTRAL_SCAN_FREQUENCY_DEFAULT        (0)
 #define SPECTRAL_FFT_RECAPTURE_DEFAULT         (0)
+#define SPECTRAL_SCAN_CMPL_TIMEOUT_DEFAULT     (0)
 #endif				/* SPECTRAL_USE_EMU_DEFAULTS */
 
 /* The below two definitions apply only to pre-11ac chipsets */
@@ -133,6 +135,37 @@
 #define SPECTRAL_SCALING_HIGH_LEVEL_OFFSET                      (5)
 
 /* End of section for values needing fine tuning. */
+
+/* Definition for current supported max/min spectral report sizes. */
+#define SPECTRAL_MAX_FFT_SIZE       (11)
+#define SPECTRAL_MIN_FFT_SIZE       (5)
+#define SPECTRAL_REPORT_HEADER_SIZE sizeof(struct spectral_samp_msg)
+
+/* Max report size is calculated with fft_size SPECTRAL_MAX_FFT_SIZE
+ * and report mode as SPECTRAL_PARAM_RPT_MODE_MAX
+ *
+ * Min report size is calculated with fft_size SPECTRAL_MIN_FFT_SIZE
+ * and report mode as SPECTRAL_PARAM_RPT_MODE_MAX - 1
+ *
+ * Report size: 2 ^ fft_size + HEADER for report mode 3
+ *              2 ^ (fft_size - 1) + HEADER for report mode 2
+ */
+#define SPECTRAL_MAX_REPORT_SIZE    ((1 << SPECTRAL_MAX_FFT_SIZE)\
+				     + SPECTRAL_REPORT_HEADER_SIZE)
+
+/* Compile time assert to check if minimum fft_size is non-zero  */
+SPECTRAL_COMPILE_TIME_ASSERT(check_min_fft_size_is_non_zero,
+			     (SPECTRAL_MIN_FFT_SIZE >= 1));
+
+#define SPECTRAL_MIN_REPORT_SIZE    ((1 << (SPECTRAL_MIN_FFT_SIZE - 1))\
+				     + SPECTRAL_REPORT_HEADER_SIZE)
+
+#ifdef WLAN_SPECTRAL_STREAMFS
+/* Definition for  max/min number of sub-buffers in a streamfs channel. */
+#define SPECTRAL_STREAMFS_MIN_SUBBUFS   (512)
+#define SPECTRAL_STREAMFS_MAX_SUBBUFS   (2048)
+#endif
+
 /* End of temporary section for hard-coded values */
 
 /**
@@ -343,26 +376,31 @@ struct spectral_scan_state {
 struct wlan_objmgr_pdev;
 
 /**
- * struct spectral_nl_cb - Spectral Netlink callbacks
+ * struct spectral_buffer_cb - Spectral buffer callbacks
  * @get_sbuff:      Get the socket buffer to send the data to the application
- * @send_nl_bcast:  Send data to the application using netlink broadcast
- * @send_nl_unicast:  Send data to the application using netlink unicast
+ * @send_bcast:  Send data to the application using broadcast
+ * @send_unicast:  Send data to the application using unicast
  * @free_sbuff: Free the socket buffer for a particular message type
  * @convert_to_nl_ch_width:
  * @convert_to_phy_ch_width:
+ * @reset_transport_channel: Reset transport specific buffer before scan starts
+ * @get_buff_size: Get the sample buffer allocated size
  */
-struct spectral_nl_cb {
+struct spectral_buffer_cb {
 	void *(*get_sbuff)(struct wlan_objmgr_pdev *pdev,
 			   enum spectral_msg_type smsg_type,
 			   enum spectral_msg_buf_type buf_type);
-	int (*send_nl_bcast)(struct wlan_objmgr_pdev *pdev,
-			     enum spectral_msg_type smsg_type);
-	int (*send_nl_unicast)(struct wlan_objmgr_pdev *pdev,
-			       enum spectral_msg_type smsg_type);
+	int (*send_bcast)(struct wlan_objmgr_pdev *pdev,
+			  enum spectral_msg_type smsg_type);
+	int (*send_unicast)(struct wlan_objmgr_pdev *pdev,
+			    enum spectral_msg_type smsg_type);
 	void (*free_sbuff)(struct wlan_objmgr_pdev *pdev,
 			   enum spectral_msg_type smsg_type);
-	int (*convert_to_nl_ch_width)(uint8_t phy_chwidth);
-	uint8_t (*convert_to_phy_ch_width)(uint8_t nl_chwidth);
+	enum nl80211_chan_width (*convert_to_nl_ch_width)(enum phy_ch_width);
+	enum phy_ch_width (*convert_to_phy_ch_width)(enum nl80211_chan_width);
+	QDF_STATUS (*reset_transport_channel)(struct wlan_objmgr_pdev *pdev);
+	QDF_STATUS (*get_buff_size)(struct wlan_objmgr_pdev *pdev,
+				    uint32_t *buff_size);
 };
 
 /**
@@ -476,6 +514,25 @@ struct spectral_cp_request {
 		struct spectral_scan_get_status_request status_req;
 		struct spectral_scan_debug_request debug_req;
 		struct spectral_scan_dma_debug_request dma_debug_req;
+	};
+};
+
+enum spectral_scan_complete_status {
+	SPECTRAL_SCAN_COMPLETE_SUCCESS,
+	SPECTRAL_SCAN_COMPLETE_TIMEOUT,
+	SPECTRAL_SCAN_COMPLETE_MAX,
+	SPECTRAL_SCAN_COMPLETE_INVALID = 0xff,
+};
+
+struct spectral_scan_complete_event {
+	enum spectral_scan_complete_status completion_status;
+	uint32_t num_received_samples;
+};
+
+struct spectral_scan_event {
+	uint8_t event_id;
+	union {
+		struct spectral_scan_complete_event complete_event;
 	};
 };
 

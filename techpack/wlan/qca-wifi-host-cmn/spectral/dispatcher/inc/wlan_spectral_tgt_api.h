@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -251,31 +251,34 @@ QDF_STATUS tgt_register_spectral_tgt_ops(struct wlan_objmgr_psoc *psoc,
 					 struct spectral_tgt_ops *tgt_ops);
 
 /**
- * tgt_spectral_register_nl_cb() - Register Netlink callbacks
+ * tgt_spectral_register_buffer_cb() - Register buffer callbacks
  * @pdev: Pointer to pdev object
- * @nl_cb: Netlink callbacks to register
+ * @spectral_buf_cb: Spectral buffer callbacks to register
  *
  * Return: void
  */
-void tgt_spectral_register_nl_cb(struct wlan_objmgr_pdev *pdev,
-				 struct spectral_nl_cb *nl_cb);
+void
+tgt_spectral_register_buffer_cb(struct wlan_objmgr_pdev *pdev,
+				struct spectral_buffer_cb *spectral_buf_cb);
 
 /**
- * tgt_spectral_use_nl_bcast() - Get whether to use broadcast/unicast while
- * sending Netlink messages to the application layer
+ * tgt_spectral_use_broadcast() - Set whether to use broadcast/unicast while
+ * sending messages to the application layer
  * @pdev: Pointer to pdev object
+ * @use_bcast: true for broadcast, false for unicast
  *
- * Return: true for broadcast, false for unicast
+ * Return: QDF_STATUS
  */
-bool tgt_spectral_use_nl_bcast(struct wlan_objmgr_pdev *pdev);
+QDF_STATUS tgt_spectral_use_broadcast(struct wlan_objmgr_pdev *pdev,
+				      bool use_bcast);
 
 /**
- * tgt_spectral_deregister_nl_cb() - De-register Netlink callbacks
+ * tgt_spectral_deregister_buffer_cb() - De-register buffer callbacks
  * @pdev: Pointer to pdev object
  *
  * Return: void
  */
-void tgt_spectral_deregister_nl_cb(struct wlan_objmgr_pdev *pdev);
+void tgt_spectral_deregister_buffer_cb(struct wlan_objmgr_pdev *pdev);
 
 /**
  * tgt_spectral_process_report() - Process spectral report
@@ -353,4 +356,19 @@ tgt_spectral_unregister_events(struct wlan_objmgr_psoc *psoc);
  */
 QDF_STATUS
 tgt_spectral_init_pdev_feature_caps(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * tgt_spectral_scan_complete_event() - tgt API to trigger spectral
+ * scan completion event
+ * @pdev: Pointer to pdev object
+ * @sptrl_event: Pointer to spectral scan event
+ *
+ * Triggers spectral scan completion event.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+tgt_spectral_scan_complete_event(struct wlan_objmgr_pdev *pdev,
+				 struct spectral_scan_event *sptrl_event);
+
 #endif /* _WLAN_SPECTRAL_TGT_API_H_ */

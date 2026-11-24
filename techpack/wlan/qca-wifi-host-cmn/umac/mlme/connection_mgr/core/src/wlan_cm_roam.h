@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -296,6 +296,18 @@ QDF_STATUS cm_send_preauth_start_fail(struct cnx_mgr *cm_ctx, wlan_cm_id cm_id,
  * Return: QDF status
  */
 QDF_STATUS cm_handle_reassoc_timer(struct cnx_mgr *cm_ctx, wlan_cm_id *cm_id);
+
+/**
+ * cm_update_per_peer_crypto_params_for_roam() - Update vdev crypto
+ * parameters for roam case based on negotiated security
+ * @vdev: vdev
+ * @roam_req: roam req
+ *
+ * Return: void
+ */
+void
+cm_update_per_peer_crypto_params_for_roam(struct wlan_objmgr_vdev *vdev,
+					  struct cm_roam_req *roam_req);
 #endif /* WLAN_FEATURE_PREAUTH_ENABLE */
 #else /* WLAN_FEATURE_HOST_ROAM */
 
@@ -515,6 +527,18 @@ cm_fw_send_vdev_roam_event(struct cnx_mgr *cm_ctx, uint16_t data_len,
  */
 QDF_STATUS
 cm_fw_roam_complete(struct cnx_mgr *cm_ctx, void *data);
+
+/**
+ * cm_roam_abort_event() - Handle roam_abort event
+ *
+ * @vdev: vdev on which the ROAM_ABORT event is received
+ *
+ * This is to do the operations needed as part of ROAM_ABORT, e.g. Send if there
+ * is any pending RSO_STOP command to firmware
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS cm_roam_abort_event(struct wlan_objmgr_vdev *vdev);
 
 #else
 static inline bool cm_roam_offload_enabled(struct wlan_objmgr_psoc *psoc)

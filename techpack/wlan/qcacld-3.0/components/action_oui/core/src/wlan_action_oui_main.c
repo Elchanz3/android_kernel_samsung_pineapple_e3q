@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2018, 2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -188,10 +188,19 @@ static void action_oui_load_config(struct action_oui_psoc_priv *psoc_priv)
 		      cfg_get(psoc,
 			      CFG_ACTION_OUI_ENABLE_CTS2SELF_WITH_QOS_NULL),
 		      ACTION_OUI_MAX_STR_LEN);
+
+	qdf_str_lcopy(psoc_priv->action_oui_str[ACTION_OUI_ENABLE_CTS2SELF],
+		      cfg_get(psoc, CFG_ACTION_OUI_ENABLE_CTS2SELF),
+		      ACTION_OUI_MAX_STR_LEN);
+
 	qdf_str_lcopy(psoc_priv->action_oui_str
 			[ACTION_OUI_SEND_SMPS_FRAME_WITH_OMN],
 		      cfg_get(psoc,
 			      CFG_ACTION_OUI_SEND_SMPS_FRAME_WITH_OMN),
+		      ACTION_OUI_MAX_STR_LEN);
+	qdf_str_lcopy(psoc_priv->action_oui_str
+			[ACTION_OUI_RESTRICT_MAX_MLO_LINKS],
+		      cfg_get(psoc, CFG_ACTION_OUI_RESTRICT_MAX_MLO_LINKS),
 		      ACTION_OUI_MAX_STR_LEN);
 	qdf_str_lcopy(psoc_priv->action_oui_str
 			[ACTION_OUI_AUTH_ASSOC_6MBPS_2GHZ],
@@ -200,6 +209,16 @@ static void action_oui_load_config(struct action_oui_psoc_priv *psoc_priv)
 	qdf_str_lcopy(psoc_priv->action_oui_str[ACTION_OUI_DISABLE_BFORMEE],
 		      cfg_get(psoc, CFG_ACTION_OUI_DISABLE_BFORMEE),
 			      ACTION_OUI_MAX_STR_LEN);
+	qdf_str_lcopy(psoc_priv->action_oui_str[ACTION_OUI_LIMIT_BW],
+		      cfg_get(psoc, CFG_ACTION_OUI_LIMIT_BW),
+			      ACTION_OUI_MAX_STR_LEN);
+	qdf_str_lcopy(psoc_priv->action_oui_str[ACTION_OUI_DISABLE_AUX_LISTEN],
+		      cfg_get(psoc, CFG_ACTION_OUI_DISABLE_AUX_LISTEN),
+		      ACTION_OUI_MAX_STR_LEN);
+	qdf_str_lcopy(psoc_priv->action_oui_str
+		      [ACTION_OUI_DISABLE_DYNAMIC_SMPS],
+		      cfg_get(psoc, CFG_ACTION_OUI_DISABLE_DYNAMIC_SMPS),
+		      ACTION_OUI_MAX_STR_LEN);
 }
 
 static void action_oui_parse_config(struct wlan_objmgr_psoc *psoc)
@@ -271,6 +290,10 @@ static QDF_STATUS action_oui_send_config(struct wlan_objmgr_psoc *psoc)
 	for (id = 0; id < ACTION_OUI_MAXIMUM_ID; id++) {
 		if (id >= ACTION_OUI_HOST_ONLY)
 			continue;
+		if (id == ACTION_OUI_CONNECT_1X1 &&
+		    policy_mgr_is_hw_dbs_2x2_capable(psoc)) {
+			continue;
+		}
 		status = action_oui_send(psoc_priv, id);
 		if (!QDF_IS_STATUS_SUCCESS(status))
 			action_oui_err("Failed to send: %u", id);

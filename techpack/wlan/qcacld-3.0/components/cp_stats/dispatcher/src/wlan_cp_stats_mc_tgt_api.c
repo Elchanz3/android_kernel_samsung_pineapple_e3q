@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -33,7 +33,6 @@
 #include <wlan_cp_stats_utils_api.h>
 #include "../../core/src/wlan_cp_stats_defs.h"
 #include "../../core/src/wlan_cp_stats_obj_mgr_handler.h"
-#include "son_api.h"
 #include "wlan_policy_mgr_api.h"
 
 static bool tgt_mc_cp_stats_is_last_event(struct stats_event *ev,
@@ -129,6 +128,11 @@ static void tgt_mc_cp_stats_extract_tx_power(struct wlan_objmgr_psoc *psoc,
 	if (!ev->pdev_stats)
 		return;
 
+	if (ev->mac_seq_num >= MAX_MAC) {
+		cp_stats_err("invalid mac seq num");
+		return;
+	}
+
 	if (is_station_stats)
 		status = ucfg_mc_cp_stats_get_pending_req(psoc,
 					TYPE_STATION_STATS, &last_req);
@@ -169,11 +173,7 @@ static void tgt_mc_cp_stats_extract_tx_power(struct wlan_objmgr_psoc *psoc,
 	mac_id = policy_mgr_mode_get_macid_by_vdev_id(psoc, last_req.vdev_id);
 
 	wlan_cp_stats_pdev_obj_lock(pdev_cp_stats_priv);
-	pdev_mc_stats = pdev_cp_stats_priv->pdev_stats;
-	if (!is_station_stats &&
-	    pdev_mc_stats->max_pwr != ev->pdev_stats[pdev_id].max_pwr)
-		wlan_son_deliver_tx_power(vdev,
-					  ev->pdev_stats[pdev_id].max_pwr);
+	pdev_mc_stats = &pdev_cp_stats_priv->pdev_stats[ev->mac_seq_num];
 	if (mac_id == ev->mac_seq_num)
 		max_pwr = pdev_mc_stats->max_pwr =
 			ev->pdev_stats[pdev_id].max_pwr;
@@ -862,7 +862,7 @@ static void tgt_mc_cp_stats_extract_vdev_summary_stats(
 					struct wlan_objmgr_psoc *psoc,
 					struct stats_event *ev)
 {
-	uint8_t i, vdev_id;
+	uint8_t i, vdev_id = WLAN_INVALID_VDEV_ID;
 	QDF_STATUS status;
 	struct wlan_objmgr_peer *peer = NULL;
 	struct request_info last_req = {0};
@@ -895,6 +895,10 @@ static void tgt_mc_cp_stats_extract_vdev_summary_stats(
 		return;
 	}
 
+	if (vdev_id >= WLAN_UMAC_PSOC_MAX_VDEVS) {
+		cp_stats_err("invalid vdev id %d", vdev_id);
+		return;
+	}
 	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, vdev_id,
 						    WLAN_CP_STATS_ID);
 	if (!vdev) {
@@ -1150,9 +1154,16 @@ tgt_send_pdev_mc_cp_stats(struct wlan_objmgr_psoc *psoc,
 	struct pdev_mc_cp_stats *pdev_mc_stats;
 	struct pdev_cp_stats *pdev_cp_stats_priv;
 	int pdev_id;
+	uint32_t mac_id;
 
 	if (!ev || !last_req)
 		return QDF_STATUS_E_NULL_VALUE;
+
+	if (policy_mgr_vdev_is_force_inactive(psoc, last_req->vdev_id)) {
+		cp_stats_debug("Ignore pdev stats on inactive link vdev %d",
+			       last_req->vdev_id);
+		return QDF_STATUS_SUCCESS;
+	}
 
 	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, last_req->vdev_id,
 						    WLAN_CP_STATS_ID);
@@ -1173,6 +1184,13 @@ tgt_send_pdev_mc_cp_stats(struct wlan_objmgr_psoc *psoc,
 		goto end;
 	}
 
+	mac_id = policy_mgr_mode_get_macid_by_vdev_id(psoc,
+						      last_req->vdev_id);
+	if (mac_id >= MAX_MAC) {
+		cp_stats_err("mac_id: %d invalid", mac_id);
+		goto end;
+	}
+
 	pdev_cp_stats_priv = wlan_cp_stats_get_pdev_stats_obj(pdev);
 	if (!pdev_cp_stats_priv) {
 		cp_stats_err("pdev_cp_stats_priv is null");
@@ -1180,7 +1198,7 @@ tgt_send_pdev_mc_cp_stats(struct wlan_objmgr_psoc *psoc,
 	}
 
 	wlan_cp_stats_pdev_obj_lock(pdev_cp_stats_priv);
-	pdev_mc_stats = pdev_cp_stats_priv->pdev_stats;
+	pdev_mc_stats = &pdev_cp_stats_priv->pdev_stats[mac_id];
 	qdf_mem_copy(ev->pdev_stats,
 		     pdev_mc_stats,
 		     sizeof(*pdev_mc_stats));
@@ -1202,7 +1220,9 @@ tgt_mc_cp_stats_get_tx_power(struct wlan_objmgr_vdev *vdev, int *dbm)
 	struct pdev_cp_stats *pdev_cp_stats_priv;
 	struct vdev_mc_cp_stats *vdev_mc_stats;
 	struct vdev_cp_stats *vdev_cp_stat;
+	struct wlan_objmgr_psoc *psoc;
 	uint32_t vdev_power = 0;
+	uint32_t mac_id;
 
 	vdev_cp_stat = wlan_cp_stats_get_vdev_stats_obj(vdev);
 	if (vdev_cp_stat) {
@@ -1217,6 +1237,24 @@ tgt_mc_cp_stats_get_tx_power(struct wlan_objmgr_vdev *vdev, int *dbm)
 	}
 
 	pdev = wlan_vdev_get_pdev(vdev);
+	if (!pdev) {
+		cp_stats_err("pdev is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	psoc = pdev->pdev_objmgr.wlan_psoc;
+	if (!psoc) {
+		cp_stats_err("psoc is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	mac_id = policy_mgr_mode_get_macid_by_vdev_id(psoc,
+					vdev->vdev_objmgr.vdev_id);
+	if (mac_id >= MAX_MAC) {
+		cp_stats_err("invalid mac_id %d", mac_id);
+		return QDF_STATUS_E_INVAL;
+	}
+
 	pdev_cp_stats_priv = wlan_cp_stats_get_pdev_stats_obj(pdev);
 	if (!pdev_cp_stats_priv) {
 		cp_stats_err("pdev cp stats object is null");
@@ -1224,7 +1262,7 @@ tgt_mc_cp_stats_get_tx_power(struct wlan_objmgr_vdev *vdev, int *dbm)
 	}
 
 	wlan_cp_stats_pdev_obj_lock(pdev_cp_stats_priv);
-	pdev_mc_stats = pdev_cp_stats_priv->pdev_stats;
+	pdev_mc_stats = &pdev_cp_stats_priv->pdev_stats[mac_id];
 	*dbm = pdev_mc_stats->max_pwr;
 	wlan_cp_stats_pdev_obj_unlock(pdev_cp_stats_priv);
 
@@ -1542,3 +1580,20 @@ QDF_STATUS tgt_send_mc_cp_stats_req(struct wlan_objmgr_psoc *psoc,
 
 	return status;
 }
+
+QDF_STATUS tgt_set_pdev_stats_update_period(struct wlan_objmgr_psoc *psoc,
+					    uint8_t pdev_id, uint32_t val)
+{
+	struct wlan_lmac_if_cp_stats_tx_ops *tx_ops;
+	QDF_STATUS status;
+
+	tx_ops = target_if_cp_stats_get_tx_ops(psoc);
+	if (!tx_ops || !tx_ops->set_pdev_stats_update_period) {
+		cp_stats_err("could not get tx_ops");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+	status = tx_ops->set_pdev_stats_update_period(psoc, pdev_id, val);
+
+	return status;
+}
+

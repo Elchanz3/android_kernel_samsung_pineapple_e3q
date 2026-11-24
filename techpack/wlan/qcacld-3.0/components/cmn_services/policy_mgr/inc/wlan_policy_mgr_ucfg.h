@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -422,6 +422,7 @@ bool ucfg_policy_mgr_is_hw_sbs_capable(struct wlan_objmgr_psoc *psoc);
  *					           connection that has same
  *					           channel frequency as new_freq
  * @psoc: psoc object pointer
+ * @self_vdev_id: self vdev id of the connection with new_freq
  * @new_freq: channel frequency for the new connection
  * @vdev_id: Output parameter to return vdev id of the first existing connection
  *	     that has same channel frequency as @new_freq
@@ -433,6 +434,7 @@ bool ucfg_policy_mgr_is_hw_sbs_capable(struct wlan_objmgr_psoc *psoc);
  *	   @new_freq exists. Otherwise false.
  */
 bool ucfg_policy_mgr_get_vdev_same_freq_new_conn(struct wlan_objmgr_psoc *psoc,
+						 uint8_t self_vdev_id,
 						 uint32_t new_freq,
 						 uint8_t *vdev_id);
 /*
@@ -454,4 +456,190 @@ bool ucfg_policy_mgr_get_vdev_diff_freq_new_conn(struct wlan_objmgr_psoc *psoc,
 						 uint32_t new_freq,
 						 uint8_t *vdev_id);
 
+/**
+ * ucfg_policy_mgr_get_dbs_hw_modes() - to get the DBS HW modes
+ *
+ * @psoc: pointer to psoc
+ * @one_by_one_dbs: 1x1 DBS capability of HW
+ * @two_by_two_dbs: 2x2 DBS capability of HW
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS ucfg_policy_mgr_get_dbs_hw_modes(struct wlan_objmgr_psoc *psoc,
+					    bool *one_by_one_dbs,
+					    bool *two_by_two_dbs);
+
+/**
+ * ucfg_policy_mgr_wait_chan_switch_complete_evt() - Wait for SAP/GO CSA complete
+ * event
+ * @psoc: PSOC object information
+ *
+ * Return: QDF_STATUS_SUCCESS if CSA complete
+ */
+QDF_STATUS
+ucfg_policy_mgr_wait_chan_switch_complete_evt(struct wlan_objmgr_psoc *psoc);
+
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * ucfg_policy_mgr_pre_ap_start() - handle ap start request
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of starting ap
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_pre_ap_start(struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_post_ap_start_failed() - handle ap start
+ * failed
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of starting ap
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_post_ap_start_failed(
+			     struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_acs_start() - handle ACS start request
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of SAP
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_acs_start(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_acs_completed() - handle ACS complete request
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of SAP
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_acs_completed(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_pre_sta_p2p_start() - handle STA P2P start request
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of starting sta
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_pre_sta_p2p_start(struct wlan_objmgr_psoc *psoc,
+				  uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_post_sta_p2p_start_failed() - handle STA P2P start
+ * failed
+ * @psoc: pointer to psoc
+ * @vdev_id: vdev id of starting sta
+ *
+ * Return: Failure in case of error otherwise success
+ */
+QDF_STATUS
+ucfg_policy_mgr_post_sta_p2p_start_failed(struct wlan_objmgr_psoc *psoc,
+					  uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_clear_ml_links_settings_in_fw() - Process
+ * QCA_WLAN_VENDOR_ATTR_LINK_STATE_CONTROL_MODE in default mode
+ * @psoc: objmgr psoc
+ * @vdev_id: vdev_id
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+ucfg_policy_mgr_clear_ml_links_settings_in_fw(struct wlan_objmgr_psoc *psoc,
+					      uint8_t vdev_id);
+
+/**
+ * ucfg_policy_mgr_update_mlo_links_based_on_linkid() - Force active
+ * ML links based on user requested coming via
+ * QCA_NL80211_VENDOR_SUBCMD_MLO_LINK_STATE
+ * @psoc: objmgr psoc
+ * @vdev_id: vdev id
+ * @num_links: number of links to be forced active
+ * @link_id_list: link id(s) list coming from user space
+ * @config_state_list: config state list coming from user space
+ *
+ * Return: success if the command gets processed successfully
+ */
+QDF_STATUS
+ucfg_policy_mgr_update_mlo_links_based_on_linkid(struct wlan_objmgr_psoc *psoc,
+						 uint8_t vdev_id,
+						 uint8_t num_links,
+						 uint8_t *link_id_list,
+						 uint32_t *config_state_list);
+
+/**
+ * ucfg_policy_mgr_update_active_mlo_num_links() - Force active ML links based
+ * on user requested coming via LINK_STATE_MIXED_MODE_ACTIVE_NUM_LINKS
+ * @psoc: objmgr psoc
+ * @vdev_id: vdev id
+ * @num_links: number of links to be forced active
+ *
+ * Return: success if the command gets processed successfully
+ */
+QDF_STATUS
+ucfg_policy_mgr_update_active_mlo_num_links(struct wlan_objmgr_psoc *psoc,
+					    uint8_t vdev_id,
+					    uint8_t num_links);
+
+/**
+ * ucfg_policy_mgr_find_current_hw_mode() - Find current HW mode
+ * @psoc: objmgr psoc
+ *
+ * Return: policy mgr current HW mode.
+ */
+enum policy_mgr_curr_hw_mode
+ucfg_policy_mgr_find_current_hw_mode(struct wlan_objmgr_psoc *psoc);
+#else
+static inline QDF_STATUS
+ucfg_policy_mgr_pre_ap_start(struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_policy_mgr_post_ap_start_failed(
+			     struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_policy_mgr_acs_start(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_policy_mgr_acs_completed(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_policy_mgr_pre_sta_p2p_start(struct wlan_objmgr_psoc *psoc,
+				  uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+ucfg_policy_mgr_post_sta_p2p_start_failed(struct wlan_objmgr_psoc *psoc,
+					  uint8_t vdev_id)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
 #endif //__WLAN_POLICY_MGR_UCFG

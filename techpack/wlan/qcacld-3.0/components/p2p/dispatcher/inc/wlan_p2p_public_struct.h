@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2019, 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -28,14 +28,27 @@
 
 #define P2P_MAX_NOA_DESC 4
 
+#define P2P_MC_ADDR      "\x51\x6F\x9A\x02"
+#define P2P_MC_ADDR_SIZE 4
+
 #define HEADER_LEN_P2P_IE  6
-#define OUI_SIZE_P2P       4
 
 #define P2P_1X1_WAR_OUI   "\x00\x50\xf2\x04"
 #define P2P_1X1_OUI_LEN    4
 
 #define MAX_CONFIG_METHODS_LEN   2
 #define DEVICE_CATEGORY_MAX_LEN  1
+
+#define P2P_OUI                  "\x50\x6f\x9a\x09"
+#define P2P_OUI_SIZE             4
+
+#define P2P2_OUI                 "\x50\x6f\x9a\x28"
+#define P2P2_OUI_SIZE            4
+
+/* Indicate if scan type is p2p or not */
+#define BIT_P2P_SCAN_IN_STA_VDEV 0
+
+#define P2P_SCAN_IN_STA_VDEV_FLAG BIT(BIT_P2P_SCAN_IN_STA_VDEV)
 
 /**
  * struct p2p_ps_params - P2P powersave related params
@@ -94,13 +107,19 @@ enum p2p_roc_event {
  * @cookie:      Cookie which is given to supplicant for this roc req
  * @chan_freq:   Chan frequency for which this RoC has been requested
  * @duration:    Duration for the RoC
-  */
+ * @opmode:      Interface type of RoC
+ * @flag:        Indicate scan type. BIT[0] indicate whether
+ *               scan type is for p2p or not when sta vdev gets
+ *               use during p2p device mode operation
+ */
 struct p2p_event {
 	uint32_t vdev_id;
 	enum p2p_roc_event roc_event;
 	uint64_t cookie;
 	qdf_freq_t chan_freq;
 	uint32_t duration;
+	enum QDF_OPMODE opmode;
+	uint32_t flag;
 };
 
 /**
@@ -118,7 +137,7 @@ struct p2p_rx_mgmt_frame {
 	uint32_t vdev_id;
 	uint32_t frm_type;
 	uint32_t rx_rssi;
-	uint8_t buf[1];
+	QDF_FLEX_ARRAY(uint8_t, buf);
 };
 
 /**
@@ -128,6 +147,7 @@ struct p2p_rx_mgmt_frame {
  * @buf_len:        Frame length
  * @status:         TX status
  * @buf:            Buffer address
+ * @opmode:         interface type on which tx mgmt frame came
  */
 struct p2p_tx_cnf {
 	uint32_t vdev_id;
@@ -135,6 +155,7 @@ struct p2p_tx_cnf {
 	uint32_t buf_len;
 	uint32_t status;
 	uint8_t *buf;
+	enum QDF_OPMODE opmode;
 };
 
 /**
@@ -147,6 +168,10 @@ struct p2p_tx_cnf {
  * @dont_wait_for_ack:   Wait for ack or not
  * @off_chan:            Off channel tx or not
  * @buf:                 TX buffer
+ * @opmode:              Interface type on which mgmt tx came
+ * @flag:        Indicate scan type. BIT[0] indicate whether
+ *               scan type is for p2p or not when sta vdev gets
+ *               use during p2p device mode operation
  */
 struct p2p_mgmt_tx {
 	uint32_t vdev_id;
@@ -157,6 +182,8 @@ struct p2p_mgmt_tx {
 	uint32_t dont_wait_for_ack;
 	uint32_t off_chan;
 	const uint8_t *buf;
+	enum QDF_OPMODE opmode;
+	uint32_t flag;
 };
 
 /**
@@ -262,11 +289,49 @@ struct p2p_noa_info {
 };
 
 /**
+ * struct p2p_chan_switch_req_params - Channel switch parameters for P2P GO/CLI
+ * @p2p_soc_obj: P2P soc priv object
+ * @vdev_id: VDEV ID of the p2p entity
+ * @channel: Channel number of channel switch request
+ * @op_class: operating class of channel switch request
+ */
+struct p2p_chan_switch_req_params {
+	struct p2p_soc_priv_obj *p2p_soc_obj;
+	uint8_t vdev_id;
+	uint8_t channel;
+	uint8_t op_class;
+};
+
+/**
+ * struct p2p_ap_assist_dfs_group_params - Params of assisted AP for DFS
+ * P2P group
+ * @vdev_id: VDEV ID of p2p entity
+ * @bssid: BSSID of the assisted infra BSS
+ * @non_tx_bssid: Non-TxBSSID of the assisted infra BSS
+ */
+struct p2p_ap_assist_dfs_group_params {
+	uint8_t vdev_id;
+	struct qdf_mac_addr bssid;
+	struct qdf_mac_addr non_tx_bssid;
+};
+
+/**
  * struct p2p_protocol_callbacks - callback to non-converged driver
  * @is_mgmt_protected: func to get 11w mgmt protection status
+ * @ap_assist_dfs_group_bmiss_notify: Received BMISS event from FW for DFS group
+ * which is in infra BSS assisted mode.
+ * @p2p_group_chan_switch_req: Channel switch request params for
+ * P2P group entity
+ * @ap_assist_dfs_group_fw_monitor_update: Update FW monitoring status for the
+ * assisted infra BSS in DFS operation
  */
 struct p2p_protocol_callbacks {
 	bool (*is_mgmt_protected)(uint32_t vdev_id, const uint8_t *peer_addr);
+	void (*ap_assist_dfs_group_bmiss_notify)(uint8_t vdev_id);
+	void (*p2p_group_chan_switch_req)(uint8_t vdev_id, uint8_t chan,
+					  uint8_t op_class);
+	void (*ap_assist_dfs_group_fw_monitor_update)(uint8_t vdev_id,
+						      bool val);
 };
 
 /**
@@ -299,6 +364,8 @@ struct p2p_protocol_callbacks {
  * @P2P_ATTR_SESSION_ID: Session ID attribute
  * @P2P_ATTR_FEATURE_CAPABILITY: Feature capability attribute
  * @P2P_ATTR_PERSISTENT_GROUP: Persistent group attribute
+ * @P2P_ATTR_EXT_CAPABILITY: P2P extended capability attribute in P2P2 IE
+ * @P2P_ATTR_WLAN_AP_INFO: WLAN AP info attribute in P2P2 IE
  * @P2P_ATTR_VENDOR_SPECIFIC: Vendor specific attribute
  */
 enum p2p_attr_id {
@@ -330,6 +397,153 @@ enum p2p_attr_id {
 	P2P_ATTR_SESSION_ID = 26,
 	P2P_ATTR_FEATURE_CAPABILITY = 27,
 	P2P_ATTR_PERSISTENT_GROUP = 28,
+	P2P_ATTR_EXT_CAPABILITY = 29,
+	P2P_ATTR_WLAN_AP_INFO = 30,
 	P2P_ATTR_VENDOR_SPECIFIC = 221
 };
+
+#ifdef FEATURE_WLAN_SUPPORT_USD
+#define P2P_USD_SERVICE_LEN                    6
+#define P2P_USD_SSI_LEN                        1400
+#define P2P_USD_FRAME_LEN                      1024
+#define P2P_USD_CHAN_CONFIG_FREQ_LIST_MAX_SIZE 10
+
+/**
+ * enum p2p_usd_op_type: OP type for P2P USD
+ * @P2P_USD_OP_TYPE_FLUSH: Indicates USD tear down of all active publish and
+ * subscribe sessions.
+ *
+ * @P2P_USD_OP_TYPE_PUBLISH: Indicates USD solicited publish operation that
+ * enables to offer a service for other devices based on given parameters.
+ *
+ * @P2P_USD_OP_TYPE_SUBSCRIBE: Indicates USD active subscribe operation that
+ * requests for a given service with given parameters from other devices that
+ * offer the service.
+ *
+ * @P2P_USD_OP_TYPE_UPDATE_PUBLISH: Indicates update of an instance of the
+ * publish function of given publish id.
+ *
+ * @P2P_USD_OP_TYPE_CANCEL_PUBLISH: Indicates cancellation of an instance of
+ * the publish function.
+ *
+ * @P2P_USD_OP_TYPE_CANCEL_SUBSCRIBE: Indicates cancellation of an instance of
+ * the subscribe function.
+ */
+enum p2p_usd_op_type {
+	P2P_USD_OP_TYPE_FLUSH = 0,
+	P2P_USD_OP_TYPE_PUBLISH = 1,
+	P2P_USD_OP_TYPE_SUBSCRIBE = 2,
+	P2P_USD_OP_TYPE_UPDATE_PUBLISH = 3,
+	P2P_USD_OP_TYPE_CANCEL_PUBLISH = 4,
+	P2P_USD_OP_TYPE_CANCEL_SUBSCRIBE = 5,
+};
+
+/**
+ * enum p2p_usd_service_protocol_type: USD service protocol type for P2P
+ * @P2P_USD_SERVICE_PROTOCOL_TYPE_BONJOUR: Indicates SSI info is of type Bonjour
+ * @P2P_USD_SERVICE_PROTOCOL_TYPE_GENERIC: Indicates SSI info is of type generic
+ * @P2P_USD_SERVICE_PROTOCOL_TYPE_CSA_MATTER: Indicates SSI info is of type
+ * CSA/Matter
+ */
+enum p2p_usd_service_protocol_type {
+	P2P_USD_SERVICE_PROTOCOL_TYPE_BONJOUR = 1,
+	P2P_USD_SERVICE_PROTOCOL_TYPE_GENERIC = 2,
+	P2P_USD_SERVICE_PROTOCOL_TYPE_CSA_MATTER = 3,
+};
+
+/**
+ * struct p2p_usd_data - containing frame data and length
+ * @data: array for frame data
+ * @len: frame length
+ */
+struct p2p_usd_data {
+	uint8_t *data;
+	uint32_t len;
+};
+
+/**
+ * struct p2p_usd_freq_list - containing frequency list and length
+ * @freq: list of frequency
+ * @len: total bytes in frequency list
+ */
+struct p2p_usd_freq_list {
+	uint8_t *freq;
+	uint32_t len;
+};
+
+/**
+ * struct p2p_usd_freq_config - USd channel configuration
+ * @default_freq: default frequency
+ * @freq_list: frequency list structure
+ */
+struct p2p_usd_freq_config {
+	uint32_t default_freq;
+	struct p2p_usd_freq_list freq_list;
+};
+
+/**
+ * struct p2p_usd_service_info - containing service information
+ * @service_id: 6 bytes of service ID
+ * @protocol_type: protocol type
+ * @len: service ID length
+ */
+struct p2p_usd_service_info {
+	uint8_t *service_id;
+	enum p2p_usd_service_protocol_type protocol_type;
+	uint8_t len;
+};
+
+/**
+ * struct p2p_usd_ssi - containing SSI information
+ * @data: array for SSI data
+ * @len: SSI length
+ */
+struct p2p_usd_ssi {
+	uint8_t *data;
+	uint32_t len;
+};
+
+/**
+ * struct p2p_usd_attr_params - containing USD attributes parameters
+ * @vdev_id: VDEV ID
+ * @op_type: OP type
+ * @p2p_mac_addr: P2P MAC address
+ * @instance_id: instance ID
+ * @service_info: Service information structure
+ * @ssi: SSI information structure
+ * @freq_config: frequency configuration structure
+ * @frame: Frame information structure
+ * @ttl: (Time to live) Timeout for each request
+ */
+struct p2p_usd_attr_params {
+	uint32_t vdev_id;
+	enum p2p_usd_op_type op_type;
+	struct qdf_mac_addr p2p_mac_addr;
+	uint8_t instance_id;
+	struct p2p_usd_service_info service_info;
+	struct p2p_usd_ssi ssi;
+	struct p2p_usd_freq_config freq_config;
+	struct p2p_usd_data frame;
+	uint16_t ttl;
+};
+
+/**
+ * enum p2p_mode_type: P2P mode type
+ * @P2P_MODE_WFD_R1: Wi-Fi Direct R1 only
+ * @P2P_MODE_WFD_R2: Wi-Fi Direct R2 only
+ * @P2P_MODE_WFD_PCC: P2P Connection Compatibility Mode which supports both
+ * Wi-Fi Direct R1 and R2.
+ * @P2P_MODE_WFD_MAX: P2P mode maximum value allowed
+ * @P2P_MODE_WFD_INVALID: Invalid P2P mode value
+ */
+enum p2p_mode_type {
+	P2P_MODE_WFD_R1 = 0,
+	P2P_MODE_WFD_R2 = 1,
+	P2P_MODE_WFD_PCC = 2,
+	/* add enums above this comment only */
+	P2P_MODE_WFD_MAX,
+	P2P_MODE_WFD_INVALID = 0xFF,
+};
+
+#endif /* FEATURE_WLAN_SUPPORT_USD */
 #endif /* _WLAN_P2P_PUBLIC_STRUCT_H_ */

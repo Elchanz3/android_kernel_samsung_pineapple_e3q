@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -642,6 +642,46 @@ static inline void fwol_ofdm_scrambler_init(struct wlan_fwol_cfg *fwol_cfg,
 }
 #endif
 
+#ifdef WLAN_DDR_BW_MITIGATION
+/**
+ * fwol_init_bw_mitigation_param_in_cfg() - set bw mitigation related parameters
+ * @psoc: The global psoc handler
+ * @fwol_cfg: fwol config params
+ *
+ * Return: none
+ */
+static void
+fwol_init_bw_mitigation_param_in_cfg(struct wlan_objmgr_psoc *psoc,
+				     struct wlan_fwol_cfg *fwol_cfg)
+{
+	struct wlan_fwol_bwm_params *bwm_param = &fwol_cfg->bwm_params_cfg;
+
+	bwm_param->bw_mitigation_enable =
+				cfg_get(psoc, CFG_DDR_BW_MITIGATION_ENABLE);
+	bwm_param->bw_sampling_time =
+				cfg_get(psoc, CFG_DDR_BWM_SAMPLING_TIME);
+	bwm_param->throttle_dutycycle_level[0] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL0);
+	bwm_param->throttle_dutycycle_level[1] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL1);
+	bwm_param->throttle_dutycycle_level[2] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL2);
+	bwm_param->throttle_dutycycle_level[3] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL3);
+	bwm_param->throttle_dutycycle_level[4] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL4);
+	bwm_param->throttle_dutycycle_level[5] =
+			cfg_get(psoc, CFG_DDR_BWM_THROTTLE_DUTY_CYCLE_LEVEL5);
+	bwm_param->priority_bwm = cfg_get(psoc, CFG_DDR_BWM_PRIORITY);
+}
+#else
+static inline void
+fwol_init_bw_mitigation_param_in_cfg(struct wlan_objmgr_psoc *psoc,
+				     struct wlan_fwol_cfg *fwol_cfg)
+{
+}
+#endif
+
 QDF_STATUS fwol_cfg_on_psoc_enable(struct wlan_objmgr_psoc *psoc)
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
@@ -660,6 +700,7 @@ QDF_STATUS fwol_cfg_on_psoc_enable(struct wlan_objmgr_psoc *psoc)
 
 	fwol_init_coex_config_in_cfg(psoc, &fwol_cfg->coex_config);
 	fwol_init_thermal_temp_in_cfg(psoc, &fwol_cfg->thermal_temp_cfg);
+	fwol_init_bw_mitigation_param_in_cfg(psoc, fwol_cfg);
 	fwol_init_ie_whiltelist_in_cfg(psoc, &fwol_cfg->ie_allowlist_cfg);
 	fwol_init_neighbor_report_cfg(psoc, &fwol_cfg->neighbor_report_cfg);
 	fwol_cfg->ani_enabled = cfg_get(psoc, CFG_ENABLE_ANI);
@@ -672,6 +713,7 @@ QDF_STATUS fwol_cfg_on_psoc_enable(struct wlan_objmgr_psoc *psoc)
 	fwol_cfg->upper_brssi_thresh = cfg_get(psoc, CFG_UPPER_BRSSI_THRESH);
 	fwol_cfg->lower_brssi_thresh = cfg_get(psoc, CFG_LOWER_BRSSI_THRESH);
 	fwol_cfg->enable_dtim_1chrx = cfg_get(psoc, CFG_DTIM_1CHRX_ENABLE);
+	fwol_cfg->dynamic_bw_switch = cfg_get(psoc, CFG_DYNAMIC_BW_SWITCH);
 	fwol_cfg->alternative_chainmask_enabled =
 				cfg_get(psoc, CFG_ENABLE_COEX_ALT_CHAINMASK);
 	fwol_cfg->smart_chainmask_enabled =

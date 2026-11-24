@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2015, 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -37,6 +37,7 @@
 #include "wlan_t2lm_api.h"
 #include "wlan_mlo_link_force.h"
 #include <wlan_mlo_mgr_public_api.h>
+#include <wlan_cp_stats_chipset_stats.h>
 
 static void cm_abort_connect_request_timers(struct wlan_objmgr_vdev *vdev)
 {
@@ -89,11 +90,21 @@ QDF_STATUS cm_disconnect_start_ind(struct wlan_objmgr_vdev *vdev,
 	user_disconnect =
 		(req->source == CM_OSIF_DISCONNECT ||
 		 req->source == CM_MLO_LINK_SWITCH_DISCONNECT) ? true : false;
-	if (user_disconnect) {
+	if (user_disconnect)
 		wlan_p2p_cleanup_roc_by_vdev(vdev, false);
+
+	/*
+	 * For link switch disconnect avoid posting msg to PE to
+	 * delete all the TDLS peers since pe_session can get deleted before
+	 * TDLS msg is processed, causing the TDLS peers to be not deleted.
+	 * The AID bitmap also gets cleared during pe_session deletion,
+	 * so during subsequent disconnects also to not deleted the TDLS peers
+	 * TODO: Move all TDLS peers deletion logic from IF_MGR to be symmetric
+	 */
+	if (req->source == CM_OSIF_DISCONNECT)
 		wlan_tdls_notify_sta_disconnect(req->vdev_id, false,
-						user_disconnect, vdev);
-	}
+						true, vdev);
+
 	cm_abort_connect_request_timers(vdev);
 
 	if (req->source != CM_MLO_ROAM_INTERNAL_DISCONNECT &&
@@ -106,6 +117,63 @@ QDF_STATUS cm_disconnect_start_ind(struct wlan_objmgr_vdev *vdev,
 
 	return QDF_STATUS_SUCCESS;
 }
+
+#ifdef WLAN_CHIPSET_STATS
+static void
+cm_cp_stats_cstats_disconn_req_event(struct wlan_objmgr_vdev *vdev,
+				     struct wlan_cm_vdev_discon_req *req)
+{
+	struct cstats_sta_disconnect_req stat = {0};
+
+	stat.cmn.hdr.evt_id = WLAN_CHIPSET_STATS_STA_DISCONNECT_REQ_EVENT_ID;
+	stat.cmn.hdr.length = sizeof(struct cstats_sta_disconnect_req) -
+			      sizeof(struct cstats_hdr);
+	stat.cmn.opmode = wlan_vdev_mlme_get_opmode(vdev);
+	stat.cmn.vdev_id = req->req.vdev_id;
+	stat.cmn.timestamp_us = qdf_get_time_of_the_day_us();
+	stat.cmn.time_tick = qdf_get_log_timestamp();
+	stat.reason_code = req->req.reason_code;
+	stat.source = req->req.source;
+	stat.is_no_disassoc_disconnect = req->req.is_no_disassoc_disconnect;
+	CSTATS_MAC_COPY(stat.bssid, req->req.bssid.bytes);
+
+	wlan_cstats_host_stats(sizeof(struct cstats_sta_disconnect_req), &stat);
+}
+
+static void
+cm_cp_stats_cstats_disconn_resp_event(struct wlan_objmgr_vdev *vdev,
+				      struct wlan_cm_discon_rsp *rsp)
+{
+	struct cstats_sta_disconnect_resp stat = {0};
+
+	stat.cmn.hdr.evt_id = WLAN_CHIPSET_STATS_STA_DISCONNECT_DONE_EVENT_ID;
+	stat.cmn.hdr.length = sizeof(struct cstats_sta_disconnect_resp) -
+			      sizeof(struct cstats_hdr);
+	stat.cmn.opmode = wlan_vdev_mlme_get_opmode(vdev);
+	stat.cmn.vdev_id = wlan_vdev_get_id(vdev);
+	stat.cmn.timestamp_us = qdf_get_time_of_the_day_us();
+	stat.cmn.time_tick = qdf_get_log_timestamp();
+	stat.cm_id = rsp->req.cm_id;
+	stat.reason_code = rsp->req.req.reason_code;
+	stat.source = rsp->req.req.source;
+	CSTATS_MAC_COPY(stat.bssid, rsp->req.req.bssid.bytes);
+
+	wlan_cstats_host_stats(sizeof(struct cstats_sta_disconnect_resp),
+			       &stat);
+}
+#else
+static inline void
+cm_cp_stats_cstats_disconn_req_event(struct wlan_objmgr_vdev *vdev,
+				     struct wlan_cm_vdev_discon_req *req)
+{
+}
+
+static inline void
+cm_cp_stats_cstats_disconn_resp_event(struct wlan_objmgr_vdev *vdev,
+				      struct wlan_cm_discon_rsp *rsp)
+{
+}
+#endif /* WLAN_CHIPSET_STATS */
 
 QDF_STATUS
 cm_handle_disconnect_req(struct wlan_objmgr_vdev *vdev,
@@ -145,6 +213,7 @@ cm_handle_disconnect_req(struct wlan_objmgr_vdev *vdev,
 	discon_req = qdf_mem_malloc(sizeof(*discon_req));
 	if (!discon_req)
 		return QDF_STATUS_E_NOMEM;
+	cm_cp_stats_cstats_disconn_req_event(vdev, req);
 
 	cm_csr_handle_diconnect_req(vdev, req);
 	wlan_roam_reset_roam_params(vdev);
@@ -241,7 +310,7 @@ cm_disconnect_complete_ind(struct wlan_objmgr_vdev *vdev,
 		mlme_err("vdev or rsp is NULL");
 		return QDF_STATUS_E_INVAL;
 	}
-	cm_csr_diconnect_done_ind(vdev, rsp);
+	cm_csr_disconnect_done_ind(vdev, rsp);
 
 	vdev_id = wlan_vdev_get_id(vdev);
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
@@ -257,6 +326,8 @@ cm_disconnect_complete_ind(struct wlan_objmgr_vdev *vdev,
 			 CM_PREFIX_REF(vdev_id, rsp->req.cm_id));
 		return QDF_STATUS_E_INVAL;
 	}
+	cm_cp_stats_cstats_disconn_resp_event(vdev, rsp);
+
 	cm_disconnect_diag_event(vdev, rsp);
 	wlan_tdls_notify_sta_disconnect(vdev_id, false, false, vdev);
 	policy_mgr_decr_session_set_pcl(psoc, op_mode, vdev_id);
@@ -330,7 +401,7 @@ QDF_STATUS cm_send_sb_disconnect_req(struct scheduler_msg *msg)
 	status = wlan_mlo_mgr_link_switch_defer_disconnect_req(vdev,
 							       ind->disconnect_param.source,
 							       ind->disconnect_param.reason_code);
-	if (QDF_IS_STATUS_ERROR(status)) {
+	if (status != QDF_STATUS_E_ALREADY && QDF_IS_STATUS_ERROR(status)) {
 		status = mlo_disconnect(vdev, ind->disconnect_param.source,
 					ind->disconnect_param.reason_code,
 					&ind->disconnect_param.bssid);

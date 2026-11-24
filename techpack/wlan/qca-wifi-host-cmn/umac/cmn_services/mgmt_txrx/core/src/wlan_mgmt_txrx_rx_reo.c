@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +28,7 @@
 #include <wlan_mlo_mgr_setup.h>
 #include <qdf_platform.h>
 #include <qdf_types.h>
+#include "wlan_utility.h"
 
 static struct mgmt_rx_reo_context *g_rx_reo_ctx[WLAN_MAX_MLO_GROUPS];
 
@@ -4231,16 +4232,48 @@ exit_release_ingress_list_lock:
 }
 
 /**
- * mgmt_rx_reo_ingress_list_init() - Initialize the management rx-reorder
+ * mgmt_rx_reo_ingress_list_init() - Init of management rx-reorder
  * ingress list
  * @ingress_list: Pointer to ingress list
  *
- * API to initialize the management rx-reorder ingress list.
+ * API to init the management rx-reorder ingress list.
  *
  * Return: QDF_STATUS
  */
 static QDF_STATUS
 mgmt_rx_reo_ingress_list_init(struct mgmt_rx_reo_ingress_list *ingress_list)
+{
+	struct mgmt_rx_reo_list *reo_ingress_list;
+
+	if (!ingress_list) {
+		mgmt_rx_reo_err("Ingress list is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	reo_ingress_list = &ingress_list->reo_list;
+
+	qdf_mem_zero(&reo_ingress_list->last_inserted_frame,
+		     sizeof(reo_ingress_list->last_inserted_frame));
+	qdf_mem_zero(&reo_ingress_list->last_released_frame,
+		     sizeof(reo_ingress_list->last_released_frame));
+
+	qdf_timer_start(&ingress_list->ageout_timer,
+			MGMT_RX_REO_INGRESS_LIST_AGEOUT_TIMER_PERIOD_MS);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * mgmt_rx_reo_ingress_list_create() - Create the management rx-reorder
+ * ingress list
+ * @ingress_list: Pointer to ingress list
+ *
+ * API to Create the management rx-reorder ingress list.
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+mgmt_rx_reo_ingress_list_create(struct mgmt_rx_reo_ingress_list *ingress_list)
 {
 	QDF_STATUS status;
 	struct mgmt_rx_reo_list *reo_ingress_list;
@@ -4256,10 +4289,6 @@ mgmt_rx_reo_ingress_list_init(struct mgmt_rx_reo_ingress_list *ingress_list)
 	qdf_list_create(&reo_ingress_list->list,
 			reo_ingress_list->max_list_size);
 	qdf_spinlock_create(&reo_ingress_list->list_lock);
-	qdf_mem_zero(&reo_ingress_list->last_inserted_frame,
-		     sizeof(reo_ingress_list->last_inserted_frame));
-	qdf_mem_zero(&reo_ingress_list->last_released_frame,
-		     sizeof(reo_ingress_list->last_released_frame));
 
 	ingress_list->list_entry_timeout_us =
 					MGMT_RX_REO_INGRESS_LIST_TIMEOUT_US;
@@ -4271,14 +4300,12 @@ mgmt_rx_reo_ingress_list_init(struct mgmt_rx_reo_ingress_list *ingress_list)
 		mgmt_rx_reo_err("Failed to initialize ingress ageout timer");
 		return status;
 	}
-	qdf_timer_start(&ingress_list->ageout_timer,
-			MGMT_RX_REO_INGRESS_LIST_AGEOUT_TIMER_PERIOD_MS);
 
 	return QDF_STATUS_SUCCESS;
 }
 
 /**
- * mgmt_rx_reo_egress_list_init() - Initialize the management rx-reorder
+ * mgmt_rx_reo_egress_list_init() - Init of management rx-reorder
  * egress list
  * @egress_list: Pointer to egress list
  *
@@ -4288,6 +4315,35 @@ mgmt_rx_reo_ingress_list_init(struct mgmt_rx_reo_ingress_list *ingress_list)
  */
 static QDF_STATUS
 mgmt_rx_reo_egress_list_init(struct mgmt_rx_reo_egress_list *egress_list)
+{
+	struct mgmt_rx_reo_list *reo_egress_list;
+
+	if (!egress_list) {
+		mgmt_rx_reo_err("Egress list is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	reo_egress_list = &egress_list->reo_list;
+
+	qdf_mem_zero(&reo_egress_list->last_inserted_frame,
+		     sizeof(reo_egress_list->last_inserted_frame));
+	qdf_mem_zero(&reo_egress_list->last_released_frame,
+		     sizeof(reo_egress_list->last_released_frame));
+
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * mgmt_rx_reo_egress_list_create() - Initialize the management rx-reorder
+ * egress list
+ * @egress_list: Pointer to egress list
+ *
+ * API to Create the management rx-reorder egress list.
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+mgmt_rx_reo_egress_list_create(struct mgmt_rx_reo_egress_list *egress_list)
 {
 	struct mgmt_rx_reo_list *reo_egress_list;
 	QDF_STATUS status;
@@ -4302,10 +4358,6 @@ mgmt_rx_reo_egress_list_init(struct mgmt_rx_reo_egress_list *egress_list)
 	reo_egress_list->max_list_size = MGMT_RX_REO_EGRESS_LIST_MAX_SIZE;
 	qdf_list_create(&reo_egress_list->list, reo_egress_list->max_list_size);
 	qdf_spinlock_create(&reo_egress_list->list_lock);
-	qdf_mem_zero(&reo_egress_list->last_inserted_frame,
-		     sizeof(reo_egress_list->last_inserted_frame));
-	qdf_mem_zero(&reo_egress_list->last_released_frame,
-		     sizeof(reo_egress_list->last_released_frame));
 
 	status = qdf_timer_init(NULL, &egress_list->egress_inactivity_timer,
 				mgmt_rx_reo_egress_inactivity_timer_handler,
@@ -4896,18 +4948,28 @@ log_ingress_frame_exit(struct mgmt_rx_reo_context *reo_ctx,
 	if (!reo_ctx || !desc)
 		return QDF_STATUS_E_NULL_VALUE;
 
+	if (link_id >= MAX_MLO_LINKS)
+		return QDF_STATUS_E_INVAL;
+
+	if (desc->type >= MGMT_RX_REO_FRAME_DESC_TYPE_MAX)
+		return QDF_STATUS_E_INVAL;
+
+	queued_list = desc->queued_list;
+
+	if (desc->drop_reason >= MGMT_RX_REO_INGRESS_DROP_REASON_MAX)
+		return QDF_STATUS_E_INVAL;
+
 	ingress_frame_debug_info = &reo_ctx->ingress_frame_debug_info;
 
 	stats = &ingress_frame_debug_info->stats;
-	queued_list = desc->queued_list;
 	stats->ingress_count[link_id][desc->type]++;
 	if (desc->reo_required)
 		stats->reo_count[link_id][desc->type]++;
-	if (is_queued)
+	if (is_queued && queued_list < MGMT_RX_REO_LIST_TYPE_MAX)
 		stats->queued_count[link_id][queued_list]++;
-	if (desc->zero_wait_count_rx)
+	if (desc->zero_wait_count_rx && queued_list < MGMT_RX_REO_LIST_TYPE_MAX)
 		stats->zero_wait_count_rx_count[link_id][queued_list]++;
-	if (desc->immediate_delivery)
+	if (desc->immediate_delivery && queued_list < MGMT_RX_REO_LIST_TYPE_MAX)
 		stats->immediate_delivery_count[link_id][queued_list]++;
 	if (is_error)
 		stats->error_count[link_id][desc->type]++;
@@ -7419,13 +7481,37 @@ mgmt_rx_reo_ingress_list_deinit(struct mgmt_rx_reo_ingress_list *ingress_list)
 	reo_ingress_list = &ingress_list->reo_list;
 
 	qdf_timer_sync_cancel(&ingress_list->ageout_timer);
-	qdf_timer_free(&ingress_list->ageout_timer);
-
 	status = mgmt_rx_reo_flush_list(reo_ingress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mgmt_rx_reo_err("Failed to flush the ingress list");
 		return status;
 	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * mgmt_rx_reo_ingress_list_destroy() - Destroy the management rx-reorder
+ * ingress list
+ * @ingress_list: Pointer to ingress reorder list
+ *
+ * API to destroy the management rx-reorder ingress list.
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+mgmt_rx_reo_ingress_list_destroy(struct mgmt_rx_reo_ingress_list *ingress_list)
+{
+	struct mgmt_rx_reo_list *reo_ingress_list;
+
+	if (!ingress_list) {
+		mgmt_rx_reo_err("Ingress list is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+	reo_ingress_list = &ingress_list->reo_list;
+
+	qdf_timer_free(&ingress_list->ageout_timer);
+
 	qdf_spinlock_destroy(&reo_ingress_list->list_lock);
 	qdf_list_destroy(&reo_ingress_list->list);
 
@@ -7441,6 +7527,7 @@ mgmt_rx_reo_ingress_list_deinit(struct mgmt_rx_reo_ingress_list *ingress_list)
  *
  * Return: QDF_STATUS
  */
+
 static QDF_STATUS
 mgmt_rx_reo_egress_list_deinit(struct mgmt_rx_reo_egress_list *egress_list)
 {
@@ -7454,13 +7541,36 @@ mgmt_rx_reo_egress_list_deinit(struct mgmt_rx_reo_egress_list *egress_list)
 	reo_egress_list = &egress_list->reo_list;
 
 	qdf_timer_sync_cancel(&egress_list->egress_inactivity_timer);
-	qdf_timer_free(&egress_list->egress_inactivity_timer);
-
 	status = mgmt_rx_reo_flush_list(reo_egress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mgmt_rx_reo_err("Failed to flush the egress list");
 		return QDF_STATUS_E_FAILURE;
 	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * mgmt_rx_reo_egress_list_destroy() - De initialize the management rx-reorder
+ * egress list
+ * @egress_list: Pointer to egress reorder list
+ *
+ * API to destroy the management rx-reorder egress list.
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+mgmt_rx_reo_egress_list_destroy(struct mgmt_rx_reo_egress_list *egress_list)
+{
+	struct mgmt_rx_reo_list *reo_egress_list;
+
+	if (!egress_list) {
+		mgmt_rx_reo_err("Egress list is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+	reo_egress_list = &egress_list->reo_list;
+
+	qdf_timer_free(&egress_list->egress_inactivity_timer);
 	qdf_spinlock_destroy(&reo_egress_list->list_lock);
 	qdf_list_destroy(&reo_egress_list->list);
 
@@ -7469,6 +7579,44 @@ mgmt_rx_reo_egress_list_deinit(struct mgmt_rx_reo_egress_list *egress_list)
 
 QDF_STATUS
 mgmt_rx_reo_deinit_context(uint8_t ml_grp_id)
+{
+	QDF_STATUS status;
+	struct mgmt_rx_reo_context *reo_context;
+
+	reo_context = mgmt_rx_reo_get_context(ml_grp_id);
+	if (!reo_context) {
+		mgmt_rx_reo_err("reo context is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	if (wlan_mlo_is_wsi_remap_in_progress(ml_grp_id) &&
+	    (reo_context->dynamic_reo_deinit)) {
+		mgmt_rx_reo_err("reo de-init already done!!");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	status = mgmt_rx_reo_egress_list_deinit(&reo_context->egress_list);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		mgmt_rx_reo_err("Failed to de-initialize Rx reo egress list");
+		return status;
+	}
+
+	status = mgmt_rx_reo_ingress_list_deinit(&reo_context->ingress_list);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		mgmt_rx_reo_err("Failed to de-initialize Rx reo ingress list");
+		return status;
+	}
+
+	if (wlan_mlo_is_wsi_remap_in_progress(ml_grp_id))
+		reo_context->dynamic_reo_deinit = true;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+qdf_export_symbol(mgmt_rx_reo_deinit_context);
+
+QDF_STATUS
+mgmt_rx_reo_destroy_context(uint8_t ml_grp_id)
 {
 	QDF_STATUS status;
 	struct mgmt_rx_reo_context *reo_context;
@@ -7489,16 +7637,16 @@ mgmt_rx_reo_deinit_context(uint8_t ml_grp_id)
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	status = mgmt_rx_reo_egress_list_deinit(&reo_context->egress_list);
+	status = mgmt_rx_reo_egress_list_destroy(&reo_context->egress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mgmt_rx_reo_err("Failed to de-initialize Rx reo egress list");
+		mgmt_rx_reo_err("Failed to destroy Rx reo egress list");
 		qdf_mem_free(reo_context);
 		return status;
 	}
 
-	status = mgmt_rx_reo_ingress_list_deinit(&reo_context->ingress_list);
+	status = mgmt_rx_reo_ingress_list_destroy(&reo_context->ingress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mgmt_rx_reo_err("Failed to de-initialize Rx reo ingress list");
+		mgmt_rx_reo_err("Failed to destroy Rx reo ingress list");
 		qdf_mem_free(reo_context);
 		return status;
 	}
@@ -7513,6 +7661,40 @@ QDF_STATUS
 mgmt_rx_reo_init_context(uint8_t ml_grp_id)
 {
 	QDF_STATUS status;
+	struct mgmt_rx_reo_context *reo_context;
+
+	reo_context = mgmt_rx_reo_get_context(ml_grp_id);
+	if (!reo_context) {
+		mgmt_rx_reo_err("reo context is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+	if (wlan_mlo_is_wsi_remap_in_progress(ml_grp_id) &&
+	    (!reo_context->dynamic_reo_deinit)) {
+		mgmt_rx_reo_err("reo dynamic init already done!!");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	status = mgmt_rx_reo_ingress_list_init(&reo_context->ingress_list);
+	if (QDF_IS_STATUS_ERROR(status))
+		mgmt_rx_reo_err("Failed to initialize Rx reo ingress list");
+
+	status = mgmt_rx_reo_egress_list_init(&reo_context->egress_list);
+	if (QDF_IS_STATUS_ERROR(status))
+		mgmt_rx_reo_err("Failed to initialize Rx reo egress list");
+
+	if (wlan_mlo_is_wsi_remap_in_progress(ml_grp_id)) {
+		reo_context->dynamic_reo_deinit = false;
+		qdf_atomic_init(&reo_context->context_id);
+	}
+	return QDF_STATUS_SUCCESS;
+}
+
+qdf_export_symbol(mgmt_rx_reo_init_context);
+
+QDF_STATUS
+mgmt_rx_reo_create_context(uint8_t ml_grp_id)
+{
+	QDF_STATUS status;
 	QDF_STATUS temp;
 	struct mgmt_rx_reo_context *reo_context;
 
@@ -7525,22 +7707,22 @@ mgmt_rx_reo_init_context(uint8_t ml_grp_id)
 
 	mgmt_rx_reo_set_context(ml_grp_id, reo_context);
 
-	status = mgmt_rx_reo_ingress_list_init(&reo_context->ingress_list);
+	status = mgmt_rx_reo_ingress_list_create(&reo_context->ingress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mgmt_rx_reo_err("Failed to initialize Rx reo ingress list");
+		mgmt_rx_reo_err("Failed to create Rx reo ingress list");
 		goto free_reo_context;
 	}
 
-	status = mgmt_rx_reo_egress_list_init(&reo_context->egress_list);
+	status = mgmt_rx_reo_egress_list_create(&reo_context->egress_list);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		mgmt_rx_reo_err("Failed to initialize Rx reo egress list");
-		goto deinit_reo_ingress_list;
+		mgmt_rx_reo_err("Failed to create Rx reo egress list");
+		goto destroy_reo_ingress_list;
 	}
 
 	status = mgmt_rx_reo_sim_init(reo_context);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mgmt_rx_reo_err("Failed to initialize reo simulation context");
-		goto deinit_reo_egress_list;
+		goto destroy_reo_egress_list;
 	}
 
 	qdf_spinlock_create(&reo_context->reo_algo_entry_lock);
@@ -7549,16 +7731,16 @@ mgmt_rx_reo_init_context(uint8_t ml_grp_id)
 
 	return QDF_STATUS_SUCCESS;
 
-deinit_reo_egress_list:
-	temp = mgmt_rx_reo_egress_list_deinit(&reo_context->egress_list);
+destroy_reo_egress_list:
+	temp = mgmt_rx_reo_egress_list_destroy(&reo_context->egress_list);
 	if (QDF_IS_STATUS_ERROR(temp)) {
-		mgmt_rx_reo_err("Failed to de-initialize Rx reo egress list");
+		mgmt_rx_reo_err("Failed to destroy Rx reo egress list");
 		return temp;
 	}
-deinit_reo_ingress_list:
-	temp = mgmt_rx_reo_ingress_list_deinit(&reo_context->ingress_list);
+destroy_reo_ingress_list:
+	temp = mgmt_rx_reo_ingress_list_destroy(&reo_context->ingress_list);
 	if (QDF_IS_STATUS_ERROR(temp)) {
-		mgmt_rx_reo_err("Failed to de-initialize Rx reo ingress list");
+		mgmt_rx_reo_err("Failed to destroy Rx reo ingress list");
 		return temp;
 	}
 free_reo_context:
@@ -7819,6 +8001,7 @@ mgmt_rx_reo_pdev_obj_create_notification(
 {
 	QDF_STATUS status;
 	struct mgmt_rx_reo_pdev_info *mgmt_rx_reo_pdev_ctx = NULL;
+	struct wlan_objmgr_psoc *psoc;
 
 	if (!pdev) {
 		mgmt_rx_reo_err("pdev is null");
@@ -7853,6 +8036,11 @@ mgmt_rx_reo_pdev_obj_create_notification(
 		goto failure;
 	}
 
+	psoc = wlan_pdev_get_psoc(pdev);
+	wlan_minidump_log(mgmt_rx_reo_pdev_ctx, sizeof(*mgmt_rx_reo_pdev_ctx),
+			  psoc, WLAN_MD_CP_MGMT_RX_REO_PDEV,
+			  "mgmt_rx_reo_pdev_info");
+
 	return QDF_STATUS_SUCCESS;
 
 failure:
@@ -7870,6 +8058,7 @@ mgmt_rx_reo_pdev_obj_destroy_notification(
 	struct mgmt_txrx_priv_pdev_context *mgmt_txrx_pdev_ctx)
 {
 	QDF_STATUS status;
+	struct wlan_objmgr_psoc *psoc;
 
 	if (!wlan_mgmt_rx_reo_is_feature_enabled_at_pdev(pdev))
 		return QDF_STATUS_SUCCESS;
@@ -7880,6 +8069,11 @@ mgmt_rx_reo_pdev_obj_destroy_notification(
 		return status;
 	}
 
+	psoc = wlan_pdev_get_psoc(pdev);
+	wlan_minidump_remove(mgmt_txrx_pdev_ctx->mgmt_rx_reo_pdev_ctx,
+			     sizeof(*mgmt_txrx_pdev_ctx->mgmt_rx_reo_pdev_ctx),
+			     psoc, WLAN_MD_CP_MGMT_RX_REO_PDEV,
+			     "mgmt_rx_reo_pdev_info");
 	qdf_mem_free(mgmt_txrx_pdev_ctx->mgmt_rx_reo_pdev_ctx);
 	mgmt_txrx_pdev_ctx->mgmt_rx_reo_pdev_ctx = NULL;
 
@@ -8029,3 +8223,14 @@ mgmt_rx_reo_print_egress_frame_info(uint8_t ml_grp_id, uint16_t num_frames)
 	return QDF_STATUS_SUCCESS;
 }
 #endif /* WLAN_MGMT_RX_REO_DEBUG_SUPPORT */
+
+bool wlan_mgmt_rx_reo_is_fpmo_war_applicable(
+			struct mgmt_rx_reo_params *mgmt_rx_reo_params) {
+	if (!mgmt_rx_reo_params) {
+		mgmt_rx_reo_err("MGMT rx REO params is NULL");
+		return false;
+	}
+	/*If frame is invalid and timestamp is zero then reo should be bypass*/
+	return !mgmt_rx_reo_params->valid &&
+	       !mgmt_rx_reo_params->global_timestamp;
+}

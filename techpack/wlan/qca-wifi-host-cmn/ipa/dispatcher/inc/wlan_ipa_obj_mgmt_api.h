@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018, 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -70,6 +70,42 @@ static inline bool wlan_ipa_config_is_enabled(void)
 	return ipa_config_is_enabled();
 }
 
+#ifdef IPA_OPT_WIFI_DP_CTRL
+/**
+ * ipa_tx_pkt_opt_dp_ctrl() - Handle opt_dp_ctrl tx pkt
+ * @vdev_id: vdev id
+ * @nbuf: nbuf
+ */
+void ipa_tx_pkt_opt_dp_ctrl(uint8_t vdev_id,
+			    qdf_nbuf_t nbuf);
+
+/**
+ * ipa_opt_dpath_enable_clk_req() - send clock enable request io ipa
+ * @soc: soc
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS ipa_opt_dpath_enable_clk_req(void *soc);
+
+/**
+ * ipa_opt_dpath_disable_clk_req() - send clock enable request io ipa
+ * @soc: soc
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS ipa_opt_dpath_disable_clk_req(void *soc);
+
+/**
+ * wlan_ipa_set_fw_cap_opt_dp_ctrl() - set fw capability of
+ *              opt_dp_ctrl
+ * @psoc: psoc object
+ * @fw_cap: flag for fw capability in opt_dp_ctrl
+ *
+ */
+QDF_STATUS wlan_ipa_set_fw_cap_opt_dp_ctrl(struct wlan_objmgr_psoc *psoc,
+					   bool fw_cap);
+#endif
+
 /**
  * wlan_ipa_get_hdl() - Get ipa hdl set by IPA driver
  * @soc: void psoc object
@@ -86,6 +122,28 @@ qdf_ipa_wdi_hdl_t wlan_ipa_get_hdl(void *soc, uint8_t pdev_id);
  *         false - ipa vlan support is not enabled
  */
 bool wlan_ipa_is_vlan_enabled(void);
+
+/**
+ * wlan_ipa_config_is_opt_wifi_dp_enabled() - Is IPA optional wifi dp enabled?
+ *
+ * Return: true if IPA opt wifi dp is enabled in IPA config
+ */
+bool wlan_ipa_config_is_opt_wifi_dp_enabled(void);
+
+/**
+ * get_ipa_config() - API to get IPAConfig INI
+ * @psoc : psoc handle
+ *
+ * Return: IPA config value
+ */
+uint32_t get_ipa_config(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * wlan_ipa_is_shared_smmu_enabled() - Is IPA WLAN shared smmu enabled?
+ *
+ * Return: true if IPA WLAN shared smmu is enabled in PLD
+ */
+bool wlan_ipa_is_shared_smmu_enabled(void);
 #else
 
 static inline QDF_STATUS ipa_init(void)
@@ -108,7 +166,7 @@ static inline void ipa_disable_register_cb(void)
 {
 }
 
-static inline bool ipa_config_is_opt_wifi_dp_enabled(void)
+static inline bool wlan_ipa_config_is_opt_wifi_dp_enabled(void)
 {
 	return false;
 }
@@ -122,6 +180,22 @@ static inline bool wlan_ipa_is_vlan_enabled(void)
 {
 	return false;
 }
+
+static inline bool wlan_ipa_is_shared_smmu_enabled(void)
+{
+	return false;
+}
 #endif /* IPA_OFFLOAD */
 
+#ifndef IPA_OPT_WIFI_DP_CTRL
+static inline QDF_STATUS ipa_opt_dpath_disable_clk_req(void *soc)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+static inline QDF_STATUS wlan_ipa_set_fw_cap_opt_dp_ctrl(void *soc, bool fw_cap)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+#endif
 #endif /* _WLAN_IPA_OBJ_MGMT_H_ */

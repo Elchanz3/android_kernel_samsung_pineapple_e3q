@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -22,6 +22,7 @@
  */
 
 #include "osif_sync.h"
+#include "wlan_dlm_api.h"
 #include "wlan_hdd_main.h"
 #include "wlan_dp_ucfg_api.h"
 #include "wlan_dlm_ucfg_api.h"
@@ -29,6 +30,8 @@
 #include <cdp_txrx_misc.h>
 #include "wlan_cm_roam_ucfg_api.h"
 #include "wlan_hdd_nud_tracking.h"
+#include "wlan_hdd_object_manager.h"
+#include "wlan_mlo_mgr_public_api.h"
 
 static void
 hdd_handle_nud_fail_sta(struct hdd_context *hdd_ctx,
@@ -53,8 +56,9 @@ hdd_handle_nud_fail_sta(struct hdd_context *hdd_ctx,
 	ap_info.reject_ap_type = DRIVER_AVOID_TYPE;
 	ap_info.reject_reason = REASON_NUD_FAILURE;
 	ap_info.source = ADDED_BY_DRIVER;
+	wlan_update_mlo_reject_ap_info(hdd_ctx->pdev,
+				       adapter->deflink->vdev_id, &ap_info);
 	ucfg_dlm_add_bssid_to_reject_list(hdd_ctx->pdev, &ap_info);
-
 	if (roaming_offload_enabled(hdd_ctx)) {
 		qdf_zero_macaddr(&bssid);
 		ucfg_wlan_cm_roam_invoke(hdd_ctx->pdev,
@@ -66,9 +70,15 @@ hdd_handle_nud_fail_sta(struct hdd_context *hdd_ctx,
 static void
 hdd_handle_nud_fail_non_sta(struct wlan_hdd_link_info *link_info)
 {
-	wlan_hdd_cm_issue_disconnect(link_info,
-				     REASON_GATEWAY_REACHABILITY_FAILURE,
-				     false);
+	QDF_STATUS status;
+
+	status = wlan_mlo_mgr_link_switch_defer_disconnect_req(link_info->vdev,
+							       CM_OSIF_DISCONNECT,
+							       REASON_GATEWAY_REACHABILITY_FAILURE);
+	if (status != QDF_STATUS_E_ALREADY && QDF_IS_STATUS_ERROR(status))
+		wlan_hdd_cm_issue_disconnect(link_info,
+					     REASON_GATEWAY_REACHABILITY_FAILURE,
+					     false);
 }
 
 /**

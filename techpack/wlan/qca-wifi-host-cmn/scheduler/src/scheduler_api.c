@@ -72,9 +72,6 @@ static inline void scheduler_watchdog_notify(struct scheduler_ctx *sched)
 		    sched->timeout / 1000);
 }
 
-#ifndef CONFIG_SOC_S5E9945
-extern void cnss_disable_ssr(void);
-#endif /* !CONFIG_SOC_S5E9945 */
 static void scheduler_watchdog_timeout(void *arg)
 {
 	struct scheduler_ctx *sched = arg;
@@ -92,10 +89,6 @@ static void scheduler_watchdog_timeout(void *arg)
 	if (qdf_atomic_test_bit(MC_SHUTDOWN_EVENT_MASK, &sched->sch_event_flag))
 		return;
 
-#ifndef CONFIG_SOC_S5E9945
-	// CN 06966013 - disable SSR to trigger system crash
-	cnss_disable_ssr();
-#endif /* !CONFIG_SOC_S5E9945 */
 	sched_err("Triggering self recovery on sheduler timeout");
 	qdf_trigger_self_recovery(NULL, QDF_SCHED_TIMEOUT);
 }

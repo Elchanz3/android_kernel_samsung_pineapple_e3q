@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -72,11 +72,13 @@ void hdd_update_tgt_twt_cap(struct hdd_context *hdd_ctx,
 	ucfg_twt_update_psoc_config(hdd_ctx->psoc);
 }
 
-QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx)
+QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx,
+					     uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 
-	osif_twt_send_responder_enable_cmd(hdd_ctx->psoc, pdev_id);
+	osif_twt_send_responder_enable_cmd(hdd_ctx->psoc, mac_id);
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -101,11 +103,13 @@ void hdd_twt_update_work_handler(void *data)
 	osif_psoc_sync_op_stop(psoc_sync);
 }
 
-QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx)
+QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx,
+					     uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 
-	osif_twt_send_requestor_enable_cmd(hdd_ctx->psoc, pdev_id);
+	osif_twt_send_requestor_enable_cmd(hdd_ctx->psoc, mac_id);
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -118,13 +122,14 @@ void hdd_twt_del_dialog_in_ps_disable(struct hdd_context *hdd_ctx,
 }
 
 void hdd_send_twt_role_disable_cmd(struct hdd_context *hdd_ctx,
-				   enum twt_role role)
+				   enum twt_role role, uint8_t vdev_id)
 {
 	uint32_t reason;
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 
 	reason = HOST_TWT_DISABLE_REASON_NONE;
-	osif_twt_send_responder_disable_cmd(hdd_ctx->psoc, pdev_id, reason);
+	osif_twt_send_responder_disable_cmd(hdd_ctx->psoc, mac_id, reason);
 }
 
 int hdd_test_config_twt_setup_session(struct hdd_adapter *adapter,
@@ -151,11 +156,12 @@ int hdd_test_config_twt_terminate_session(struct hdd_adapter *adapter,
 }
 
 QDF_STATUS hdd_send_twt_responder_disable_cmd(struct hdd_context *hdd_ctx,
-					      uint32_t reason)
+					      uint32_t reason, uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 
-	osif_twt_send_responder_disable_cmd(hdd_ctx->psoc, pdev_id, reason);
+	osif_twt_send_responder_disable_cmd(hdd_ctx->psoc, mac_id, reason);
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -226,14 +232,14 @@ static int hdd_twt_configure(struct hdd_adapter *adapter,
 		return -EINVAL;
 	}
 
-	hdd_debug("TWT Operation 0x%x", twt_oper);
-
 	vdev = hdd_objmgr_get_vdev_by_user(adapter->deflink, WLAN_TWT_ID);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
 	}
 
+	hdd_debug("vdev:%d TWT_Operation: 0x%x", wlan_vdev_get_id(vdev),
+		  twt_oper);
 	switch (twt_oper) {
 	case QCA_WLAN_TWT_SET:
 		ret = osif_twt_setup_req(vdev, twt_param_attr);
@@ -342,6 +348,8 @@ qca_wlan_vendor_twt_nudge_dialog_policy[QCA_WLAN_VENDOR_ATTR_TWT_NUDGE_MAX + 1] 
 static const struct nla_policy
 qca_wlan_vendor_twt_set_param_policy[QCA_WLAN_VENDOR_ATTR_TWT_SET_PARAM_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_TWT_SET_PARAM_AP_AC_VALUE] = {.type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_TWT_SET_PARAM_UNAVAILABILITY_MODE] = {
+						.type = NLA_FLAG},
 };
 
 static
@@ -633,8 +641,9 @@ int hdd_test_config_twt_setup_session(struct hdd_adapter *adapter,
 						     &congestion_timeout);
 		if (congestion_timeout) {
 			ret = qdf_status_to_os_return(
-			hdd_send_twt_requestor_disable_cmd(adapter->hdd_ctx,
-							   0));
+			hdd_send_twt_requestor_disable_cmd(
+						adapter->hdd_ctx, 0,
+						adapter->deflink->vdev_id));
 			if (ret) {
 				hdd_err("Failed to disable TWT");
 				return ret;
@@ -643,7 +652,8 @@ int hdd_test_config_twt_setup_session(struct hdd_adapter *adapter,
 			ucfg_mlme_set_twt_congestion_timeout(adapter->hdd_ctx->psoc, 0);
 
 			qdf_status = hdd_send_twt_requestor_enable_cmd(
-							adapter->hdd_ctx);
+						adapter->hdd_ctx,
+						adapter->deflink->vdev_id);
 
 			ret = qdf_status_to_os_return(qdf_status);
 			if (ret) {
@@ -2111,8 +2121,9 @@ static int hdd_twt_setup_session(struct hdd_adapter *adapter,
 
 	if (congestion_timeout) {
 		ret = qdf_status_to_os_return(
-			hdd_send_twt_requestor_disable_cmd(adapter->hdd_ctx,
-							   0));
+			hdd_send_twt_requestor_disable_cmd(
+						adapter->hdd_ctx, 0,
+						adapter->deflink->vdev_id));
 		if (ret) {
 			hdd_err("Failed to disable TWT");
 			return ret;
@@ -2121,7 +2132,9 @@ static int hdd_twt_setup_session(struct hdd_adapter *adapter,
 		ucfg_mlme_set_twt_congestion_timeout(adapter->hdd_ctx->psoc, 0);
 
 		ret = qdf_status_to_os_return(
-			hdd_send_twt_requestor_enable_cmd(adapter->hdd_ctx));
+			hdd_send_twt_requestor_enable_cmd(
+						adapter->hdd_ctx,
+						adapter->deflink->vdev_id));
 		if (ret) {
 			hdd_err("Failed to Enable TWT");
 			return ret;
@@ -4255,7 +4268,6 @@ static int hdd_twt_configure(struct hdd_adapter *adapter,
 		return -EINVAL;
 	}
 
-	hdd_debug("TWT Operation 0x%x", twt_oper);
 
 	switch (twt_oper) {
 	case QCA_WLAN_TWT_SET:
@@ -4382,9 +4394,11 @@ void hdd_update_tgt_twt_cap(struct hdd_context *hdd_ctx,
 					     cfg->twt_stats_enabled);
 }
 
-QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx)
+QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx,
+					     uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 	struct twt_enable_disable_conf twt_en_dis = {0};
 	bool is_requestor_en, twt_bcast_requestor = false;
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
@@ -4395,9 +4409,9 @@ QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx)
 
 	ucfg_mlme_get_twt_congestion_timeout(hdd_ctx->psoc,
 					     &twt_en_dis.congestion_timeout);
-	hdd_debug("TWT mlme cfg:req: %d, bcast:%d, cong:%d, pdev:%d",
+	hdd_debug("TWT mlme cfg:req: %d, bcast:%d, cong:%d, mac:%d",
 		  is_requestor_en, twt_en_dis.bcast_en,
-		  twt_en_dis.congestion_timeout, pdev_id);
+		  twt_en_dis.congestion_timeout, mac_id);
 
 	/* The below code takes care of the following :
 	 * If user wants to separately enable requestor role, and also the
@@ -4426,7 +4440,7 @@ QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx)
 		ucfg_mlme_set_twt_requestor_flag(hdd_ctx->psoc, true);
 		qdf_event_reset(&hdd_ctx->twt_enable_comp_evt);
 
-		wma_send_twt_enable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_enable_cmd(mac_id, &twt_en_dis);
 		status = qdf_wait_single_event(&hdd_ctx->twt_enable_comp_evt,
 					       TWT_ENABLE_COMPLETE_TIMEOUT);
 
@@ -4439,9 +4453,11 @@ QDF_STATUS hdd_send_twt_requestor_enable_cmd(struct hdd_context *hdd_ctx)
 	return status;
 }
 
-QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx)
+QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx,
+					     uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 	struct twt_enable_disable_conf twt_en_dis = {0};
 	bool is_responder_en, twt_bcast_responder = false;
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
@@ -4451,7 +4467,7 @@ QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx)
 	twt_en_dis.bcast_en = twt_bcast_responder;
 
 	hdd_debug("TWT responder mlme cfg:res:%d, bcast:%d, pdev:%d",
-		  is_responder_en, twt_en_dis.bcast_en, pdev_id);
+		  is_responder_en, twt_en_dis.bcast_en, mac_id);
 
 	/* The below code takes care of the following :
 	 * If user wants to separately enable responder roles, and also the
@@ -4479,7 +4495,7 @@ QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx)
 
 		ucfg_mlme_set_twt_responder_flag(hdd_ctx->psoc, true);
 		qdf_event_reset(&hdd_ctx->twt_enable_comp_evt);
-		wma_send_twt_enable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_enable_cmd(mac_id, &twt_en_dis);
 		status = qdf_wait_single_event(&hdd_ctx->twt_enable_comp_evt,
 					       TWT_ENABLE_COMPLETE_TIMEOUT);
 
@@ -4493,13 +4509,14 @@ QDF_STATUS hdd_send_twt_responder_enable_cmd(struct hdd_context *hdd_ctx)
 }
 
 QDF_STATUS hdd_send_twt_requestor_disable_cmd(struct hdd_context *hdd_ctx,
-					      uint32_t reason)
+					      uint32_t reason, uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 	struct twt_enable_disable_conf twt_en_dis = {0};
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
 
-	hdd_debug("TWT requestor disable cmd: pdev:%d", pdev_id);
+	hdd_debug("TWT requestor disable cmd: pdev:%d", mac_id);
 
 	/* Set MLME TWT flag */
 	ucfg_mlme_set_twt_requestor_flag(hdd_ctx->psoc, false);
@@ -4512,7 +4529,7 @@ QDF_STATUS hdd_send_twt_requestor_disable_cmd(struct hdd_context *hdd_ctx,
 	twt_en_dis.ext_conf_present = true;
 	qdf_event_reset(&hdd_ctx->twt_disable_comp_evt);
 
-	wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+	wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 
 	status = qdf_wait_single_event(&hdd_ctx->twt_disable_comp_evt,
 				       TWT_DISABLE_COMPLETE_TIMEOUT);
@@ -4528,13 +4545,14 @@ timeout:
 }
 
 QDF_STATUS hdd_send_twt_responder_disable_cmd(struct hdd_context *hdd_ctx,
-					      uint32_t reason)
+					      uint32_t reason, uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 	struct twt_enable_disable_conf twt_en_dis = {0};
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
 
-	hdd_debug("TWT responder disable cmd: pdev:%d", pdev_id);
+	hdd_debug("TWT responder disable cmd: pdev:%d", mac_id);
 
 	/* Set MLME TWT flag */
 	ucfg_mlme_set_twt_responder_flag(hdd_ctx->psoc, false);
@@ -4546,7 +4564,7 @@ QDF_STATUS hdd_send_twt_responder_disable_cmd(struct hdd_context *hdd_ctx,
 	hdd_ctx->twt_state = TWT_DISABLE_REQUESTED;
 	twt_en_dis.ext_conf_present = true;
 	qdf_event_reset(&hdd_ctx->twt_disable_comp_evt);
-	wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+	wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 
 	status = qdf_wait_single_event(&hdd_ctx->twt_disable_comp_evt,
 				       TWT_DISABLE_COMPLETE_TIMEOUT);
@@ -4631,40 +4649,41 @@ hdd_twt_disable_comp_cb(hdd_handle_t hdd_handle)
 }
 
 void hdd_send_twt_role_disable_cmd(struct hdd_context *hdd_ctx,
-				   enum twt_role role)
+				   enum twt_role role, uint8_t vdev_id)
 {
-	uint8_t pdev_id = hdd_ctx->pdev->pdev_objmgr.wlan_pdev_id;
+	uint8_t mac_id = policy_mgr_mode_get_macid_by_vdev_id(hdd_ctx->psoc,
+							      vdev_id);
 	struct twt_enable_disable_conf twt_en_dis = {0};
 	QDF_STATUS status;
 
-	hdd_debug("TWT disable cmd :pdev:%d : %d", pdev_id, role);
+	hdd_debug("TWT disable cmd :mac:%d : %d", mac_id, role);
 
 	if ((role == TWT_REQUESTOR) || (role == TWT_REQUESTOR_INDV)) {
 		twt_en_dis.ext_conf_present = true;
 		twt_en_dis.role = WMI_TWT_ROLE_REQUESTOR;
 		twt_en_dis.oper = WMI_TWT_OPERATION_INDIVIDUAL;
-		wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 	}
 
 	if (role == TWT_REQUESTOR_BCAST) {
 		twt_en_dis.ext_conf_present = true;
 		twt_en_dis.role = WMI_TWT_ROLE_REQUESTOR;
 		twt_en_dis.oper = WMI_TWT_OPERATION_BROADCAST;
-		wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 	}
 
 	if ((role == TWT_RESPONDER) || (role == TWT_RESPONDER_INDV)) {
 		twt_en_dis.ext_conf_present = true;
 		twt_en_dis.role = WMI_TWT_ROLE_RESPONDER;
 		twt_en_dis.oper = WMI_TWT_OPERATION_INDIVIDUAL;
-		wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 	}
 
 	if (role == TWT_RESPONDER_BCAST) {
 		twt_en_dis.ext_conf_present = true;
 		twt_en_dis.role = WMI_TWT_ROLE_RESPONDER;
 		twt_en_dis.oper = WMI_TWT_OPERATION_BROADCAST;
-		wma_send_twt_disable_cmd(pdev_id, &twt_en_dis);
+		wma_send_twt_disable_cmd(mac_id, &twt_en_dis);
 	}
 
 	status = qdf_wait_single_event(&hdd_ctx->twt_disable_comp_evt,
@@ -4686,8 +4705,9 @@ void hdd_twt_concurrency_update_on_scc(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_SAP_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("Concurrency exist on SAP vdev");
-		status = hdd_send_twt_responder_disable_cmd(twt_arg->hdd_ctx,
-							    0);
+		status = hdd_send_twt_responder_disable_cmd(
+							twt_arg->hdd_ctx, 0,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT responder disable cmd to firmware failed");
 			return;
@@ -4698,8 +4718,9 @@ void hdd_twt_concurrency_update_on_scc(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_STA_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("Concurrency exist on STA vdev");
-		status = hdd_send_twt_requestor_disable_cmd(twt_arg->hdd_ctx,
-							    0);
+		status = hdd_send_twt_requestor_disable_cmd(
+							twt_arg->hdd_ctx, 0,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT requestor disable cmd to firmware failed");
 			return;
@@ -4717,8 +4738,9 @@ void hdd_twt_concurrency_update_on_mcc(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_SAP_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("Concurrency exist on SAP vdev");
-		status = hdd_send_twt_responder_disable_cmd(twt_arg->hdd_ctx,
-							    0);
+		status = hdd_send_twt_responder_disable_cmd(
+							twt_arg->hdd_ctx, 0,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT responder disable cmd to firmware failed");
 			return;
@@ -4729,8 +4751,9 @@ void hdd_twt_concurrency_update_on_mcc(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_STA_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("Concurrency exist on STA vdev");
-		status = hdd_send_twt_requestor_disable_cmd(twt_arg->hdd_ctx,
-							    0);
+		status = hdd_send_twt_requestor_disable_cmd(
+							twt_arg->hdd_ctx, 0,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT requestor disable cmd to firmware failed");
 			return;
@@ -4748,7 +4771,9 @@ void hdd_twt_concurrency_update_on_dbs(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_SAP_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("SAP vdev exist");
-		status = hdd_send_twt_responder_enable_cmd(twt_arg->hdd_ctx);
+		status = hdd_send_twt_responder_enable_cmd(
+							twt_arg->hdd_ctx,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT responder enable cmd to firmware failed");
 			return;
@@ -4759,7 +4784,9 @@ void hdd_twt_concurrency_update_on_dbs(struct wlan_objmgr_pdev *pdev,
 	if (vdev->vdev_mlme.vdev_opmode == QDF_STA_MODE &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
 		hdd_debug("STA vdev exist");
-		status = hdd_send_twt_requestor_enable_cmd(twt_arg->hdd_ctx);
+		status = hdd_send_twt_requestor_enable_cmd(
+							twt_arg->hdd_ctx,
+							wlan_vdev_get_id(vdev));
 		if (QDF_IS_STATUS_ERROR(status)) {
 			hdd_err("TWT requestor enable cmd to firmware failed");
 			return;
@@ -4773,6 +4800,8 @@ void __hdd_twt_update_work_handler(struct hdd_context *hdd_ctx)
 	uint32_t num_connections = 0, sap_count = 0, sta_count = 0;
 	int ret;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	uint8_t vdev_id_list[MAX_NUMBER_OF_CONC_CONNECTIONS];
+	uint32_t freq_list[MAX_NUMBER_OF_CONC_CONNECTIONS];
 
 	ret = wlan_hdd_validate_context(hdd_ctx);
 	if (ret) {
@@ -4793,9 +4822,19 @@ void __hdd_twt_update_work_handler(struct hdd_context *hdd_ctx)
 		break;
 	case 1:
 		if (sta_count == 1) {
-			hdd_send_twt_requestor_enable_cmd(hdd_ctx);
+			policy_mgr_get_mode_specific_conn_info(hdd_ctx->psoc,
+							       freq_list,
+							       vdev_id_list,
+							       PM_STA_MODE);
+			hdd_send_twt_requestor_enable_cmd(hdd_ctx,
+							  vdev_id_list[0]);
 		} else if (sap_count == 1) {
-			hdd_send_twt_responder_enable_cmd(hdd_ctx);
+			policy_mgr_get_sap_mode_info(hdd_ctx->psoc, freq_list,
+						     vdev_id_list);
+			hdd_send_twt_responder_enable_cmd(hdd_ctx,
+							  vdev_id_list[0]);
+			hdd_send_twt_requestor_disable_cmd(hdd_ctx, 0,
+							   vdev_id_list[0]);
 			sme_twt_update_beacon_template(hdd_ctx->mac_handle);
 		}
 		break;
@@ -4955,7 +4994,7 @@ void wlan_hdd_twt_init(struct hdd_context *hdd_ctx)
 		return;
 	}
 
-	hdd_send_twt_requestor_enable_cmd(hdd_ctx);
+	hdd_send_twt_requestor_enable_cmd(hdd_ctx, VDEV_ALL);
 	qdf_create_work(0, &hdd_ctx->twt_en_dis_work,
 			hdd_twt_update_work_handler, hdd_ctx);
 }
@@ -5022,6 +5061,7 @@ __wlan_hdd_cfg80211_wifi_twt_config(struct wiphy *wiphy,
 		return -EPERM;
 	}
 
+	hdd_enter_dev(dev);
 	errno = wlan_hdd_validate_context(hdd_ctx);
 	if (errno)
 		return errno;

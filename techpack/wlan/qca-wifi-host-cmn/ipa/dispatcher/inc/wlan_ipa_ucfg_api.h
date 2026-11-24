@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -106,16 +106,6 @@ void ucfg_ipa_set_dp_handle(struct wlan_objmgr_psoc *psoc,
 			       void *dp_soc);
 
 /**
- * ucfg_ipa_set_pdev_id() - register pdev id
- * @psoc: psoc handle
- * @pdev_id: data path txrx pdev id
- *
- * Return: None
- */
-void ucfg_ipa_set_pdev_id(struct wlan_objmgr_psoc *psoc,
-			  uint8_t pdev_id);
-
-/**
  * ucfg_ipa_set_perf_level() - Set IPA perf level
  * @pdev: pdev obj
  * @tx_packets: Number of packets transmitted in the last sample period
@@ -142,7 +132,27 @@ void ucfg_ipa_uc_info(struct wlan_objmgr_pdev *pdev);
  */
 void ucfg_ipa_uc_stat(struct wlan_objmgr_pdev *pdev);
 
+/*
+ * ucfg_ipa_set_opt_dp_ctrl_flt() - flt add for opt_dp_ctrl
+ * @pdev: pdev obj
+ * @flt: flt params
+ *
+ * Return: None
+ */
+void ucfg_ipa_set_opt_dp_ctrl_flt(
+			struct wlan_objmgr_pdev *pdev,
+			struct ipa_wdi_opt_dpath_flt_add_cb_params *flt);
 
+/*
+ * ucfg_ipa_set_opt_dp_ctrl_flt_rm() - flt del for opt_dp_ctrl
+ * @pdev: pdev obj
+ * @flt: flt params
+ *
+ * Return: None
+ */
+void ucfg_ipa_set_opt_dp_ctrl_flt_rm(
+			struct wlan_objmgr_pdev *pdev,
+			struct ipa_wdi_opt_dpath_flt_rem_cb_params *flt);
 /**
  * ucfg_ipa_uc_rt_debug_host_dump() - IPA rt debug host dump
  * @pdev: pdev obj
@@ -292,12 +302,12 @@ QDF_STATUS ucfg_ipa_resume(struct wlan_objmgr_pdev *pdev);
 
 /**
  * ucfg_ipa_uc_ol_init() - Initialize IPA uC offload
- * @pdev: pdev obj
+ * @psoc: psoc obj
  * @osdev: OS dev
  *
  * Return: QDF STATUS
  */
-QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_pdev *pdev,
+QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_psoc *psoc,
 			       qdf_device_t osdev);
 
 /**
@@ -356,11 +366,11 @@ int ucfg_ipa_uc_smmu_map(bool map, uint32_t num_buf, qdf_mem_info_t *buf_arr);
 
 /**
  * ucfg_ipa_is_fw_wdi_activated - Is FW WDI activated?
- * @pdev: pdev obj
+ * @psoc: psoc obj
  *
  * Return: true if FW WDI activated, false otherwise
  */
-bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_pdev *pdev);
+bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_psoc *psoc);
 
 /**
  * ucfg_ipa_uc_cleanup_sta() - disconnect and cleanup sta iface
@@ -399,6 +409,15 @@ QDF_STATUS ucfg_ipa_uc_disconnect_ap(struct wlan_objmgr_pdev *pdev,
  */
 void ucfg_ipa_cleanup_dev_iface(struct wlan_objmgr_pdev *pdev,
 				qdf_netdev_t net_dev, uint8_t session_id);
+
+/**
+ * ucfg_ipa_uc_shutdown_opt_dp_ctrl_cleanup() - enables flag to clean filters
+ * in opt_dp_ctrl
+ * @pdev: pdev obj
+ *
+ * Return: None
+ */
+void ucfg_ipa_uc_shutdown_opt_dp_ctrl_cleanup(struct wlan_objmgr_pdev *pdev);
 
 /**
  * ucfg_ipa_uc_ssr_cleanup() - Handle IPA cleanup for SSR
@@ -511,6 +530,46 @@ bool ucfg_ipa_set_perf_level_bw_enabled(struct wlan_objmgr_pdev *pdev);
 void ucfg_ipa_set_perf_level_bw(struct wlan_objmgr_pdev *pdev,
 				enum wlan_ipa_bw_level lvl);
 
+/**
+ * ucfg_ipa_is_two_tx_pipes_enabled() - get IPA two tx pipes feature enable
+ *					status
+ *
+ * Return: true if IPA two tx pipes feature is enabled. Otherwise false;
+ */
+bool ucfg_ipa_is_two_tx_pipes_enabled(void);
+
+#if defined(IPA_OFFLOAD) && defined(QCA_IPA_LL_TX_FLOW_CONTROL)
+/**
+ * ucfg_ipa_event_wq() - Queue WLAN IPA event for later processing
+ * @psoc: psoc handle
+ * @peer_mac_addr: peer mac address
+ * @vdev: vdev object
+ * @wlan_event: wlan event
+ *
+ * Return: None
+ */
+void ucfg_ipa_event_wq(struct wlan_objmgr_psoc *psoc,
+		       uint8_t *peer_mac_addr,
+		       struct wlan_objmgr_vdev *vdev,
+		       enum wlan_ipa_wlan_event wlan_event);
+#endif
+
+/**
+ * ucfg_ipa_set_shared_smmu_enable() - set g_ipa_shared_smmu_enable
+ * @flag: flag to set g_ipa_shared_smmu_enable
+ *
+ * Return: None
+ */
+void ucfg_ipa_set_shared_smmu_enable(bool flag);
+
+/**
+ * ucfg_ipa_get_shared_smmu_enable() - check if IPA shared SMMU is disabled
+ *                                     in pld
+ *
+ * Return: g_ipa_shared_smmu_enable
+ */
+bool ucfg_ipa_get_shared_smmu_enable(void);
+
 #else
 static inline void ucfg_ipa_set_pld_enable(bool flag)
 {
@@ -553,13 +612,6 @@ static inline bool ucfg_ipa_is_vlan_enabled(void)
 static inline
 QDF_STATUS ucfg_ipa_set_dp_handle(struct wlan_objmgr_psoc *psoc,
 				     void *dp_soc)
-{
-	return QDF_STATUS_SUCCESS;
-}
-
-static inline
-QDF_STATUS ucfg_ipa_set_pdev_id(struct wlan_objmgr_psoc *psoc,
-				uint8_t pdev_id)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -666,7 +718,7 @@ QDF_STATUS ucfg_ipa_resume(struct wlan_objmgr_pdev *pdev)
 }
 
 static inline
-QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_pdev *pdev,
+QDF_STATUS ucfg_ipa_uc_ol_init(struct wlan_objmgr_psoc *psoc,
 			       qdf_device_t osdev)
 {
 	return QDF_STATUS_SUCCESS;
@@ -707,7 +759,7 @@ int ucfg_ipa_uc_smmu_map(bool map, uint32_t num_buf, qdf_mem_info_t *buf_arr)
 }
 
 static inline
-bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_pdev *pdev)
+bool ucfg_ipa_is_fw_wdi_activated(struct wlan_objmgr_psoc *psoc)
 {
 	return false;
 }
@@ -728,6 +780,11 @@ QDF_STATUS ucfg_ipa_uc_disconnect_ap(struct wlan_objmgr_pdev *pdev,
 static inline
 void ucfg_ipa_cleanup_dev_iface(struct wlan_objmgr_pdev *pdev,
 				qdf_netdev_t net_dev, uint8_t session_id)
+{
+}
+
+static inline
+void ucfg_ipa_uc_shutdown_opt_dp_ctrl_cleanup(struct wlan_objmgr_pdev *pdev)
 {
 }
 
@@ -792,6 +849,20 @@ bool ucfg_ipa_set_perf_level_bw_enabled(struct wlan_objmgr_pdev *pdev)
 static inline void ucfg_ipa_set_perf_level_bw(struct wlan_objmgr_pdev *pdev,
 					      enum wlan_ipa_bw_level lvl)
 {
+}
+
+static inline bool ucfg_ipa_is_two_tx_pipes_enabled(void)
+{
+	return false;
+}
+
+static inline void ucfg_ipa_set_shared_smmu_enable(bool flag)
+{
+}
+
+static inline bool ucfg_ipa_get_shared_smmu_enable(void)
+{
+	return false;
 }
 
 #endif /* IPA_OFFLOAD */

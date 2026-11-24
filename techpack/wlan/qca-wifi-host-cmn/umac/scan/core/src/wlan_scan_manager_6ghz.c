@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -59,12 +59,17 @@ scm_sort_6ghz_channel_list(struct wlan_objmgr_vdev *vdev,
 	struct rnr_chan_weight *rnr_chan_info, temp;
 	uint32_t weight;
 	struct wlan_objmgr_psoc *psoc;
+	struct wlan_scan_obj *scan_obj;
 
 	psoc = wlan_vdev_get_psoc(vdev);
 	if (!psoc) {
 		scm_err("Psoc is NULL");
 		return;
 	}
+
+	scan_obj = wlan_psoc_get_scan_obj(psoc);
+	if (!scan_obj)
+		return;
 
 	for (i = 0; i < chan_list->num_chan; i++)
 		if (WLAN_REG_IS_6GHZ_CHAN_FREQ(chan_list->chan[i].freq))
@@ -82,6 +87,7 @@ scm_sort_6ghz_channel_list(struct wlan_objmgr_vdev *vdev,
 		return;
 
 	/* compute the weightage */
+	qdf_mutex_acquire(&scan_obj->rnr_channel_db.rnr_db_lock);
 	for (i = 0, j = 0; i < tmp_list_count; i++) {
 		channel = scm_get_chan_meta(psoc, temp_list[i].freq);
 		if (!channel)
@@ -102,6 +108,8 @@ scm_sort_6ghz_channel_list(struct wlan_objmgr_vdev *vdev,
 				  temp_list[i].freq, weight,
 				  channel->bss_beacon_probe_count);
 	}
+
+	qdf_mutex_release(&scan_obj->rnr_channel_db.rnr_db_lock);
 
 	/* Sort the channel using selection sort - descending order */
 	for (i = 0; i < tmp_list_count - 1; i++) {
@@ -135,8 +143,8 @@ scm_sort_6ghz_channel_list(struct wlan_objmgr_vdev *vdev,
 static void scm_update_rnr_info(struct wlan_objmgr_psoc *psoc,
 				struct scan_start_request *req)
 {
-	uint8_t i, num_bssid = 0, num_ssid = 0;
-	uint8_t total_count = MAX_HINTS_PER_SCAN_REQ;
+	uint8_t i, idx, num_bssid = 0, num_ssid = 0;
+	uint8_t total_count = MAX_HINTS_PER_SCAN_REQ, freq_start;
 	uint32_t freq;
 	struct meta_rnr_channel *chan;
 	qdf_list_node_t *cur_node, *next_node = NULL;
@@ -149,6 +157,8 @@ static void scm_update_rnr_info(struct wlan_objmgr_psoc *psoc,
 		return;
 
 	chan_list = &req->scan_req.chan_list;
+
+	/* The rnr_channel_db->rnr_db_lock is already taken in the caller API */
 	for (i = 0; i < chan_list->num_chan; i++) {
 		freq = chan_list->chan[i].freq;
 
@@ -156,35 +166,38 @@ static void scm_update_rnr_info(struct wlan_objmgr_psoc *psoc,
 		if (!chan || qdf_list_empty(&chan->rnr_list))
 			continue;
 
+		freq_start = num_ssid;
 		qdf_list_peek_front(&chan->rnr_list, &cur_node);
 		while (cur_node && total_count) {
 			rnr_node = qdf_container_of(cur_node,
 						    struct scan_rnr_node,
 						    node);
 			if (!qdf_is_macaddr_zero(&rnr_node->entry.bssid) &&
-			    req->scan_req.num_hint_bssid <
-			    WLAN_SCAN_MAX_HINT_BSSID) {
+			    num_bssid < WLAN_SCAN_MAX_HINT_BSSID) {
 				qdf_mem_copy(&req->scan_req.hint_bssid[
 							num_bssid].bssid,
 					     &rnr_node->entry.bssid,
 					     QDF_MAC_ADDR_SIZE);
 				req->scan_req.hint_bssid[
 					num_bssid++].freq_flags = freq << 16;
-				req->scan_req.num_hint_bssid++;
 				hint = true;
 			}
 			if (rnr_node->entry.short_ssid &&
-			    req->scan_req.num_hint_s_ssid <
-				   WLAN_SCAN_MAX_HINT_S_SSID) {
+			    num_ssid < WLAN_SCAN_MAX_HINT_S_SSID) {
+				for (idx = freq_start; idx < num_ssid; idx++)
+					if (rnr_node->entry.short_ssid ==
+					    req->scan_req.hint_s_ssid[idx].short_ssid)
+						goto peek_next;
+
 				req->scan_req.hint_s_ssid[
 					num_ssid].short_ssid =
 						rnr_node->entry.short_ssid;
 				req->scan_req.hint_s_ssid[
 					num_ssid++].freq_flags = freq << 16;
-				req->scan_req.num_hint_s_ssid++;
 				hint = true;
 			}
 
+peek_next:
 			if (hint) {
 				total_count--;
 				hint = false;
@@ -197,6 +210,9 @@ static void scm_update_rnr_info(struct wlan_objmgr_psoc *psoc,
 			next_node = NULL;
 		}
 	}
+
+	req->scan_req.num_hint_bssid = num_bssid;
+	req->scan_req.num_hint_s_ssid = num_ssid;
 }
 
 /**
@@ -206,6 +222,9 @@ static void scm_update_rnr_info(struct wlan_objmgr_psoc *psoc,
  *
  * Fetch the cached RNR info from scan db and update it to the scan request to
  * include RNR channels in the scan request.
+ *
+ * After taking rnr_db_lock, scm_add_rnr_info() calls scm_rnr_db_flush() and
+ * scm_update_rnr_info(), so no need to take lock again in called APIs
  *
  * Return: None
  */
@@ -222,6 +241,7 @@ static void scm_add_rnr_info(struct wlan_objmgr_pdev *pdev,
 	if (!rnr_db)
 		return;
 
+	qdf_mutex_acquire(&rnr_db->rnr_db_lock);
 	rnr_db->scan_count++;
 	if (rnr_db->scan_count >= RNR_UPDATE_SCAN_CNT_THRESHOLD) {
 		rnr_db->scan_count = 0;
@@ -230,6 +250,7 @@ static void scm_add_rnr_info(struct wlan_objmgr_pdev *pdev,
 	}
 
 	scm_update_rnr_info(psoc, req);
+	qdf_mutex_release(&rnr_db->rnr_db_lock);
 }
 #else
 static void
@@ -327,6 +348,8 @@ scm_copy_valid_channels(struct wlan_objmgr_psoc *psoc,
 	uint8_t i, num_ch = *num_scan_ch;
 	struct chan_list *chan_list = &req->scan_req.chan_list;
 	qdf_freq_t freq;
+	chan_list->num_chan =
+			qdf_min(chan_list->num_chan, (uint8_t)NUM_CHANNELS);
 
 	switch (scan_mode) {
 	case SCAN_MODE_6G_NO_CHANNEL:

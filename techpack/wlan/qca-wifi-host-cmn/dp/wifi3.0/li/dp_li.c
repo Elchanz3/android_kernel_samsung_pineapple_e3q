@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -310,6 +310,13 @@ dp_rxdma_ring_sel_cfg_li(struct dp_soc *soc)
 	htt_tlv_filter.rx_attn_offset =
 				hal_rx_attn_offset_get(soc->hal_soc);
 
+	/* reset fp filters for scan radio */
+	if (soc->scan_radio_support) {
+		htt_tlv_filter.enable_fp = 0;
+		htt_tlv_filter.fp_ctrl_filter = 0;
+		htt_tlv_filter.fp_data_filter = 0;
+	}
+
 	for (i = 0; i < MAX_PDEV_CNT; i++) {
 		struct dp_pdev *pdev = soc->pdev_list[i];
 
@@ -397,6 +404,12 @@ dp_rxdma_ring_sel_cfg_li(struct dp_soc *soc)
 				hal_rx_msdu_end_offset_get(soc->hal_soc);
 	htt_tlv_filter.rx_attn_offset =
 				hal_rx_attn_offset_get(soc->hal_soc);
+	/* reset fp filters for scan radio */
+	if (soc->scan_radio_support) {
+		htt_tlv_filter.enable_fp = 0;
+		htt_tlv_filter.fp_ctrl_filter = 0;
+		htt_tlv_filter.fp_data_filter = 0;
+	}
 
 	for (i = 0; i < MAX_PDEV_CNT; i++) {
 		struct dp_pdev *pdev = soc->pdev_list[i];
@@ -529,7 +542,8 @@ static QDF_STATUS dp_soc_srng_alloc_li(struct dp_soc *soc)
 
 	soc_cfg_ctx = soc->wlan_cfg_ctx;
 
-	tx_comp_ring_size = wlan_cfg_tx_comp_ring_size(soc_cfg_ctx);
+	tx_comp_ring_size = wlan_cfg_tx_comp_ring_size(soc_cfg_ctx,
+						       DP_RING_NUM_ANY);
 	/* Disable cached desc if NSS offload is enabled */
 	if (wlan_cfg_get_dp_soc_nss_cfg(soc_cfg_ctx))
 		cached = 0;
@@ -724,6 +738,10 @@ void dp_initialize_arch_ops_li(struct dp_arch_ops *arch_ops)
 	arch_ops->dp_soc_attach_poll = dp_soc_attach_poll_li;
 	arch_ops->dp_soc_interrupt_detach = dp_soc_interrupt_detach_li;
 	arch_ops->dp_service_srngs = dp_service_srngs_li;
+
+	arch_ops->dp_mlo_tx_pool_map = dp_mlo_tx_pool_map_li;
+	arch_ops->dp_mlo_tx_pool_unmap = dp_mlo_tx_pool_unmap_li;
+	arch_ops->dp_tx_override_flow_pool_id = dp_tx_override_flow_pool_id_li;
 }
 
 #ifdef QCA_DP_TX_HW_SW_NBUF_DESC_PREFETCH

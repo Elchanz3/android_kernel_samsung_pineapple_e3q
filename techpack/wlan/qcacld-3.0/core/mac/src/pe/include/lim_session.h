@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -83,7 +83,7 @@ struct reassoc_params {
 #ifdef WLAN_FEATURE_11AX_BSS_COLOR
 #define MAX_BSS_COLOR_VALUE 63
 #define TIME_BEACON_NOT_UPDATED 30000
-#define BSS_COLOR_SWITCH_COUNTDOWN 5
+#define BSS_COLOR_SWITCH_COUNTDOWN 10
 #define OBSS_COLOR_COLLISION_DETECTION_STA_PERIOD_MS 120000
 #define OBSS_COLOR_COLLISION_DETECTION_AP_PERIOD_MS 120000
 /*
@@ -268,7 +268,10 @@ struct wlan_mlo_ie {
  * @link_csa: csa IE
  * @link_ecsa:ecsa IE
  * @link_swt_time: switch time IE
+ * @link_bss_color_change: bss color change IE
  * @link_quiet: quiet IE
+ * @link_operatingmode: operating mode IE
+ * @link_widerbwchanswitchann: wide bandwidth channel switch IE
  * @link_ht_cap: ht cap IE
  * @link_ht_info: ht info IE
  * @link_cap: link caps IE
@@ -292,7 +295,10 @@ struct mlo_link_ie {
 	tDot11fIEChanSwitchAnn               link_csa;
 	tDot11fIEext_chan_switch_ann         link_ecsa;
 	tDot11fIEmax_chan_switch_time        link_swt_time;
+	tDot11fIEbss_color_change            link_bss_color_change;
 	tDot11fIEQuiet                       link_quiet;
+	tDot11fIEOperatingMode               link_operatingmode;
+	tDot11fIEWiderBWChanSwitchAnn        link_widerbwchanswitchann;
 	tDot11fIEHTCaps                      link_ht_cap;
 	tDot11fIEHTInfo                      link_ht_info;
 	tDot11fFfCapabilities                link_cap;
@@ -370,6 +376,44 @@ struct wlan_mlo_ie_info {
 } qdf_packed;
 
 #endif
+
+#define MAX_NUM_RNR_ENTRY 2
+
+/**
+ * struct dfs_p2p_group_info - Data struct to hold DFS operating P2P group info
+ * @is_assisted_p2p_group: Is AP assisted DFS group
+ * @chan_usage_req_resp_inprog: Is channel usage exchange in progress
+ * @is_ap_bcn_monitor_active: Is FW monitoring assisted AP beacons
+ * @reserved: Reserved
+ * @ap_bssid: BSSID of assisted AP
+ * @non_tx_bssid: Non-TxBSSID of assisted AP
+ * @chan_usage_req: Channel usage request info
+ * @chan_usage_resp: Channel usage response info
+ */
+struct dfs_p2p_group_info {
+	uint8_t is_assisted_p2p_group:1,
+		chan_usage_req_resp_inprog:1,
+		is_ap_bcn_monitor_active:1,
+		reserved:5;
+	struct qdf_mac_addr ap_bssid;
+	struct qdf_mac_addr non_tx_bssid;
+	tDot11fchannel_usage_req chan_usage_req;
+	tDot11fchannel_usage_resp chan_usage_resp;
+};
+
+/**
+ * struct punc_chan_info - Channel information
+ * @chan_width: channel width
+ * @center_freq_seg0: Center frequency segment 0
+ * @center_freq_seg1: Center frequency segment 1
+ * @present: boolean flag
+ */
+struct punc_chan_info {
+	uint8_t chan_width;
+	uint8_t center_freq_seg0;
+	uint8_t center_freq_seg1;
+	bool present;
+};
 
 /**
  * struct pe_session - per-vdev PE context
@@ -629,14 +673,15 @@ struct wlan_mlo_ie_info {
  * @he_op:
  * @he_sta_obsspd:
  * @he_6ghz_band:
+ * @he_punc_chan_info: HE punctured channel info
  * @he_bss_color_change:
  * @bss_color_info:
  * @bss_color_changing:
  * @deauth_retry:
  * @enable_bcast_probe_rsp:
  * @ht_client_cnt:
- * @force_24ghz_in_ht20:
  * @ch_switch_in_progress:
+ * @post_csa_notify_cap: Send notify capability pending post CSA
  * @he_with_wep_tkip:
  * @fils_info:
  * @prev_auth_seq_num: Sequence number of previously received auth frame to
@@ -675,11 +720,16 @@ struct wlan_mlo_ie_info {
  * @ml_partner_info:
  * @mlo_ie_total_len:
  * @mlo_ie:
+ * @start_bss_rnr_ie: RNRIE
  * @user_edca_set:
  * @is_oui_auth_assoc_6mbps_2ghz_enable: send auth/assoc req with 6 Mbps rate
  * @is_unexpected_peer_error: true if unexpected peer error
  * on 2.4 GHz
  * @join_probe_cnt: join probe request count
+ * @cal_tpc_post_csa: Recalculate tx power power csa
+ * @rsno_gen_used: rsno gen used for connection
+ * @wnm_action_dialog_token: Dialog token for WNM action frames.
+ * @dfs_p2p_info: DFS P2P group operation info.
  */
 struct pe_session {
 	uint8_t available;
@@ -955,11 +1005,12 @@ struct pe_session {
 	uint8_t bss_color_changing;
 #endif
 #endif
+	struct punc_chan_info he_punc_chan_info;
 	struct deauth_retry_params deauth_retry;
 	bool enable_bcast_probe_rsp;
 	uint8_t ht_client_cnt;
-	bool force_24ghz_in_ht20;
 	bool ch_switch_in_progress;
+	bool post_csa_notify_cap;
 	bool he_with_wep_tkip;
 #ifdef WLAN_FEATURE_FILS_SK
 	struct pe_fils_session *fils_info;
@@ -1004,12 +1055,17 @@ struct pe_session {
 	struct mlo_partner_info ml_partner_info;
 	uint16_t mlo_ie_total_len;
 	struct wlan_mlo_ie mlo_ie;
+	tDot11fIEreduced_neighbor_report start_bss_rnr_ie[MAX_NUM_RNR_ENTRY];
 #endif
 #endif /* WLAN_FEATURE_11BE */
 	uint8_t user_edca_set;
 	bool is_oui_auth_assoc_6mbps_2ghz_enable;
 	bool is_unexpected_peer_error;
 	uint8_t join_probe_cnt;
+	bool cal_tpc_post_csa;
+	uint8_t rsno_gen_used;
+	uint8_t wnm_action_dialog_token;
+	struct dfs_p2p_group_info dfs_p2p_info;
 };
 
 /*-------------------------------------------------------------------------

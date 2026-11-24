@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -58,8 +58,16 @@
 #endif
 
 #include <linux/rcupdate.h>
+#include <linux/siphash.h>
 
 typedef wait_queue_head_t __qdf_wait_queue_head_t;
+#if LINUX_VERSION_CODE  >= KERNEL_VERSION(5, 17, 0)
+typedef siphash_aligned_key_t __qdf_siphash_aligned_key_t;
+#else
+typedef siphash_key_t __qdf_siphash_aligned_key_t;
+#endif
+
+typedef struct page *__qdf_page_t;
 
 /* Generic compiler-dependent macros if defined by the OS */
 #define __qdf_wait_queue_interruptible(wait_queue, condition) \
@@ -506,6 +514,34 @@ int __qdf_fls(uint32_t x)
 }
 
 /**
+ * __qdf_ffs() - find first set bit in a given 32 bit input
+ * @x: 32 bit mask
+ *
+ * Return: zero if the input is zero, otherwise returns the bit
+ * position of the first set bit, where the LSB is 1 and MSB is 32.
+ */
+static inline
+int __qdf_ffs(uint32_t x)
+{
+	return ffs(x);
+}
+
+/**
+ * __qdf_ffs64() - find first set bit in a given 64 bit input
+ * @x: 64 bit mask
+ *
+ * Return: zero if the input is zero, otherwise returns the bit
+ * position of the first set bit, where the LSB is 1 and MSB is 64.
+ */
+static inline int __qdf_ffs64(uint64_t x)
+{
+	if (!x)
+		return 0;
+
+	return __ffs(x) + 1;
+}
+
+/**
  * __qdf_get_smp_processor_id() - Get the current CPU id
  *
  * Return: current CPU id
@@ -529,4 +565,29 @@ static inline bool __qdf_in_atomic(void)
 	return false;
 }
 
+/**
+ * __qdf_siphash() - Return siphash
+ * @data: pointer to the data for which siphash has to be generated
+ * @len: length of data in the buffer for which siphash has to be generated
+ * @key: key to be used for generating siphash
+ *
+ * Return: 64-bit hash
+ */
+static inline uint64_t __qdf_siphash(const void *data, size_t len,
+				     const __qdf_siphash_aligned_key_t *key)
+{
+	return siphash(data, len, key);
+}
+
+/**
+ * __qdf_virt_to_head_page: Get head page reference for the address
+ *
+ * @addr: virtual address
+ *
+ * Return: Page reference
+ */
+static inline __qdf_page_t __qdf_virt_to_head_page(void *addr)
+{
+	return virt_to_head_page(addr);
+}
 #endif /*_I_QDF_UTIL_H*/

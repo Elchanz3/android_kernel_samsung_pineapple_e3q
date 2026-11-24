@@ -8,13 +8,16 @@
 
 #include <linux/interrupt.h>
 #include <linux/device.h>
+#include "cnss_utils.h"
 
 #define ICNSS_MAX_IRQ_REGISTRATIONS    12
 #define IWCN_MAX_IRQ_REGISTRATIONS    32
 #define ICNSS_MAX_TIMESTAMP_LEN        32
 #define ICNSS_WLFW_MAX_BUILD_ID_LEN    128
+#define ICNSS_MAX_DEV_MEM_NUM            4
 
 #define DEVICE_NAME_MAX		10
+
 enum icnss_uevent {
 	ICNSS_UEVENT_FW_CRASHED,
 	ICNSS_UEVENT_FW_DOWN,
@@ -38,6 +41,11 @@ struct icnss_uevent_fw_down_data {
 struct icnss_uevent_data {
 	enum icnss_uevent uevent;
 	void *data;
+};
+
+struct icnss_dev_mem_info {
+	u64 start;
+	u64 size;
 };
 
 /* Device information like supported device ids, etc*/
@@ -65,6 +73,9 @@ struct icnss_driver_ops {
 	int (*uevent)(struct device *dev, struct icnss_uevent_data *uevent);
 	int (*idle_shutdown)(struct device *dev);
 	int (*idle_restart)(struct device *dev);
+	int (*collect_driver_dump)(struct device *dev,
+				   struct cnss_ssr_driver_dump_entry *input_array,
+				   size_t *num_entries_loaded);
 	int (*set_therm_cdev_state)(struct device *dev,
 				    unsigned long thermal_state,
 				    int tcdev_id);
@@ -103,6 +114,13 @@ struct icnss_rri_over_ddr_cfg {
 	u32 base_addr_low;
 	u32 base_addr_high;
 };
+
+struct icnss_ce_cmn_register_config {
+	u32 offset_addr;
+	u32 reg_mask;
+	u32 reg_value;
+};
+
 /* CE configuration to target */
 struct icnss_wlan_enable_cfg {
 	u32 num_ce_tgt_cfg;
@@ -117,6 +135,8 @@ struct icnss_wlan_enable_cfg {
 	struct icnss_shadow_reg_v3_cfg *shadow_reg_v3_cfg;
 	bool rri_over_ddr_cfg_valid;
 	struct icnss_rri_over_ddr_cfg rri_over_ddr_cfg;
+	u32 num_ce_cmn_reg_config;
+	struct icnss_ce_cmn_register_config *ce_cmn_reg_cfg;
 };
 
 /* driver modes */
@@ -152,6 +172,10 @@ enum icnss_phy_qam_cap {
 	ICNSS_PHY_QAM_CAP_MAX_VAL,
 };
 
+enum icnss_fw_caps {
+	ICNSS_FW_CAP_CE_CMN_CFG_SUPPORT
+};
+
 struct icnss_soc_info {
 	void __iomem *v_addr;
 	phys_addr_t p_addr;
@@ -165,6 +189,7 @@ struct icnss_soc_info {
 	enum icnss_rd_card_chain_cap rd_card_chain_cap;
 	enum icnss_phy_he_channel_width_cap phy_he_channel_width_cap;
 	enum icnss_phy_qam_cap phy_qam_cap;
+	struct icnss_dev_mem_info dev_mem_info[ICNSS_MAX_DEV_MEM_NUM];
 };
 
 #define icnss_register_driver(ops)		\
@@ -182,6 +207,7 @@ extern int icnss_wlan_disable(struct device *dev, enum icnss_driver_mode mode);
 extern void icnss_enable_irq(struct device *dev, unsigned int ce_id);
 extern void icnss_disable_irq(struct device *dev, unsigned int ce_id);
 extern int icnss_get_soc_info(struct device *dev, struct icnss_soc_info *info);
+extern int icnss_request_bus_bandwidth(struct device *dev, int bandwidth);
 extern int icnss_ce_free_irq(struct device *dev, unsigned int ce_id, void *ctx);
 extern int icnss_ce_request_irq(struct device *dev, unsigned int ce_id,
 	irqreturn_t (*handler)(int, void *),
@@ -203,6 +229,16 @@ extern int icnss_smmu_map(struct device *dev, phys_addr_t paddr,
 			  uint32_t *iova_addr, size_t size);
 extern int icnss_smmu_unmap(struct device *dev,
 			    uint32_t iova_addr, size_t size);
+extern bool icnss_get_audio_shared_iommu_group_cap(struct device *dev);
+extern int icnss_get_direct_link_sid(struct device *dev, uint16_t *sid);
+extern bool icnss_get_fw_direct_link_cap(struct device *dev);
+extern bool icnss_audio_is_direct_link_supported(struct device *dev);
+extern int icnss_audio_smmu_map(struct device *dev, phys_addr_t paddr,
+				dma_addr_t iova, size_t size);
+extern void icnss_audio_smmu_unmap(struct device *dev, dma_addr_t iova,
+				   size_t size);
+extern int icnss_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+					 size_t *size);
 extern unsigned int icnss_socinfo_get_serial_number(struct device *dev);
 extern bool icnss_is_qmi_disable(struct device *dev);
 extern bool icnss_is_fw_ready(void);
@@ -239,4 +275,15 @@ extern void icnss_allow_l1(struct device *dev);
 extern int icnss_get_mhi_state(struct device *dev);
 extern int icnss_is_pci_ep_awake(struct device *dev);
 extern unsigned long icnss_get_device_config(void);
+extern void icnss_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+						     unsigned int *cpu_mask);
+extern void icnss_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+							unsigned int *cpu_mask);
+extern int icnss_register_driver_async_data_cb(struct device *dev, void *cb_ctx,
+					       int (*cb)(void *ctx,
+					       uint16_t type, void *event,
+					       int event_len));
+extern struct kobject *icnss_get_wifi_kobj(struct device *dev);
+extern bool icnss_get_fw_cap(struct device *dev, enum icnss_fw_caps fw_cap);
+extern int icnss_get_iova_info(struct device *dev, u64 *addr, u64 *size);
 #endif /* _ICNSS_WLAN_H_ */

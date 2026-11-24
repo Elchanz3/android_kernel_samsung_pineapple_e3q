@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -66,6 +66,25 @@ enum dhcp_nego_status {
 	DHCP_NEGO_IN_PROGRESS
 };
 
+/**
+ * enum wlan_sta_info_mac_type - mac type for get sta info
+ * @STA_INFO_MAC_UNKNOWN: unknown mac type
+ * @STA_INFO_STA_MAC: peer mac of client. for mlo client, it is link_address.
+ * @STA_INFO_MLD_MAC: mld mac of mlo client
+ */
+typedef enum {
+	STA_INFO_MAC_UNKNOWN  = 0,
+	STA_INFO_STA_MAC      = BIT(0),
+	STA_INFO_MLD_MAC      = BIT(1)
+} wlan_sta_info_mac_type;
+
+#define STA_INFO_MATCH_STA_MAC_ONLY STA_INFO_STA_MAC
+#define STA_INFO_MATCH_MLD_MAC_ONLY STA_INFO_MLD_MAC
+#define STA_INFO_MATCH_STA_OR_MLD_MAC (STA_INFO_STA_MAC | STA_INFO_MLD_MAC)
+
+#define IS_MATCH_STA_MAC(value) (STA_INFO_STA_MAC & (value))
+#define IS_MATCH_MLD_MAC(value) (STA_INFO_MLD_MAC & (value))
+
 /*
  * Pending frame type of EAP_FAILURE, bit number used in "pending_eap_frm_type"
  * of sta_info.
@@ -112,6 +131,8 @@ enum dhcp_nego_status {
  * @STA_INFO_WLAN_HDD_CFG80211_DUMP_STATION: NL80211_CMD_GET_STATION dumpit
  *                                           handler for SoftAP
  * @STA_INFO_SON_GET_DATRATE_INFO: gets datarate info for a SON node
+ * @STA_INFO_SAP_SET_MLO_CLIENT_DEAUTH_FLAG: set deauth flag for mlo client
+ * @STA_INFO_SAP_GET_WDS_CLIENT_INFO: Check if a client is a wds client
  * @STA_INFO_ID_MAX: Number of enumerators
  */
 /*
@@ -152,6 +173,8 @@ typedef enum {
 	STA_INFO_SOFTAP_IPA_RX_PKT_CALLBACK = 30,
 	STA_INFO_WLAN_HDD_CFG80211_DUMP_STATION = 31,
 	STA_INFO_SON_GET_DATRATE_INFO = 32,
+	STA_INFO_SAP_SET_MLO_CLIENT_DEAUTH_FLAG = 33,
+	STA_INFO_SAP_GET_WDS_CLIENT_INFO = 34,
 	STA_INFO_ID_MAX,
 } wlan_sta_info_dbgid;
 
@@ -169,6 +192,7 @@ char *sta_info_string_from_dbgid(wlan_sta_info_dbgid id);
  * struct hdd_station_info - Per station structure kept in HDD for
  *                                     multiple station support for SoftAP
  * @sta_node: The sta_info node for the station info list maintained in adapter
+ * @link_info: the sta_info attach to link info
  * @in_use: Is the station entry in use?
  * @sta_id: Station ID reported back from HAL (through SAP).
  *           Broadcast uses station ID zero by default.
@@ -251,6 +275,7 @@ char *sta_info_string_from_dbgid(wlan_sta_info_dbgid id);
  */
 struct hdd_station_info {
 	qdf_list_node_t sta_node;
+	struct wlan_hdd_link_info *link_info;
 	bool in_use;
 	uint8_t sta_id;
 	eStationType sta_type;
@@ -548,6 +573,7 @@ struct hdd_station_info *hdd_get_sta_info_by_id(
  *                      the sta_info obj.
  * @mac_addr: The mac addr by which the sta_info has to be fetched.
  * @sta_info_dbgid: Debug ID of the caller API
+ * @match_mac_type: mac type to match, it can match sta_mac or mld_mac or both
  *
  * Return: Pointer to the hdd_station_info structure which contains the mac
  *         address passed
@@ -555,7 +581,8 @@ struct hdd_station_info *hdd_get_sta_info_by_id(
 struct hdd_station_info *hdd_get_sta_info_by_mac(
 				struct hdd_sta_info_obj *sta_info_container,
 				const uint8_t *mac_addr,
-				wlan_sta_info_dbgid sta_info_dbgid);
+				wlan_sta_info_dbgid sta_info_dbgid,
+				uint32_t match_mac_type);
 
 /**
  * hdd_clear_cached_sta_info() - Clear the cached sta info from the container
@@ -566,4 +593,25 @@ struct hdd_station_info *hdd_get_sta_info_by_mac(
  */
 void hdd_clear_cached_sta_info(struct hdd_adapter *hdd_adapter);
 
+#ifdef WLAN_FEATURE_MULTI_LINK_SAP
+/**
+ * hdd_mlo_is_last_sta_info() - check if the sta info is the last one for mlo
+ * client
+ * @sta_info_container: The station info container obj that stores and maintains
+ *                      the sta_info obj.
+ * @current_sta_info: the sta info which is to check if the last one
+ *
+ * this is to check if the sta info is the last for mlo client.
+ *
+ * Return: bool
+ */
+bool hdd_mlo_is_last_sta_info(struct hdd_sta_info_obj *sta_info_container,
+			      struct hdd_station_info *current_sta_info);
+#else
+static inline bool
+hdd_mlo_is_last_sta_info(struct hdd_sta_info_obj *sta_info_container,
+			 struct hdd_station_info *current_sta_info) {
+	return true;
+}
+#endif
 #endif /* __WLAN_HDD_STA_INFO_H */

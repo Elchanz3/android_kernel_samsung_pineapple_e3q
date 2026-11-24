@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -369,8 +369,8 @@ QDF_STATUS wifi_pos_handle_ranging_peer_create(struct wlan_objmgr_psoc *psoc,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	wifi_pos_debug("PASN peer create request received. Num peers:%d",
-		       total_entries);
+	wifi_pos_debug("vdev:%d PASN peer create request received. Num peers:%d",
+		       vdev_id, total_entries);
 	for (i = 0; i < total_entries; i++) {
 		peer = wlan_objmgr_get_peer_by_mac(psoc, req[i].peer_mac.bytes,
 						   WLAN_WIFI_POS_CORE_ID);
@@ -384,6 +384,13 @@ QDF_STATUS wifi_pos_handle_ranging_peer_create(struct wlan_objmgr_psoc *psoc,
 			wifi_pos_debug("PASN Peer: " QDF_MAC_ADDR_FMT "already exists",
 				       QDF_MAC_ADDR_REF(req[i].peer_mac.bytes));
 			wifi_pos_add_peer_to_list(vdev, &req[i], false);
+
+			if (req[i].is_ltf_keyseed_required)
+				wifi_pos_set_peer_ltf_keyseed_required(peer,
+								       true);
+			else
+				wifi_pos_set_peer_ltf_keyseed_required(peer,
+								       false);
 			wlan_objmgr_peer_release_ref(peer,
 						     WLAN_WIFI_POS_CORE_ID);
 			continue;
@@ -637,6 +644,12 @@ wifi_pos_send_pasn_auth_status(struct wlan_objmgr_psoc *psoc,
 
 	pasn_context = &vdev_pos_obj->pasn_context;
 	total_peers_to_fill = data->num_peers + pasn_context->num_failed_peers;
+	if (total_peers_to_fill > WLAN_MAX_11AZ_PEERS) {
+		wifi_pos_err("auth and failed peers %d exceeds max %d",
+			     total_peers_to_fill, WLAN_MAX_11AZ_PEERS);
+		total_peers_to_fill = WLAN_MAX_11AZ_PEERS;
+	}
+
 	for (i = data->num_peers; i < total_peers_to_fill; i++) {
 		data->auth_status[i].peer_mac =
 			pasn_context->failed_peer_list[failed_peers_counter];
@@ -690,6 +703,8 @@ wifi_pos_set_peer_ltf_keyseed_required(struct wlan_objmgr_peer *peer,
 	}
 
 	peer_priv->is_ltf_keyseed_required = value;
+	wifi_pos_debug("peer_mac:" QDF_MAC_ADDR_FMT " value:%d",
+		       QDF_MAC_ADDR_REF(wlan_peer_get_macaddr(peer)), value);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -771,7 +786,6 @@ QDF_STATUS
 wifi_pos_vdev_delete_all_ranging_peers(struct wlan_objmgr_vdev *vdev)
 {
 	QDF_STATUS status;
-	struct vdev_mlme_obj *vdev_mlme;
 	struct wifi_pos_vdev_priv_obj *vdev_pos_obj;
 	struct peer_delete_all_params param;
 
@@ -786,16 +800,10 @@ wifi_pos_vdev_delete_all_ranging_peers(struct wlan_objmgr_vdev *vdev)
 
 	vdev_pos_obj->is_delete_all_pasn_peer_in_progress = true;
 
-	vdev_mlme = wlan_vdev_mlme_get_cmpt_obj(vdev);
-	if (!vdev_mlme) {
-		wifi_pos_err(" VDEV MLME component object is NULL");
-		return QDF_STATUS_E_FAILURE;
-	}
-
 	param.vdev_id = wlan_vdev_get_id(vdev);
 	param.peer_type_bitmap = BIT(WLAN_PEER_RTT_PASN);
 
-	status = tgt_vdev_mgr_peer_delete_all_send(vdev_mlme, &param);
+	status = tgt_vdev_mgr_peer_delete_all_send(vdev, &param);
 	if (QDF_IS_STATUS_ERROR(status))
 		wifi_pos_err("Send vdev delete all peers failed");
 

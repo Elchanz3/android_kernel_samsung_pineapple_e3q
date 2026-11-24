@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -67,6 +67,8 @@ struct wlan_ipa_config {
  * @WLAN_IPA_STA_CONNECT: STA associates to AP
  * @WLAN_IPA_STA_DISCONNECT: STA dissociates from AP
  * @WLAN_IPA_CLIENT_CONNECT_EX: Peer associates/re-associates to softap
+ * @WLAN_IPA_MLO_CLIENT_CONNECT_EX: MLO Peer Connect
+ * @WLAN_IPA_MLO_CLIENT_DISCONNECT: MLO Peer Disconnect
  * @WLAN_IPA_WLAN_EVENT_MAX: Max value for the enum
  */
 enum wlan_ipa_wlan_event {
@@ -77,19 +79,23 @@ enum wlan_ipa_wlan_event {
 	WLAN_IPA_STA_CONNECT,
 	WLAN_IPA_STA_DISCONNECT,
 	WLAN_IPA_CLIENT_CONNECT_EX,
+	WLAN_IPA_MLO_CLIENT_CONNECT_EX,
+	WLAN_IPA_MLO_CLIENT_DISCONNECT,
 	WLAN_IPA_WLAN_EVENT_MAX
 };
 
 /**
- * enum wlan_ipa_bw_level -ipa bandwidth level
+ * enum wlan_ipa_bw_level - IPA bandwidth level
  * @WLAN_IPA_BW_LEVEL_LOW: vote for low bandwidth
  * @WLAN_IPA_BW_LEVEL_MEDIUM: vote for medium bandwidth
  * @WLAN_IPA_BW_LEVEL_HIGH: vote for high bandwidth
+ * @WLAN_IPA_BW_LEVEL_MAX: Max value for the enum
  */
 enum wlan_ipa_bw_level {
 	WLAN_IPA_BW_LEVEL_LOW,
 	WLAN_IPA_BW_LEVEL_MEDIUM,
 	WLAN_IPA_BW_LEVEL_HIGH,
+	WLAN_IPA_BW_LEVEL_MAX
 };
 
 #ifdef IPA_OPT_WIFI_DP
@@ -104,6 +110,21 @@ enum wlan_ipa_cce_super_rule_flt_hdl {
 	WLAN_HDL_FILTER2 = 0xD,
 	WLAN_HDL_MAX_FILTER
 };
+
+/**
+ * enum wlan_ipa_tx_super_rule_flt_hdl - Filter hdl values for TX super rules
+ * @WLAN_HDL_TX_FILTER1 : Handle for LCE filter1
+ * @WLAN_HDL_TX_FILTER2 : Handle for LCE filter 2
+ * @WLAN_HDL_TX_FILTER3 : Handle for LCE filter 3
+ * @WLAN_HDL_MAX_TX_FILTER : Max value for LCE filter handle
+ */
+enum wlan_ipa_tx_super_rule_flt_hdl {
+	WLAN_HDL_TX_FILTER1 = 0x10,
+	WLAN_HDL_TX_FILTER2 = 0x11,
+	WLAN_HDL_TX_FILTER3 = 0x12,
+	WLAN_HDL_MAX_TX_FILTER
+};
+
 #endif
 
 /**
@@ -127,4 +148,20 @@ struct ipa_intrabss_control_params {
 	uint32_t vdev_id;
 	uint32_t enable;
 };
+
+#ifdef IPA_OPT_WIFI_DP_CTRL
+/*
+ * struct filter_response - filter response from  fw
+ *	for filter add/remove request
+ * @dst_port: dst_port added/removed
+ * @valid: is filter valid
+ * @result: result of filter add/remove
+ */
+struct filter_response {
+	uint16_t dst_port;
+	uint8_t valid;
+	uint8_t result;
+};
+#endif
+
 #endif /* end  of _WLAN_IPA_PUBLIC_STRUCT_H_ */

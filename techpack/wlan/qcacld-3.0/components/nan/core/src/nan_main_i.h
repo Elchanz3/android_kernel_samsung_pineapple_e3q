@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -91,32 +91,46 @@ enum nan_disc_state {
  * @enable: NAN feature enable
  * @dp_enable: NAN Datapath feature enable
  * @ndi_mac_randomize: Randomize NAN datapath interface MAC
- * @ndp_inactivity_timeout: NDP inactivity timeout
  * @nan_separate_iface_support: To supports separate iface creation for NAN
- * @ndp_keep_alive_period: To configure duration of how many seconds to
- * wait to kickout peer if peer is not reachable
  * @support_mp0_discovery: To support discovery of NAN cluster with Master
  * Preference (MP) as 0 when a new device is enabling NAN
+ * @disable_6g_nan: Disable NAN in 6GHz frequency band
+ * @enable_nan_eht_cap: Enable(1)/Disable(0) NAN EHT capability
+ * @support_sta_sap_ndp: support STA + SAP + NDP
+ * @support_sta_p2p_ndp: support STA + P2P + NDP
+ * @prefer_nan_chan_for_p2p: Prefer NAN social channels for P2P PCL
+ * @reserved: Bits reserved for future use
+ * @ndp_inactivity_timeout: NDP inactivity timeout
+ * @ndp_keep_alive_period: To configure duration of how many seconds to
+ * wait to kickout peer if peer is not reachable
  * @max_ndp_sessions: max ndp sessions host supports
  * @max_ndi: max number of ndi host supports
  * @nan_feature_config: Bitmap to enable/disable a particular NAN feature
  *                      configuration in firmware. It's sent to firmware through
  *                      wmi_vdev_param_enable_disable_nan_config_features
- * @disable_6g_nan: Disable NAN in 6GHz frequency band
+ * @nan_config: NAN config to enable/disable capabilities
  */
 struct nan_cfg_params {
-	bool enable;
-	bool dp_enable;
-	bool ndi_mac_randomize;
+	uint32_t enable:1;
+	uint32_t dp_enable:1;
+	uint32_t ndi_mac_randomize:1;
+	uint32_t nan_separate_iface_support:1;
+	uint32_t support_mp0_discovery:1;
+	uint32_t disable_6g_nan:1;
+	uint32_t enable_nan_eht_cap:1;
+	uint32_t support_sta_sap_ndp:1;
+	uint32_t support_sta_p2p_ndp:1;
+	uint32_t prefer_nan_chan_for_p2p:1;
+	uint32_t reserved:22;
 	uint16_t ndp_inactivity_timeout;
-	bool nan_separate_iface_support;
 	uint16_t ndp_keep_alive_period;
-	bool support_mp0_discovery;
 	uint32_t max_ndp_sessions;
 	uint32_t max_ndi;
 	uint32_t nan_feature_config;
-	bool disable_6g_nan;
+	uint32_t nan_config;
 };
+
+#define MAX_NDP_PEERS 8
 
 /**
  * struct nan_psoc_priv_obj - nan private psoc obj
@@ -134,6 +148,12 @@ struct nan_cfg_params {
  * disabled by driver or user-space
  * @ndp_request_ctx: NDP request context
  * @nan_disc_request_ctx: NAN discovery enable/disable request context
+ * @nan_pairing_create_ctx: NAN Pairing create context
+ * @nan_pairing_delete_ctx: NAN Pairing delete context
+ * @nan_delete_all_peer_ctx: Delete all peer context
+ * @fw_nan_addr: NAN MAC address which is randomized by target
+ * @ndp_peer_mac_addr: array of NDP peer MAC address
+ * @num_ndp_peers: Num of existing NDP peers
  */
 struct nan_psoc_priv_obj {
 	qdf_spinlock_t lock;
@@ -149,8 +169,15 @@ struct nan_psoc_priv_obj {
 	bool is_explicit_disable;
 	void *ndp_request_ctx;
 	void *nan_disc_request_ctx;
+	void *nan_pairing_create_ctx;
+	void *nan_pairing_delete_ctx;
+	void *nan_delete_all_peer_ctx;
+	struct qdf_mac_addr fw_nan_addr;
+	struct qdf_mac_addr ndp_peer_mac_addr[MAX_NDP_PEERS];
+	uint8_t num_ndp_peers;
 };
 
+#define MAX_NAN_MIGRATED_PEERS 5
 /**
  * struct nan_vdev_priv_obj - nan private vdev obj
  * @lock: lock to be acquired before reading or writing to object
@@ -165,6 +192,11 @@ struct nan_psoc_priv_obj {
  * @ndp_init_done: Flag to indicate NDP initialization complete after first peer
  *		   connection.
  * @peer_mc_addr_list: Peer multicast address list
+ * @num_pasn_peers: Number of NAN PASN peers
+ * @is_delete_all_pasn_peer_in_progress: flag to track the deletion of all
+ * pasn peers
+ * @num_peer_migrated: Number of peers migrated
+ * @peer_migrated_addr_list: list containing migrated peer mac address
  */
 struct nan_vdev_priv_obj {
 	qdf_spinlock_t lock;
@@ -178,6 +210,10 @@ struct nan_vdev_priv_obj {
 	void *disable_context;
 	bool ndp_init_done;
 	struct qdf_mac_addr peer_mc_addr_list[MAX_NDP_SESSIONS];
+	uint8_t num_pasn_peers;
+	bool is_delete_all_pasn_peer_in_progress;
+	uint8_t num_peer_migrated;
+	struct qdf_mac_addr peer_migrated_addr_list[MAX_NAN_MIGRATED_PEERS];
 };
 
 /**
@@ -185,11 +221,13 @@ struct nan_vdev_priv_obj {
  * @lock: lock to be acquired before reading or writing to object
  * @active_ndp_sessions: number of active ndp sessions for this peer
  * @home_chan_info: Home channel info for the NDP associated with the Peer
+ * @ndi_vdev_id: NDI vdev ID
  */
 struct nan_peer_priv_obj {
 	qdf_spinlock_t lock;
 	uint32_t active_ndp_sessions;
 	struct nan_datapath_channel_info home_chan_info;
+	uint8_t ndi_vdev_id;
 };
 
 /**
@@ -324,5 +362,157 @@ uint8_t nan_get_vdev_id_from_bssid(struct wlan_objmgr_pdev *pdev,
  * Return: True if concurrency is present, False otherwise
  */
 bool nan_is_sta_sta_concurrency_present(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * nan_is_pairing_allowed() - check NAN pairing capability
+ * @psoc: pointer to psoc object
+ *
+ * Return: Boolean flag indicating whether the NAN pairing allowed or not
+ */
+bool nan_is_pairing_allowed(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * nan_is_peer_exist_for_opmode() - check whether peer is exist or not for given
+ * opmode.
+ * @psoc: pointer to psoc object
+ * @peer_mac_addr: peer mac address
+ * @opmode: OP mode
+ *
+ * Return: Boolean flag indicating whether the peer exists or not
+ */
+bool nan_is_peer_exist_for_opmode(struct wlan_objmgr_psoc *psoc,
+				  struct qdf_mac_addr *peer_mac_addr,
+				  enum QDF_OPMODE opmode);
+
+/**
+ * nan_update_pasn_peer_count() - Increment or Decrement pasn peer count
+ * @vdev: Pointer to vdev object
+ * @is_increment: flag to indicate if peer count needs to be incremented
+ *
+ * Return: None
+ */
+void nan_update_pasn_peer_count(struct wlan_objmgr_vdev *vdev,
+				bool is_increment);
+
+/*
+ * nan_pasn_flush_callback: callback to flush the NAN PASN scheduler msg
+ * @msg: pointer to msg
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS nan_pasn_flush_callback(struct scheduler_msg *msg);
+
+/**
+ * nan_pasn_scheduled_handler: callback pointer to be called when scheduler
+ * starts executing enqueued NAN command for PASN
+ * @msg: pointer to msg
+ *
+ * Return: status of operation
+ */
+QDF_STATUS nan_pasn_scheduled_handler(struct scheduler_msg *msg);
+
+/*
+ * nan_handle_pasn_peer_create_rsp: This API handle pasn peer create response
+ * by clearing wait timer.
+ * @psoc: PSOC object
+ * @vdev_id: vdev id
+ * @peer_mac: peer mac address
+ * @peer_create_status: peer create status
+ *
+ * Return: None
+ */
+void nan_handle_pasn_peer_create_rsp(struct wlan_objmgr_psoc *psoc,
+				     uint8_t vdev_id,
+				     struct qdf_mac_addr *peer_mac,
+				     uint8_t peer_create_status);
+/**
+ * nan_pasn_peer_handle_del_rsp: handle psan peer delete response
+ * @psoc: pointer to psoc object
+ * @peer_mac: address of peer
+ * @vdev_id: vdev id
+ *
+ * Return: None
+ */
+void nan_pasn_peer_handle_del_rsp(struct wlan_objmgr_psoc *psoc,
+				  uint8_t *peer_mac, uint8_t vdev_id);
+/**
+ * nan_handle_delete_all_pasn_peers: handle response for all PASN peers delete
+ * cmd for NAN
+ * @psoc: pointer to psoc object
+ * @vdev_id: vdev id
+ *
+ * Return: Success when handled response, otherwise error
+ */
+QDF_STATUS nan_handle_delete_all_pasn_peers(struct wlan_objmgr_psoc *psoc,
+					    uint8_t vdev_id);
+
+/**
+ * nan_cleanup_pasn_peers() - Delete all PASN peer objects for given vdev
+ * @psoc: Pointer to psoc object
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS nan_cleanup_pasn_peers(struct wlan_objmgr_psoc *psoc);
+
+/*
+ * ndi_add_pasn_peer_to_nan(): This API will add PASN peer to NAN VDEV on
+ * peer migration
+ * @psoc: pointer to PSOC object
+ * @peer_mac: address of peer
+ *
+ * Return: QDF STATUS
+ */
+QDF_STATUS
+ndi_add_pasn_peer_to_nan(struct wlan_objmgr_psoc *psoc,
+			 struct qdf_mac_addr *peer_mac);
+
+/**
+ * nan_get_fw_addr() - get NAN MAC address randomized by target.
+ * @psoc: pointer to psoc object
+ *
+ * Return: NAN MAC address
+ */
+struct qdf_mac_addr *nan_get_fw_addr(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * nan_cache_ndp_peer_mac_addr() - cached NDP peer MAC address in NAN PSOC
+ * private object
+ * @psoc: pointer to PSOC object
+ * @peer_mac_addr: peer mac address
+ *
+ * Return: QDF status
+ */
+QDF_STATUS nan_cache_ndp_peer_mac_addr(struct wlan_objmgr_psoc *psoc,
+				       struct qdf_mac_addr *peer_mac_addr);
+
+/**
+ * nan_remove_ndp_peer_mac_addr() - remove NDP peer address from the NAN PSOC
+ * private object.
+ * @psoc: pointer to PSOC object
+ * @peer_mac_addr: peer mac address
+ *
+ * Return: QDF status
+ */
+QDF_STATUS nan_remove_ndp_peer_mac_addr(struct wlan_objmgr_psoc *psoc,
+					struct qdf_mac_addr *peer_mac_addr);
+
+/**
+ * nan_clean_up_all_ndp_peers() - This API will delete all NDP peers.
+ *
+ * @psoc: pointer to PSOC object
+ * @vdev_id: VDEV ID
+ *
+ * Return: QDF status
+ */
+void nan_clean_up_all_ndp_peers(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id);
+
+/**
+ * nan_is_allowed() - This API will check for NAN enable INI
+ *
+ * @psoc: pointer to PSOC object
+ *
+ * Return: true if NAN is allowed otherwise false
+ */
+bool nan_is_allowed(struct wlan_objmgr_psoc *psoc);
 #endif /* _WLAN_NAN_MAIN_I_H_ */
 #endif /* WLAN_FEATURE_NAN */

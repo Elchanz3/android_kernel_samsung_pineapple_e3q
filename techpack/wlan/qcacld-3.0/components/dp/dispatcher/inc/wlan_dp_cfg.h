@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -335,13 +335,24 @@
 		true, \
 		"Control to enable TCP limit output byte")
 
+#define WLAN_CFG_TCP_ADV_WIN_SCALE_MIN		0
+#define WLAN_CFG_TCP_ADV_WIN_SCALE_MAX		3
+#define WLAN_CFG_TCP_ADV_WIN_SCALE_DEFAULT	1
+#define DP_TCP_ADV_WIN_SCL_BIT			BIT(0)
+#define DP_TCP_ADV_WIN_SCALE_DISC_LOW		BIT(1)
+
 /*
  * <ini>
  * gTcpAdvWinScaleEnable - Control to enable  TCP adv window scaling
- * @Default: true
+ * @Min: 0
+ * @Max: 3
+ * @Default: 1
  *
  * This ini is used to enable dynamic configuration of TCP adv window scaling
  * system parameter.
+ * Value 0: TCP Advanced WIN scale control disable.
+ * Value 1: Enable TCP Advanced WIN scale control.
+ * Value 3: Enable feature to set WIN Adv scale level low on disconnect.
  *
  * Supported Feature: Tcp Advance Window Scaling
  *
@@ -350,9 +361,12 @@
  * </ini>
  */
 #define CFG_DP_ENABLE_TCP_ADV_WIN_SCALE \
-		CFG_INI_BOOL( \
+		CFG_INI_UINT( \
 		"gTcpAdvWinScaleEnable", \
-		true, \
+		WLAN_CFG_TCP_ADV_WIN_SCALE_MIN, \
+		WLAN_CFG_TCP_ADV_WIN_SCALE_MAX, \
+		WLAN_CFG_TCP_ADV_WIN_SCALE_DEFAULT, \
+		CFG_VALUE_OR_DEFAULT, \
 		"Control to enable  TCP adv window scaling")
 
 /*
@@ -1093,7 +1107,7 @@
  * gEnableNUDTracking - Will enable or disable NUD tracking within driver
  * @Min: 0
  * @Max: 3
- * @Default: 2
+ * @Default: 0
  *
  * This ini is used to specify the behaviour of the driver for NUD tracking.
  * If the ini value is:-
@@ -1115,7 +1129,7 @@
 		CFG_INI_UINT("gEnableNUDTracking", \
 		 0, \
 		 3, \
-		 2, \
+		 0, \
 		 CFG_VALUE_OR_DEFAULT, "Driver NUD tracking behaviour")
 
 #define CFG_DP_ENABLE_NUD_TRACKING_ALL \
@@ -1334,6 +1348,208 @@
 #define CFG_DP_HL_BUNDLE
 #endif
 
+#ifdef FEATURE_DIRECT_LINK
+/*
+ * <ini>
+ * dp_direct_link_enable - Control direct link datapath
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable Direct Link datapath feature
+ *
+ * Supported Feature: Direct Link
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_DIRECT_LINK_ENABLE \
+	CFG_INI_BOOL("dp_direct_link_enable", false, \
+		     "Enable/Disable Direct Link datapath")
+
+#define CFG_DP_DIRECT_LINK \
+	CFG(CFG_DP_DIRECT_LINK_ENABLE)
+#else
+#define CFG_DP_DIRECT_LINK
+#endif
+
+#ifdef WLAN_DP_LOAD_BALANCE_SUPPORT
+/*
+ * <ini>
+ * dp_enable_load_balance - Control load balance feature support
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable/disable load balance datapath feature
+ *
+ * Supported Feature: All modes
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_ENABLE_LOAD_BALANCE \
+	CFG_INI_BOOL("dp_enable_load_balance", false, \
+		     "Enable/Disable load balance support")
+
+#define CFG_DP_LOAD_BALANCE \
+	CFG(CFG_DP_ENABLE_LOAD_BALANCE)
+#else
+#define CFG_DP_LOAD_BALANCE
+#endif
+
+#ifdef WLAN_DP_FLOW_BALANCE_SUPPORT
+/*
+ * <ini>
+ * dp_enable_flow_balance - Control flow balance feature support
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable/disable flow balance datapath feature
+ *
+ * Supported Feature: STA and SAP
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_ENABLE_FLOW_BALANCE \
+	CFG_INI_BOOL("dp_enable_flow_balance", false, \
+		     "Enable/Disable flow balance support")
+
+#define CFG_DP_FLOW_BALANCE \
+	CFG(CFG_DP_ENABLE_FLOW_BALANCE)
+#else
+#define CFG_DP_FLOW_BALANCE
+#endif
+
+/*
+ * <ini>
+ * dp_wlm_rx_aggr_control - WLM Rx aggregation Control
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable DP WLM Rx aggregation Control feature
+ *
+ * Supported Feature: All modes
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DP_WLM_RX_AGGR_CTRL \
+	CFG_INI_BOOL("dp_wlm_rx_aggr_control", false, \
+		     "Enable/Disable WLM Rx aggregation Control")
+
+#ifdef WLAN_DP_FEATURE_STC
+/*
+ * <ini>
+ * dp_stc_enable - Control STC feature enablement
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable DP STC
+ *
+ * Supported Feature: STA (pre 802.11BE)
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_STC_ENABLE \
+	CFG_INI_BOOL("dp_stc_enable", false, \
+		     "Enable/Disable DP Smart Traffic Classifier")
+
+#define CFG_DP_STC \
+	CFG(CFG_DP_STC_ENABLE)
+#else
+#define CFG_DP_STC
+#endif
+
+#ifdef WLAN_DP_DYNAMIC_RESOURCE_MGMT
+/*
+ * <ini>
+ * dp_dynamic_resource_mgmt - Control DP dynamic resource management
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable DP dynamic resource management feature
+ *
+ * Supported mode: All modes
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_DYNAMIC_RESOURCE_MGMT_ENABLE \
+	CFG_INI_BOOL("dp_dynamic_resource_mgmt", false, \
+		     "Enable/Disable DP dynamic resource management")
+
+#define CFG_DP_DYNAMIC_RESOURCE_MGMT \
+	CFG(CFG_DP_DYNAMIC_RESOURCE_MGMT_ENABLE)
+
+#else
+#define CFG_DP_DYNAMIC_RESOURCE_MGMT
+#endif
+
+#define WLAN_CFG_DP_IRQ_AFFINITY_MASK 0
+#define WLAN_CFG_DP_IRQ_AFFINITY_MASK_MIN 0
+#define WLAN_CFG_DP_IRQ_AFFINITY_MASK_MAX 0x3FF
+
+/*
+ * <ini>
+ * dp_irq_affinity_ctrl - Affinity control for Datapath interrupts
+ * @Min: 0
+ * @Max: 0x3FF
+ * @Default: 0
+ *
+ * This ini is used to control Datapath interrupt affinity.
+ * The value 0 is used to disable the cusotm control of DP interrupts.
+ * The value 0-0x3FF are used to indicate a CPU bitmask used to affine the DP
+ * interrupts when system-wide throughput crosses a certain threshold.
+ *
+ * Supported modes: All modes
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DP_IRQ_AFFINITY_MASK \
+	CFG_INI_UINT("dp_irq_affinity_mask", \
+		     WLAN_CFG_DP_IRQ_AFFINITY_MASK_MIN, \
+		     WLAN_CFG_DP_IRQ_AFFINITY_MASK_MAX, \
+		     WLAN_CFG_DP_IRQ_AFFINITY_MASK, \
+		     CFG_VALUE_OR_DEFAULT, \
+		     "DP interrupt affinity control")
+
+/*
+ * <ini>
+ * dp_ipa_debug_enable - support IPA debugging
+ * @Min: 0
+ * @Max: 16
+ * @Default: 0
+ *
+ * This ini is used to enable ipa debugging
+ *
+ * Supported Feature: IPA
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_DP_IPA_DEBUG_ENABLE \
+	CFG_INI_UINT("dp_ipa_debug_enable", \
+		     0, \
+		     16, \
+		     0, \
+		     CFG_VALUE_OR_DEFAULT, "IPA debug support")
+
 #define CFG_DP_ALL \
 	CFG(CFG_DP_RX_THREAD_CPU_MASK) \
 	CFG(CFG_DP_RX_THREAD_UL_CPU_MASK) \
@@ -1353,12 +1569,20 @@
 	CFG(CFG_DP_ICMP_REQ_TO_FW_MARK_INTERVAL) \
 	CFG(CFG_ENABLE_DIRECT_LINK_UT_CMD) \
 	CFG(CFG_DP_APPLY_MEM_PROFILE) \
+	CFG(CFG_DP_WLM_RX_AGGR_CTRL) \
 	CFG_DP_ENABLE_FASTPATH_ALL \
 	CFG_DP_BUS_BANDWIDTH \
 	CFG_DP_DRIVER_TCP_DELACK \
 	CFG_DP_ENABLE_NUD_TRACKING_ALL \
 	CFG_DP_CONFIG_DP_TRACE_ALL \
 	CFG_DP_HL_BUNDLE \
-	CFG_DP_FISA
+	CFG_DP_FISA \
+	CFG_DP_DIRECT_LINK \
+	CFG_DP_LOAD_BALANCE \
+	CFG_DP_FLOW_BALANCE \
+	CFG_DP_STC \
+	CFG_DP_DYNAMIC_RESOURCE_MGMT \
+	CFG(CFG_DP_IPA_DEBUG_ENABLE) \
+	CFG(CFG_DP_IRQ_AFFINITY_MASK)
 
 #endif /* WLAN_DP_CFG_H__ */

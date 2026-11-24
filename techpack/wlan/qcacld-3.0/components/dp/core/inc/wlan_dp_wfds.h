@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -23,6 +23,12 @@
 #include "wlan_dp_priv.h"
 #include "wlan_qmi_public_struct.h"
 #include "wlan_qmi_wfds_api.h"
+
+#define DP_WFDS_CE_MAX_SRNG QMI_WFDS_CE_MAX_SRNG
+
+#define DP_WFDS_FW_LPASS_SHARED_MEM_RDMEM_OFFSET 4
+#define DP_WFDS_FW_LPASS_SHARED_MEM_SEG_SIZE     4
+#define DP_WFDS_APSS_LPASS_SHARED_MEM_SIZE       4
 
 /**
  * enum dp_wfds_msg - WFDS message type
@@ -109,7 +115,15 @@ struct dp_direct_link_iommu_config {
  * @num_mem_arenas: Number of memory arenas requested by QMI server
  * @mem_arena_pages: Pointer to array of mem multi page structure for arenas
  * @ipcc_dma_addr: ipcc dma address
+ * @ipcc_ce_id: ids of CEs that are configured with IPCC MSI info
+ * @ipcc_ce_id_len: number of valid entries in ipcc_ce_id array
  * @iommu_cfg: direct link iommu configuration
+ * @apss_lpass_shared_mem_va: APSS and LPASS shared mem region virtual addr
+ * @apss_lpass_shared_mem_pa: APSS and LPASS shared mem region physical addr
+ * @apss_lpass_shared_mem_size: APSS and LPASS shared mem region size
+ * @fw_lpass_shared_mem_pa: FW and LPASS shared mem region physical addr
+ * @fw_lpass_shared_mem_size: FW and LPASS shared mem region physical size
+ * @is_audio_shared_iommu_group: whether iommu group is shared with audio or not
  */
 struct dp_direct_link_wfds_context {
 	struct dp_direct_link_context *direct_link_ctx;
@@ -121,8 +135,33 @@ struct dp_direct_link_wfds_context {
 	uint32_t num_mem_arenas;
 	struct qdf_mem_multi_page_t *mem_arena_pages;
 	uint32_t ipcc_dma_addr;
+	uint8_t ipcc_ce_id[DP_WFDS_CE_MAX_SRNG];
+	uint8_t ipcc_ce_id_len;
 	struct dp_direct_link_iommu_config iommu_cfg;
+	uint32_t *apss_lpass_shared_mem_va;
+	qdf_dma_addr_t apss_lpass_shared_mem_pa;
+	uint32_t apss_lpass_shared_mem_size;
+	qdf_dma_addr_t fw_lpass_shared_mem_pa;
+	uint32_t fw_lpass_shared_mem_size;
+	bool is_audio_shared_iommu_group;
 };
+
+/**
+ * dp_wfds_is_nmi_adsp_crash() - Check the shared memory region to get the
+ *  adsp crash type.
+ * @dl_wfds: DP Direct Link WFDS context
+ *
+ * Return: true if ADSP crash type is NMI else false
+ */
+static inline bool
+dp_wfds_is_nmi_adsp_crash(struct dp_direct_link_wfds_context *dl_wfds)
+{
+	if (!dl_wfds || !dl_wfds->apss_lpass_shared_mem_va)
+		return false;
+
+	return (*dl_wfds->apss_lpass_shared_mem_va ==
+		QMI_WFDS_ADSP_CRASH_TYPE_NMI);
+}
 
 /**
  * dp_wfds_handle_request_mem_ind() - Process request memory indication received

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011, 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -178,6 +178,9 @@ os_if_spectral_init_nl(struct wlan_objmgr_pdev *pdev)
 		osif_err("PDEV SPECTRAL object is NULL!");
 		return -EINVAL;
 	}
+
+	ps->transport_mode = SPECTRAL_DATA_TRANSPORT_NETLINK;
+
 	os_if_spectral_init_nl_cfg(&cfg);
 
 	if (!os_if_spectral_nl_sock) {
@@ -572,10 +575,45 @@ os_if_spectral_free_skb(struct wlan_objmgr_pdev *pdev,
 	ps->skb[smsg_type] = NULL;
 }
 
+/**
+ * os_if_spectral_nl_reset_tbuff() - Reset netlink transport buffer
+ * @pdev : Pointer to pdev
+ *
+ * Return: QDF_STATUS
+ */
+
+static QDF_STATUS
+os_if_spectral_nl_reset_tbuff(struct wlan_objmgr_pdev *pdev)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * os_if_spectral_netlink_get_buff_size() -Get the sample buffer
+ * allocated size via Netlink
+ * @pdev : Pointer to pdev
+ * @buff_size: Pointer to store data
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+os_if_spectral_netlink_get_buff_size(struct wlan_objmgr_pdev *pdev,
+				     uint32_t *buff_size)
+{
+	if (!buff_size) {
+		osif_err("buff_size pointer is NULL!");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	*buff_size = MAX_SPECTRAL_PAYLOAD;
+
+	return QDF_STATUS_SUCCESS;
+}
+
 void
 os_if_spectral_netlink_init(struct wlan_objmgr_pdev *pdev)
 {
-	struct spectral_nl_cb nl_cb = {0};
+	struct spectral_buffer_cb spectral_buf_cb = {0};
 	struct spectral_context *sptrl_ctx;
 
 	if (!pdev) {
@@ -598,15 +636,19 @@ os_if_spectral_netlink_init(struct wlan_objmgr_pdev *pdev)
 	os_if_spectral_init_nl(pdev);
 
 	/* Register Netlink handlers */
-	nl_cb.get_sbuff = os_if_spectral_prep_skb;
-	nl_cb.send_nl_bcast = os_if_spectral_nl_bcast_msg;
-	nl_cb.send_nl_unicast = os_if_spectral_nl_unicast_msg;
-	nl_cb.free_sbuff = os_if_spectral_free_skb;
-	nl_cb.convert_to_phy_ch_width = wlan_spectral_get_phy_ch_width;
-	nl_cb.convert_to_nl_ch_width = wlan_spectral_get_nl80211_chwidth;
+	spectral_buf_cb.get_sbuff = os_if_spectral_prep_skb;
+	spectral_buf_cb.send_bcast = os_if_spectral_nl_bcast_msg;
+	spectral_buf_cb.send_unicast = os_if_spectral_nl_unicast_msg;
+	spectral_buf_cb.free_sbuff = os_if_spectral_free_skb;
+	spectral_buf_cb.convert_to_phy_ch_width =
+				wlan_cfg80211_get_phy_ch_width;
+	spectral_buf_cb.convert_to_nl_ch_width =
+				wlan_cfg80211_get_nl80211_chwidth;
+	spectral_buf_cb.reset_transport_channel = os_if_spectral_nl_reset_tbuff;
+	spectral_buf_cb.get_buff_size =	os_if_spectral_netlink_get_buff_size;
 
-	if (sptrl_ctx->sptrlc_register_netlink_cb)
-		sptrl_ctx->sptrlc_register_netlink_cb(pdev, &nl_cb);
+	if (sptrl_ctx->sptrlc_register_buffer_cb)
+		sptrl_ctx->sptrlc_register_buffer_cb(pdev, &spectral_buf_cb);
 }
 qdf_export_symbol(os_if_spectral_netlink_init);
 
@@ -635,8 +677,8 @@ void os_if_spectral_netlink_deinit(struct wlan_objmgr_pdev *pdev)
 	for (; msg_type < SPECTRAL_MSG_TYPE_MAX; msg_type++)
 		os_if_spectral_free_skb(pdev, msg_type);
 
-	if (sptrl_ctx->sptrlc_deregister_netlink_cb)
-		sptrl_ctx->sptrlc_deregister_netlink_cb(pdev);
+	if (sptrl_ctx->sptrlc_deregister_buffer_cb)
+		sptrl_ctx->sptrlc_deregister_buffer_cb(pdev);
 
 	os_if_spectral_destroy_netlink(pdev);
 }

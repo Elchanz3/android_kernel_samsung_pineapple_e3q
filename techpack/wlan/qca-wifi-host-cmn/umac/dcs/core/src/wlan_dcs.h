@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,12 +32,50 @@
 		QDF_TRACE_INFO(QDF_MODULE_ID_DCS, ## args)
 #define dcs_err(args ...) \
 		QDF_TRACE_ERROR(QDF_MODULE_ID_DCS, ## args)
+#define dcs_debug_rl(args ...) \
+		QDF_TRACE_DEBUG_RL(QDF_MODULE_ID_DCS, ## args)
 
 #define WLAN_DCS_MAX_PDEVS 3
 
 #define DCS_TX_MAX_CU  30
 #define MAX_DCS_TIME_RECORD 10
 #define DCS_FREQ_CONTROL_TIME (5 * 60 * 1000)
+
+/**
+ * enum wlan_dcs_mode - vdev operating mode for DCS
+ * @DCS_SAP: General SAP mode except XPAN/XR
+ * @DCS_XPAN: XPAN SAP mode
+ * @DCS_XR: XR SAP mode
+ * @DCS_GO: P2P GO mode
+ * @MAX_DCS_MODE_NUM: Max place holder
+ *
+ * These are generic IDs that identify the various modes
+ * in Dynamic Channel Selection.
+ */
+enum wlan_dcs_mode {
+	DCS_SAP,
+	DCS_XPAN,
+	DCS_XR,
+	DCS_GO,
+	MAX_DCS_MODE_NUM,
+};
+
+/**
+ * struct wlan_dcs_type_bitmap - types of DCS interference bitmap
+ * @cwim: continuous wave interference
+ * @wlanim: wlan interference stats
+ * @reserved: to be used in future
+ */
+struct wlan_dcs_type_bitmap {
+	uint8_t cwim:1;
+	uint8_t wlanim:1;
+	uint8_t reserved:6;
+};
+
+union wlan_dcs_cfg {
+	uint8_t val;
+	struct wlan_dcs_type_bitmap bitmap;
+};
 
 /**
  * enum wlan_dcs_debug_level - dcs debug trace level
@@ -80,12 +118,16 @@ struct pdev_dcs_im_stats {
  * @phy_err_threshold: phy error threshold
  * @radar_err_threshold: radar error threshold
  * @coch_intfr_threshold: co-channel interference threshold
+ * @dcs_trnsprt_rjt_threshold_cu: transport reject threshold cu
  * @user_max_cu: tx channel utilization due to AP's tx and rx
  * @intfr_detection_threshold: interference detection threshold
  * @intfr_detection_window: interference sampling window
  * @tx_err_threshold: transmission failure rate threshold
  * @user_request_count: counter of stats requested from userspace
  * @notify_user: whether to notify userspace
+ * @dcs_enable_cfg_per_mode: dcs enable per mode from ini config
+ * @intfr_detection_threshold_per_mode: interference detection threshold per
+ * mode
  */
 struct pdev_dcs_params {
 	uint8_t dcs_enable_cfg;
@@ -97,12 +139,17 @@ struct pdev_dcs_params {
 	uint32_t phy_err_threshold;
 	uint32_t radar_err_threshold;
 	uint32_t coch_intfr_threshold;
+	uint32_t dcs_trnsprt_rjt_threshold_cu;
 	uint32_t user_max_cu;
 	uint32_t intfr_detection_threshold;
 	uint32_t intfr_detection_window;
 	uint32_t tx_err_threshold;
 	uint32_t user_request_count;
 	uint8_t notify_user;
+#ifdef WLAN_FEATURE_VDEV_DCS
+	union wlan_dcs_cfg dcs_enable_cfg_per_mode[MAX_DCS_MODE_NUM];
+	uint8_t intfr_detection_threshold_per_mode[MAX_DCS_MODE_NUM];
+#endif
 };
 
 /**
@@ -191,7 +238,7 @@ struct dcs_afc_select_chan_cbk {
 };
 
 /**
- * struct dcs_pdev_priv_obj - define dcs pdev priv
+ * struct dcs_pdev_priv_obj  - define dcs pdev priv
  * @dcs_host_params: dcs host configuration parameter
  * @dcs_im_stats: dcs im statistics
  * @dcs_freq_ctrl_params: dcs frequency control parameter
@@ -286,6 +333,17 @@ struct dcs_pdev_priv_obj *
 wlan_dcs_get_pdev_private_obj(struct wlan_objmgr_psoc *psoc, uint32_t pdev_id);
 
 /**
+ * dcs_get_trnsprt_switch_rjt_th_cu() - get unused cu threshold
+ * @psoc: psoc pointer
+ * @pdev_id: pdev_id
+ *
+ * Return: cu threshold
+ */
+uint32_t
+dcs_get_trnsprt_switch_rjt_th_cu(struct wlan_objmgr_psoc *psoc,
+				 uint8_t pdev_id);
+
+/**
  * wlan_dcs_attach() - Attach dcs handler
  * @psoc: psoc pointer
  *
@@ -318,6 +376,32 @@ QDF_STATUS wlan_dcs_detach(struct wlan_objmgr_psoc *psoc);
 QDF_STATUS wlan_dcs_cmd_send(struct wlan_objmgr_psoc *psoc,
 			     uint32_t pdev_id,
 			     bool is_host_pdev_id);
+
+#ifdef WLAN_FEATURE_VDEV_DCS
+/**
+ * wlan_send_dcs_cmd_for_vdev() - Send dcs command to target_if layer in
+ * vdev level
+ * @psoc: psoc pointer
+ * @mac_id: mac_id
+ * @vdev_id: vdev_id
+ *
+ * The function gets called to send dcs command in vdev level to FW
+ *
+ * return: QDF_STATUS_SUCCESS for success or error code
+ */
+QDF_STATUS wlan_send_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc,
+				      uint32_t mac_id,
+				      uint8_t vdev_id);
+#endif
+
+/**
+ * wlan_is_vdev_level_dcs_supported() -API to check whether vdev level
+ * DCS is supported or not
+ * @psoc: pointer to psoc object
+ *
+ * Return: True/False
+ */
+bool wlan_is_vdev_level_dcs_supported(struct wlan_objmgr_psoc *psoc);
 
 /**
  * wlan_dcs_process() - dcs process main entry
@@ -391,6 +475,19 @@ static inline void wlan_dcs_pdev_obj_unlock(struct dcs_pdev_priv_obj *dcs_pdev)
 {
 	qdf_spin_unlock_bh(&dcs_pdev->lock);
 }
+
+/**
+ * wlan_dcs_trigger_dcs() - wrapper to trigger DCS
+ * @psoc: pointer to dcs psoc object
+ * @pdev_id: pdev id
+ * @vdev_id: vdev id
+ * @dcs_type: DCS type
+ *
+ * Return: void
+ */
+void
+wlan_dcs_trigger_dcs(struct wlan_objmgr_psoc *psoc, uint8_t pdev_id,
+		     uint8_t vdev_id, enum wlan_host_dcs_type dcs_type);
 
 /**
  * wlan_dcs_switch_chan() - switch channel for vdev

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -31,6 +31,11 @@
 #include "cdp_txrx_handle.h"
 #include "cdp_txrx_cmn_struct.h"
 #include "wlan_objmgr_global_obj.h"
+
+#ifdef WLAN_SUPPORT_DPDK
+#include <cfgmgr_api_if.h>
+#include <dpdk_wlan_msg_types.h>
+#endif
 
 #ifdef ENABLE_VERBOSE_DEBUG
 extern bool is_dp_verbose_debug_enabled;
@@ -172,13 +177,32 @@ typedef void (*ipa_uc_op_cb_type)(uint8_t *op_msg,
 				  void *osif_ctxt);
 
 #ifdef QCA_SUPPORT_DP_GLOBAL_CTX
-/* Global level structure for win contexts */
+/**
+ * struct dp_global_context - Global level structure for win contexts
+ * @fst_ctx: Rx FST Handle
+ * @tx_desc: flow pool pointer
+ * @tx_cc_ctx: main context for HW cookie conversion
+ * @spcl_tx_desc: flow pool
+ * @spcl_tx_cc_ctx: special context for HW cookie conversion
+ * @tx_ext_desc: extension desc pointer
+ * @rx_fst_ref_cnt: ref cnt for tx descriptors
+ * @global_descriptor_in_use: global descriptors in usage
+ * @tx_cookie_ctx_alloc_cnt: Tx cookie context alloc count
+ * @tx_desc_pool_alloc_cnt: Tx descriptor pool alloc count
+ * @tx_desc_pool_init_cnt: Tx descriptor pool init count
+ * @spcl_tx_cookie_ctx_alloc_cnt: Special tx cookie context alloc count
+ * @spcl_tx_desc_pool_alloc_cnt: Special tx desc pool alloc count
+ * @spcl_tx_desc_pool_init_cnt: special tx desc pool init cnt
+ * @tx_ext_desc_pool_alloc_cnt: extension tx desc pool alloc cnt
+ * @tx_ext_desc_pool_init_cnt: extension tx desc pool init cnt
+ */
 struct dp_global_context {
 	struct dp_rx_fst *fst_ctx;
 	struct dp_tx_desc_pool_s *tx_desc[2][4];
 	struct dp_hw_cookie_conversion_t *tx_cc_ctx[4];
 	struct dp_tx_desc_pool_s *spcl_tx_desc[2][4];
 	struct dp_hw_cookie_conversion_t *spcl_tx_cc_ctx[4];
+	struct dp_tx_ext_desc_pool_s *tx_ext_desc[4];
 	qdf_atomic_t rx_fst_ref_cnt;
 	qdf_atomic_t global_descriptor_in_use;
 	int tx_cookie_ctx_alloc_cnt;
@@ -187,6 +211,8 @@ struct dp_global_context {
 	int spcl_tx_cookie_ctx_alloc_cnt;
 	int spcl_tx_desc_pool_alloc_cnt[2];
 	int spcl_tx_desc_pool_init_cnt[2];
+	int tx_ext_desc_pool_alloc_cnt;
+	int tx_ext_desc_pool_init_cnt;
 };
 
 /**
@@ -336,6 +362,30 @@ static inline void cdp_flow_pool_unmap(ol_txrx_soc_handle soc,
 
 	return soc->ops->flowctl_ops->flow_pool_unmap_handler(soc, pdev_id,
 							vdev_id);
+}
+#endif
+
+#ifdef IPA_OPT_WIFI_DP_CTRL
+static inline bool
+cdp_get_opt_dp_ctrl_refill_cap(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance:");
+		QDF_BUG(0);
+		return false;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->txrx_get_opt_dp_ctrl_refill_cap)
+		return false;
+
+	return soc->ops->cmn_drv_ops->txrx_get_opt_dp_ctrl_refill_cap(soc);
+}
+#else
+static inline bool
+cdp_get_opt_dp_ctrl_refill_cap(ol_txrx_soc_handle soc)
+{
+	return 0;
 }
 #endif
 
@@ -988,11 +1038,19 @@ cdp_set_monitor_filter(ol_txrx_soc_handle soc, uint8_t pdev_id,
 	return 0;
 }
 
+static inline int
+cdp_set_mu_sniffer(ol_txrx_soc_handle soc, uint8_t pdev_id, uint32_t mode)
+{
+	if (soc->ops->mon_ops->txrx_set_mu_sniffer)
+		return soc->ops->mon_ops->txrx_set_mu_sniffer(soc, pdev_id,
+							      mode);
+	return 0;
+}
 
 /******************************************************************************
  * Data Interface (B Interface)
  *****************************************************************************/
-static inline void
+static inline struct cdp_vdev *
 cdp_vdev_register(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		  ol_osif_vdev_handle osif_vdev,
 		  struct ol_txrx_ops *txrx_ops)
@@ -1000,15 +1058,15 @@ cdp_vdev_register(ol_txrx_soc_handle soc, uint8_t vdev_id,
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
-		return;
+		return NULL;
 	}
 
 	if (!soc->ops->cmn_drv_ops ||
 	    !soc->ops->cmn_drv_ops->txrx_vdev_register)
-		return;
+		return NULL;
 
-	soc->ops->cmn_drv_ops->txrx_vdev_register(soc, vdev_id,
-			osif_vdev, txrx_ops);
+	return soc->ops->cmn_drv_ops->txrx_vdev_register(soc, vdev_id,
+							 osif_vdev, txrx_ops);
 }
 
 static inline int
@@ -1885,8 +1943,11 @@ static inline void cdp_txrx_umac_reset_init(ol_txrx_soc_handle soc)
 /**
  * cdp_txrx_umac_reset_deinit(): De-initialize UMAC HW reset module
  * @soc: soc handle
+ * @recovery_type: Mode0 or mode 1 recovery
  */
-static inline void cdp_txrx_umac_reset_deinit(ol_txrx_soc_handle soc)
+static inline
+void cdp_txrx_umac_reset_deinit(ol_txrx_soc_handle soc,
+				uint8_t recovery_type)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance:");
@@ -1898,7 +1959,7 @@ static inline void cdp_txrx_umac_reset_deinit(ol_txrx_soc_handle soc)
 	    !soc->ops->cmn_drv_ops->txrx_umac_reset_deinit)
 		return;
 
-	soc->ops->cmn_drv_ops->txrx_umac_reset_deinit(soc);
+	soc->ops->cmn_drv_ops->txrx_umac_reset_deinit(soc, recovery_type);
 }
 
 /**
@@ -3019,21 +3080,24 @@ cdp_wds_ext_set_bit(ol_txrx_soc_handle soc, uint8_t *mac)
 /**
  * cdp_drain_txrx() - drain TX/RX SRNGs
  * @soc: opaque soc handle
+ * @rx_only: drain only RX rings
+ *
+ * Return: QDF_STATUS
  */
-static inline void
-cdp_drain_txrx(ol_txrx_soc_handle soc)
+static inline QDF_STATUS
+cdp_drain_txrx(ol_txrx_soc_handle soc, uint8_t rx_only)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
-		return;
+		return QDF_STATUS_E_FAULT;
 	}
 
 	if (!soc->ops->cmn_drv_ops ||
 	    !soc->ops->cmn_drv_ops->txrx_drain)
-		return;
+		return QDF_STATUS_E_FAULT;
 
-	return soc->ops->cmn_drv_ops->txrx_drain(soc);
+	return soc->ops->cmn_drv_ops->txrx_drain(soc, rx_only);
 }
 
 /**
@@ -3383,10 +3447,155 @@ QDF_STATUS cdp_mlo_dev_ctxt_detach(ol_txrx_soc_handle soc,
  * @soc: soc handle
  * @uio_info: pointer to fill dp ring info
  *
- * Return: none
+ * Return: no. of mappings filled
  */
-static inline void cdp_dpdk_get_ring_info(ol_txrx_soc_handle soc,
-					  qdf_uio_info_t *uio_info)
+static inline uint8_t cdp_dpdk_get_ring_info(ol_txrx_soc_handle soc,
+					     qdf_uio_info_t *uio_info)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return 0;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->dpdk_get_ring_info)
+		return 0;
+
+	return soc->ops->cmn_drv_ops->dpdk_get_ring_info(soc, uio_info);
+}
+
+/*
+ * cdp_cfgmgr_get_soc_info - get soc info for dpdk
+ * @soc: soc handle
+ * @soc_id: soc id
+ * @ev_buf: pointer to fill soc info
+ *
+ * Return: 0 if info filled successful, error otherwise
+ */
+static inline
+int cdp_cfgmgr_get_soc_info(struct cdp_soc_t *soc, uint8_t soc_id,
+			    struct dpdk_wlan_soc_info_event *ev_buf)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->cfgmgr_get_soc_info)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->cfgmgr_get_soc_info(soc, soc_id, ev_buf);
+}
+
+/*
+ * cdp_cfgmgr_get_vdev_info - get vdev info of a soc for dpdk
+ * @soc: soc handle
+ * @soc_id: soc id
+ * @ev_buf: pointer to fill vdev info
+ *
+ * Return: 0 if info filled successful, error otherwise
+ */
+static inline
+int cdp_cfgmgr_get_vdev_info(struct cdp_soc_t *soc, uint8_t soc_id,
+			     struct dpdk_wlan_vdev_info_event *ev_buf)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->cfgmgr_get_vdev_info)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->cfgmgr_get_vdev_info(soc, soc_id, ev_buf);
+}
+
+/*
+ * cdp_cfgmgr_get_peer_info - get peer info of a soc for dpdk
+ * @soc: soc handle
+ * @soc_id: soc id
+ * @ev_buf: pointer to fill peer info
+ *
+ * Return: 0 if info filled successful, error otherwise
+ */
+static inline
+int cdp_cfgmgr_get_peer_info(struct cdp_soc_t *soc, uint8_t soc_id,
+			     struct dpdk_wlan_peer_info *ev_buf)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->cfgmgr_get_peer_info)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->cfgmgr_get_peer_info(soc, soc_id, ev_buf);
+}
+
+/*
+ * cdp_cfgmgr_get_vdev_create_evt_info - get vdev create info of a soc for dpdk
+ * @soc: soc handle
+ * @vdev_id: vdev id
+ * @ev_buf: pointer to fill vdev info
+ *
+ * Return: 0 if info filled successful, error otherwise
+ */
+static inline
+int cdp_cfgmgr_get_vdev_create_evt_info(struct cdp_soc_t *soc, uint8_t vdev_id,
+					struct dpdk_wlan_vdev_create_info *ev_buf)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->cfgmgr_get_vdev_create_evt_info)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->cfgmgr_get_vdev_create_evt_info(
+						soc, vdev_id, ev_buf);
+}
+
+/*
+ * cdp_cfgmgr_get_peer_create_evt_info - get peer create info of a soc for dpdk
+ * @soc: soc handle
+ * @peer_id: peer id
+ * @ev_buf: pointer to fill peer info
+ *
+ * Return: 0 if info filled successful, error otherwise
+ */
+static inline
+int cdp_cfgmgr_get_peer_create_evt_info(struct cdp_soc_t *soc, uint16_t peer_id,
+					struct dpdk_wlan_peer_create_info *ev_buf)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->cfgmgr_get_peer_create_evt_info)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->cfgmgr_get_peer_create_evt_info(
+						soc, peer_id, ev_buf);
+}
+#endif
+
+#ifdef WLAN_DP_LOAD_BALANCE_SUPPORT
+/**
+ * cdp_calculate_per_ring_pkt_avg() - calculate rx rings pkt average
+ * @soc: Datapath soc handle
+ *
+ * Return: none.
+ */
+static inline void
+cdp_calculate_per_ring_pkt_avg(ol_txrx_soc_handle soc)
 {
 	if (!soc) {
 		dp_cdp_debug("Invalid Instance");
@@ -3394,10 +3603,57 @@ static inline void cdp_dpdk_get_ring_info(ol_txrx_soc_handle soc,
 	}
 
 	if (!soc->ops->cmn_drv_ops ||
-	    !soc->ops->cmn_drv_ops->dpdk_get_ring_info)
+	    !soc->ops->cmn_drv_ops->calculate_per_ring_pkt_avg)
 		return;
 
-	soc->ops->cmn_drv_ops->dpdk_get_ring_info(soc, uio_info);
+	soc->ops->cmn_drv_ops->calculate_per_ring_pkt_avg(soc);
+}
+
+/**
+ * cdp_get_per_ring_pkt_avg() - get per rx ring pkt average
+ * @soc: Datapath soc handle
+ * @pkt_avg_cnt: Array of counters to update Rx rings pkt average
+ * @total_avg_pkt_cnt: total average packet count of all rx rings
+ *
+ * Return: None.
+ */
+static inline void
+cdp_get_per_ring_pkt_avg(ol_txrx_soc_handle soc,
+			 uint32_t *pkt_avg_cnt, uint32_t *total_avg_pkt_cnt)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->get_per_ring_pkt_avg)
+		return;
+
+	soc->ops->cmn_drv_ops->get_per_ring_pkt_avg(soc, pkt_avg_cnt,
+						    total_avg_pkt_cnt);
+}
+
+/**
+ * cdp_get_ext_grp_id_from_reo_num() - get ext group id from reo number
+ * @soc: Datapath soc handle
+ * @reo_num: reo ring number
+ *
+ * Return: ext group id
+ */
+static inline int
+cdp_get_ext_grp_id_from_reo_num(ol_txrx_soc_handle soc, uint8_t reo_num)
+{
+	if (!soc) {
+		dp_cdp_debug("Invalid Instance");
+		return -EINVAL;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->get_ext_grp_id_from_reo_num)
+		return -EINVAL;
+
+	return soc->ops->cmn_drv_ops->get_ext_grp_id_from_reo_num(soc, reo_num);
 }
 #endif
 #endif /* _CDP_TXRX_CMN_H_ */

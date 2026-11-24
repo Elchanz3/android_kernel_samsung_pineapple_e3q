@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -36,9 +36,31 @@
 #ifdef FEATURE_PERPKT_INFO
 #include "dp_ratetable.h"
 #endif
+#ifdef WLAN_LOCAL_PKT_CAPTURE_SUBFILTER
+#include <cdp_txrx_mon.h>
+#endif
 
 #ifndef IEEE80211_FCO_SUBTYPE_ACTION_NO_ACK
 #define IEEE80211_FCO_SUBTYPE_ACTION_NO_ACK 0xe0
+#endif
+
+#ifdef QCA_SUPPORT_MON_FCS_CAP_DBG
+void dp_rx_mon_fcs_cap_debug(struct dp_mon_pdev *mon_pdev,
+			     qdf_nbuf_t mpdu)
+{
+	void *ptr;
+	uint32_t size;
+
+	ptr = qdf_nbuf_get_frag_addr(mpdu, qdf_nbuf_get_nr_frags(mpdu) - 1);
+	size = qdf_nbuf_get_frag_size_by_idx(mpdu,
+					     qdf_nbuf_get_nr_frags(mpdu) - 1);
+	print_hex_dump(KERN_ERR, "pkt: ", DUMP_PREFIX_NONE,
+		       32, 2, ptr, size, false);
+
+	ptr += (size - HAL_RX_FCS_LEN);
+	print_hex_dump(KERN_ERR, "FCS: ", DUMP_PREFIX_NONE,
+		       32, 2, ptr, HAL_RX_FCS_LEN, false);
+}
 #endif
 
 #if defined(WLAN_CFR_ENABLE) && defined(WLAN_ENH_CFR_ENABLE)
@@ -466,6 +488,7 @@ dp_rx_populate_cdp_indication_ppdu_user(struct dp_pdev *pdev,
 			rx_stats_peruser->udp_msdu_count +
 			rx_stats_peruser->other_msdu_count;
 
+		rx_stats_peruser->enc_type = rx_user_status->enc_type;
 		rx_stats_peruser->preamble_type =
 				cdp_rx_ppdu->u.preamble;
 		rx_stats_peruser->mpdu_cnt_fcs_ok =
@@ -483,6 +506,8 @@ dp_rx_populate_cdp_indication_ppdu_user(struct dp_pdev *pdev,
 
 		cdp_rx_ppdu->num_mpdu += rx_user_status->mpdu_cnt_fcs_ok;
 		cdp_rx_ppdu->num_msdu += rx_stats_peruser->num_msdu;
+		rx_stats_peruser->retried_msdu_count =
+				rx_user_status->retried_msdu_count;
 		rx_stats_peruser->retries =
 			CDP_FC_IS_RETRY_SET(rx_stats_peruser->frame_control) ?
 			rx_stats_peruser->mpdu_cnt_fcs_ok : 0;
@@ -661,6 +686,33 @@ end:
 	dp_rx_populate_cfr_non_assoc_sta(pdev, ppdu_info, cdp_rx_ppdu);
 }
 
+/*
+ * dp_mon_eval_avg_rate_filter() - Evaluates rate value against filter
+ * @peer: dp peer
+ * @ratekbps: last packet rate in kbps
+ * @avg_rate: average rate for which new rate is to be evaluated
+ *
+ * Return: true when average need to be evaluated else false
+ */
+static inline bool
+dp_mon_eval_avg_rate_filter(struct dp_peer *peer, uint32_t ratekbps,
+			    uint32_t avg_rate) {
+	uint16_t filter_val = 0;
+
+	if (qdf_unlikely(!peer || !peer->vdev ||
+			  !peer->vdev->pdev->soc->wlan_cfg_ctx)) {
+		return true;
+	}
+
+	filter_val =
+		peer->vdev->pdev->soc->wlan_cfg_ctx->avg_rate_stats_filter_val;
+
+	if (!filter_val || avg_rate < filter_val || ratekbps > filter_val) {
+		return true;
+	}
+	return false;
+}
+
 /**
  * dp_rx_rate_stats_update() - Update per-peer rate statistics
  * @peer: Datapath peer handle
@@ -736,8 +788,12 @@ static inline void dp_rx_rate_stats_update(struct dp_peer *peer,
 	ppdu->rix = rix;
 	ppdu_user->rix = rix;
 	DP_STATS_UPD(mon_peer, rx.last_rx_rate, ratekbps);
-	mon_peer->stats.rx.avg_rx_rate =
-		dp_ath_rate_lpf(mon_peer->stats.rx.avg_rx_rate, ratekbps);
+	if (qdf_likely(dp_mon_eval_avg_rate_filter(peer, ratekbps,
+					mon_peer->stats.rx.avg_rx_rate))) {
+		mon_peer->stats.rx.avg_rx_rate =
+			dp_ath_rate_lpf(mon_peer->stats.rx.avg_rx_rate,
+					ratekbps);
+	}
 	ppdu_rx_rate = dp_ath_rate_out(mon_peer->stats.rx.avg_rx_rate);
 	DP_STATS_UPD(mon_peer, rx.rnd_avg_rx_rate, ppdu_rx_rate);
 	ppdu->rx_ratekbps = ratekbps;
@@ -778,6 +834,8 @@ dp_ppdu_desc_user_rx_time_update(struct dp_pdev *pdev,
 	mon_peer = peer->monitor_peer;
 	if (qdf_unlikely(!mon_peer))
 		return;
+
+	DP_STATS_INC(mon_peer, rx.rx_ppdu_duration, user->rx_time_us);
 
 	ac = TID_TO_WME_AC(user->tid);
 	DP_STATS_INC(mon_peer, airtime_stats.rx_airtime_consumption[ac].consumption,
@@ -845,6 +903,25 @@ void dp_rx_mon_update_pdev_deter_stats(struct dp_pdev *pdev,
 		     deter_stats.rx_su_cnt,
 		     1);
 }
+
+/**
+ * dp_rx_mon_update_pdev_erp_stats() - Update pdev erp rx stats
+ * @pdev: Datapath pdev handle
+ * @user: Per user RX stats
+ *
+ * Return: None
+ */
+static inline
+void dp_rx_mon_update_pdev_erp_stats(struct dp_pdev *pdev,
+				     struct cdp_rx_stats_ppdu_user *user)
+{
+	DP_STATS_INC(pdev,
+		     erp_stats.rx_data_msdu_cnt,
+		     user->num_msdu);
+	DP_STATS_INC(pdev,
+		     erp_stats.total_rx_data_bytes,
+		     user->mpdu_ok_byte_count);
+}
 #else
 static inline void
 dp_ppdu_desc_user_rx_time_update(struct dp_pdev *pdev,
@@ -864,6 +941,12 @@ static inline
 void dp_rx_mon_update_pdev_deter_stats(struct dp_pdev *pdev,
 				       struct cdp_rx_indication_ppdu *ppdu)
 { }
+
+static inline
+void dp_rx_mon_update_pdev_erp_stats(struct dp_pdev *pdev,
+				     struct cdp_rx_stats_ppdu_user *user)
+{
+}
 #endif
 
 static void dp_rx_stats_update(struct dp_pdev *pdev,
@@ -872,6 +955,8 @@ static void dp_rx_stats_update(struct dp_pdev *pdev,
 	struct dp_soc *soc = NULL;
 	uint8_t mcs, preamble, ac = 0, nss, ppdu_type, res_mcs = 0;
 	uint32_t num_msdu;
+	uint32_t num_mpdu;
+	uint32_t mpdu_overhead;
 	struct dp_peer *peer;
 	struct dp_mon_peer *mon_peer;
 	struct cdp_rx_stats_ppdu_user *ppdu_user;
@@ -881,6 +966,7 @@ static void dp_rx_stats_update(struct dp_pdev *pdev,
 	struct dp_mon_pdev *mon_pdev = NULL;
 	uint64_t byte_count;
 	bool is_preamble_valid = true;
+	uint8_t wifi_hdr_len = 0;
 
 	if (qdf_likely(pdev))
 		soc = pdev->soc;
@@ -926,10 +1012,28 @@ static void dp_rx_stats_update(struct dp_pdev *pdev,
 		}
 
 		num_msdu = ppdu_user->num_msdu;
-		byte_count = ppdu_user->mpdu_ok_byte_count +
-			ppdu_user->mpdu_err_byte_count;
+		num_mpdu = ppdu_user->mpdu_cnt_fcs_ok;
+		byte_count = ppdu_user->mpdu_ok_byte_count;
+		wifi_hdr_len = dp_mon_get_802_11_hdr_length(ppdu_user);
+		/* mpdu_overhead is calculated as:
+		 * wifi header len * num mpdu + LLC len * num_msdu + FCS len.
+		 */
+		if (num_msdu > 1) {
+			mpdu_overhead = (wifi_hdr_len * num_mpdu) +
+			      ((DP_RX_MON_DECAP_HDR_SIZE + DP_RX_MON_LLC_SIZE +
+				DP_RX_MON_SNAP_SIZE) * num_msdu) + DP_RX_MON_FCS_LEN;
+			mpdu_overhead = mpdu_overhead -
+					(DP_RX_MON_DECAP_HDR_SIZE * num_msdu);
+		} else {
+			mpdu_overhead = wifi_hdr_len + DP_RX_MON_LLC_SIZE +
+					DP_RX_MON_SNAP_SIZE + DP_RX_MON_FCS_LEN - DP_RX_MON_DECAP_HDR_SIZE;
+		}
+		if (qdf_likely(byte_count > mpdu_overhead))
+			byte_count = byte_count - mpdu_overhead;
 
 		DP_STATS_UPD(mon_peer, rx.snr, ppdu->rssi);
+		DP_STATS_INC(mon_peer, rx.retried_msdu_count,
+			     ppdu_user->retried_msdu_count);
 
 		if (qdf_unlikely(mon_peer->stats.rx.avg_snr == CDP_INVALID_SNR))
 			mon_peer->stats.rx.avg_snr =
@@ -972,6 +1076,8 @@ static void dp_rx_stats_update(struct dp_pdev *pdev,
 				     ppdu_user->mpdu_cnt_fcs_err);
 		}
 
+		DP_STATS_INC(mon_peer, rx.rx_total.num, num_msdu);
+		DP_STATS_INC(mon_peer, rx.rx_total.bytes, byte_count);
 		DP_STATS_INC(mon_peer, rx.sgi_count[ppdu->u.gi], num_msdu);
 		DP_STATS_INC(mon_peer, rx.bw[ppdu->u.bw], num_msdu);
 		DP_STATS_INC(mon_peer, rx.reception_type[ppdu->u.ppdu_type],
@@ -1047,8 +1153,10 @@ static void dp_rx_stats_update(struct dp_pdev *pdev,
 
 		dp_peer_qos_stats_notify(pdev, ppdu_user);
 
-		if (dp_is_subtype_data(ppdu->frame_ctrl))
+		if (dp_is_subtype_data(ppdu->frame_ctrl)) {
 			dp_rx_rate_stats_update(peer, ppdu, i);
+			dp_rx_mon_update_pdev_erp_stats(pdev, ppdu_user);
+		}
 
 		dp_send_stats_event(pdev, peer, ppdu_user->peer_id);
 
@@ -1340,6 +1448,8 @@ dp_rx_handle_ppdu_undecoded_metadata(struct dp_soc *soc, struct dp_pdev *pdev,
 	uint8_t abort_reason = 0;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 	uint64_t mask64;
+	uint8_t mac_id = 0;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	 /* Return if RX_ABORT not set */
 	if (ppdu_info->rx_status.phyrx_abort == 0)
@@ -1369,8 +1479,8 @@ dp_rx_handle_ppdu_undecoded_metadata(struct dp_soc *soc, struct dp_pdev *pdev,
 			return;
 		}
 
-		mon_pdev->rx_mon_stats.rx_undecoded_count++;
-		mon_pdev->rx_mon_stats.rx_undecoded_error[abort_reason] += 1;
+		mon_mac->rx_mon_stats.rx_undecoded_count++;
+		mon_mac->rx_mon_stats.rx_undecoded_error[abort_reason] += 1;
 
 		dp_wdi_event_handler(WDI_EVENT_RX_PPDU_DESC_UNDECODED_METADATA,
 				     soc, ppdu_nbuf, HTT_INVALID_PEER,
@@ -1386,9 +1496,12 @@ dp_rx_handle_mcopy_mode(struct dp_soc *soc, struct dp_pdev *pdev,
 			uint8_t fcs_ok_mpdu_cnt, bool deliver_frame)
 {
 	uint16_t size = 0;
+	uint8_t mac_id = 0;
 	struct ieee80211_frame *wh;
 	uint32_t *nbuf_data;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
+
 
 	if (!ppdu_info->ppdu_msdu_info[fcs_ok_mpdu_cnt].first_msdu_payload)
 		return QDF_STATUS_SUCCESS;
@@ -1415,7 +1528,7 @@ dp_rx_handle_mcopy_mode(struct dp_soc *soc, struct dp_pdev *pdev,
 	}
 
 	nbuf_data = (uint32_t *)qdf_nbuf_data(nbuf);
-	*nbuf_data = mon_pdev->ppdu_info.com_info.ppdu_id;
+	*nbuf_data = mon_mac->ppdu_info.com_info.ppdu_id;
 	/* only retain RX MSDU payload in the skb */
 	qdf_nbuf_trim_tail(nbuf, qdf_nbuf_len(nbuf) - ppdu_info->ppdu_msdu_info[fcs_ok_mpdu_cnt].payload_len);
 	if (deliver_frame) {
@@ -1586,20 +1699,20 @@ end:
 int
 dp_rx_handle_smart_mesh_mode(struct dp_soc *soc, struct dp_pdev *pdev,
 			      struct hal_rx_ppdu_info *ppdu_info,
-			      qdf_nbuf_t nbuf)
+			      qdf_nbuf_t nbuf, uint8_t mac_id)
 {
 	uint8_t size = 0;
 	struct dp_mon_vdev *mon_vdev;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
 
-	if (!mon_pdev->mvdev) {
+	if (!mon_mac->mvdev) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 			  "[%s]:[%d] Monitor vdev is NULL !!",
 			  __func__, __LINE__);
 		return 1;
 	}
 
-	mon_vdev = mon_pdev->mvdev->monitor_vdev;
+	mon_vdev = mon_mac->mvdev->monitor_vdev;
 
 	if (!ppdu_info->msdu_info.first_msdu_payload) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
@@ -1623,61 +1736,370 @@ dp_rx_handle_smart_mesh_mode(struct dp_soc *soc, struct dp_pdev *pdev,
 	/* Only retain RX MSDU payload in the skb */
 	qdf_nbuf_trim_tail(nbuf, qdf_nbuf_len(nbuf) -
 			   ppdu_info->msdu_info.payload_len);
-	if (!qdf_nbuf_update_radiotap(&mon_pdev->ppdu_info.rx_status, nbuf,
+	if (!qdf_nbuf_update_radiotap(&mon_mac->ppdu_info.rx_status, nbuf,
 				      qdf_nbuf_headroom(nbuf))) {
 		DP_STATS_INC(pdev, dropped.mon_radiotap_update_err, 1);
 		return 1;
 	}
 
-	mon_vdev->osif_rx_mon(mon_pdev->mvdev->osif_vdev,
+	mon_vdev->osif_rx_mon(mon_mac->mvdev->osif_vdev,
 			      nbuf, NULL);
-	mon_pdev->ppdu_info.rx_status.monitor_direct_used = 0;
+	mon_mac->ppdu_info.rx_status.monitor_direct_used = 0;
 	return 0;
 }
 
+#ifdef WLAN_LOCAL_PKT_CAPTURE_SUBFILTER
+static bool
+dp_rx_mon_lpc_subfiltering(struct dp_pdev *pdev, qdf_nbuf_t buf)
+{
+	uint8_t type;
+	struct ieee80211_frame *dot11hdr;
+
+	dot11hdr = (struct ieee80211_frame *)qdf_nbuf_data(buf);
+	type = (dot11hdr->i_fc[0] & QDF_IEEE80211_FC0_TYPE_MASK);
+
+	switch (type) {
+	case QDF_IEEE80211_FC0_TYPE_MGT:
+		return dp_mon_is_mgmt_filter_en(pdev, dot11hdr, buf,
+						IEEE80211_FC1_DIR_FROMDS);
+	case QDF_IEEE80211_FC0_TYPE_CTL:
+		return dp_mon_is_ctrl_filter_en(pdev, dot11hdr,
+						IEEE80211_FC1_DIR_FROMDS);
+	case QDF_IEEE80211_FC0_TYPE_DATA:
+		if (qdf_nbuf_has_fraglist(buf)) {
+			qdf_nbuf_t head_buf;
+			bool filter_en;
+
+			/*
+			 * TX and RX use frag list in different ways.
+			 * In TX, head skb (allocated for rtap hdr) followed by
+			 * an extended list containing the .11 frame.
+			 * However, on the RX side,the head skb contains both
+			 * the rtap hdr and the .11 frame.Since the QDF API
+			 * `qdf_nbuf_nonlinear_data` is designed generically,
+			 * it cannot handle these two different types of
+			 * fraglists. To address this, a temporary head buffer
+			 * is created, and the existing extended list is added
+			 * to this new buffer.
+			 */
+			head_buf = qdf_nbuf_alloc(pdev->soc->osdev,
+						  MAX_MONITOR_HEADER,
+						  MAX_MONITOR_HEADER,
+						  4, FALSE);
+
+			qdf_nbuf_append_ext_list(head_buf, buf,
+						 qdf_nbuf_len(buf));
+			filter_en = dp_mon_is_data_filter_en(pdev, dot11hdr,
+							     head_buf,
+							     IEEE80211_FC1_DIR_FROMDS);
+			skb_shinfo(head_buf)->frag_list = NULL;
+			qdf_nbuf_free(head_buf);
+			head_buf = NULL;
+			return filter_en;
+		}
+			return dp_mon_is_data_filter_en(pdev, dot11hdr, buf,
+							IEEE80211_FC1_DIR_FROMDS);
+	default:
+		return false;
+	}
+}
+#else
+static inline bool
+dp_rx_mon_lpc_subfiltering(struct dp_pdev *pdev, qdf_nbuf_t buf)
+{
+	return true;
+}
+#endif
+
 #ifdef WLAN_FEATURE_LOCAL_PKT_CAPTURE
+
+/**
+ * dp_rx_mon_remove_mic_data() - API to remove mic placeholder data added by
+ * CRYPTO
+ * @mon_mac: mon_mac handle
+ * @buf: pointer to mpdu buffer
+ *
+ * Return: void
+ */
+
+static void
+dp_rx_mon_remove_mic_data(struct dp_mon_mac *mon_mac, qdf_nbuf_t buf)
+{
+	uint8_t user_id;
+	uint8_t mic_len;
+	struct mon_rx_user_status *rx_user_status;
+
+	user_id = mon_mac->ppdu_info.user_id;
+	rx_user_status = &mon_mac->ppdu_info.rx_user_status[user_id];
+	mic_len = hal_get_rx_status_mic_len(rx_user_status);
+	if (mic_len > 0)
+		qdf_nbuf_trim_tail(buf, mic_len);
+}
+
+/**
+ * dp_rx_mon_stitch_mpdu() - Stich MPDU from MSDU
+ * @mon_mac: mon_mac handle
+ * @tail: 1st MSDU of next MPDU
+ *
+ * Return: mpdu buf
+ */
+static qdf_nbuf_t
+dp_rx_mon_stitch_mpdu(struct dp_mon_mac *mon_mac, qdf_nbuf_t tail)
+{
+	qdf_nbuf_t head, nbuf, next;
+	qdf_nbuf_t mpdu_buf = NULL, head_frag_list = NULL;
+	uint32_t is_first_frag, frag_list_sum_len = 0;
+
+	if (!(qdf_nbuf_is_queue_empty(&mon_mac->msdu_queue))) {
+		head = qdf_nbuf_queue_remove(&mon_mac->msdu_queue);
+		nbuf = head;
+		mpdu_buf = qdf_nbuf_copy(head);
+		if (qdf_unlikely(!mpdu_buf))
+			goto fail;
+
+		is_first_frag = 1;
+
+		while (nbuf) {
+			/* Find the 1st msdu to append in mpdu_buf->frag_list */
+			if (nbuf != head && is_first_frag) {
+				is_first_frag = 0;
+				head_frag_list  = nbuf;
+			}
+
+			/* calculate frag_list length */
+			if (!is_first_frag)
+				frag_list_sum_len += qdf_nbuf_len(nbuf);
+
+			if (qdf_nbuf_queue_first(&mon_mac->msdu_queue) == tail)
+				break;
+
+			next = qdf_nbuf_queue_remove(&mon_mac->msdu_queue);
+			qdf_nbuf_set_next(nbuf, next);
+			nbuf = next;
+		}
+
+		/*
+		 * Single msdu and total length < 256 bytes, remove extra
+		 * 4 bytes of RX FCS in the tail to avoid parsing issue.
+		 */
+		if (!head_frag_list &&
+		    qdf_nbuf_len(mpdu_buf) < LPC_RX_HDR_DMA_LENGTH) {
+			qdf_nbuf_trim_tail(mpdu_buf, HAL_RX_FCS_LEN);
+			dp_rx_mon_remove_mic_data(mon_mac, mpdu_buf);
+		}
+
+		qdf_nbuf_append_ext_list(mpdu_buf, head_frag_list,
+					 frag_list_sum_len);
+		qdf_nbuf_free(head);
+	}
+
+	return mpdu_buf;
+
+fail:
+	dp_err_rl("nbuf copy failed len: %zu Q1: %d Q2: %d", qdf_nbuf_len(nbuf),
+		  qdf_nbuf_queue_len(&mon_mac->msdu_queue),
+		  qdf_nbuf_queue_len(&mon_mac->mpdu_queue));
+
+	/* Drop all MSDU of MPDU */
+	while (nbuf) {
+		qdf_nbuf_free(nbuf);
+		if (qdf_nbuf_queue_first(&mon_mac->msdu_queue) == tail)
+			break;
+		nbuf = qdf_nbuf_queue_remove(&mon_mac->msdu_queue);
+	}
+
+	return NULL;
+}
+
+#ifdef WLAN_LOCAL_PKT_CAPTURE_SUBFILTER
+static void
+dp_rx_mon_disable_pf(qdf_nbuf_t rxbuf)
+{
+	char *data = NULL;
+	uint8_t *ccmp_info;
+	uint16_t hdr_len;
+	uint16_t rtap_len = 0;
+	uint16_t pkt_len;
+	tpSirMacFrameCtl fc;
+	void *soc;
+
+	soc = cds_get_context(QDF_MODULE_ID_SOC);
+	if (!cdp_is_local_pkt_capture_running(soc, OL_TXRX_PDEV_ID))
+		return;
+
+	rtap_len = *(uint16_t *)(qdf_nbuf_data(rxbuf) + 2);
+	data = qdf_nbuf_data(rxbuf) + rtap_len;
+	pkt_len = qdf_nbuf_headlen(rxbuf);
+
+	fc = (tpSirMacFrameCtl)data;
+
+	if (fc->wep) {
+		fc->wep = 0;
+		hdr_len = sizeof(tSirMacMgmtHdr);
+
+		/* Add offset of QOS control,
+		 * HTC control field and CCMP params to reach data field
+		 */
+		if (fc->subType == IEEE80211_FC0_TYPE_DATA)
+			hdr_len += QOS_CTRL_LEN;
+
+		if (fc->order)
+			hdr_len += HTC_CTRL_LEN;
+
+		ccmp_info = data + hdr_len;
+		qdf_mem_copy(data, fc, sizeof(tSirMacFrameCtl));
+
+		hdr_len += CCMP_PARAM_LEN;
+		data += hdr_len;
+		pkt_len -= (hdr_len + rtap_len);
+		qdf_mem_copy(ccmp_info, data, pkt_len);
+		rxbuf->len -= CCMP_PARAM_LEN;
+	}
+}
+#else
+static void
+dp_rx_mon_disable_pf(qdf_nbuf_t rxbuf)
+{
+}
+#endif
+
+/**
+ * dp_rx_mon_send_mpdu() - Send MPDU to stack
+ * @pdev: DP pdev handle
+ * @mon_mac: mon_mac handle
+ * @mpdu_buf: buffer to submit
+ *
+ * Return: None
+ */
+static inline void
+dp_rx_mon_send_mpdu(struct dp_pdev *pdev, struct dp_mon_mac *mon_mac,
+		    qdf_nbuf_t mpdu_buf)
+{
+	struct dp_mon_vdev *mon_vdev;
+	uint8_t vdev_id;
+	struct dp_vdev *vdev = NULL;
+	struct dp_soc *soc = pdev->soc;
+
+	if (qdf_unlikely(!soc))
+		goto fail_free;
+
+	vdev_id = mon_mac->vdev_id;
+	vdev = dp_vdev_get_ref_by_id(soc, vdev_id, DP_MOD_ID_MISC);
+
+	if (!vdev || mon_mac->mvdev != vdev) {
+		dp_info_rl("Monitor vdev is invalid !!");
+		goto fail_free;
+	}
+
+	mon_mac->ppdu_info.rx_status.ppdu_id =
+			mon_mac->ppdu_info.com_info.ppdu_id;
+	mon_mac->ppdu_info.rx_status.device_id = pdev->soc->device_id;
+	mon_mac->ppdu_info.rx_status.chan_noise_floor =
+			pdev->chan_noise_floor;
+
+	if (!dp_rx_mon_lpc_subfiltering(pdev, mpdu_buf))
+		goto fail_free;
+
+	if (!qdf_nbuf_update_radiotap(&mon_mac->ppdu_info.rx_status, mpdu_buf,
+				      qdf_nbuf_headroom(mpdu_buf))) {
+		DP_STATS_INC(pdev, dropped.mon_radiotap_update_err, 1);
+		dp_err("radiotap_update_err");
+		goto fail_free;
+	}
+
+	mon_vdev = vdev->monitor_vdev;
+	if (qdf_likely(mon_vdev && mon_vdev->osif_rx_mon)) {
+		dp_rx_mon_disable_pf(mpdu_buf);
+		mon_vdev->osif_rx_mon(vdev->osif_vdev,
+				      mpdu_buf, NULL);
+	}
+
+	dp_vdev_unref_delete(soc, vdev, DP_MOD_ID_MISC);
+	return;
+
+fail_free:
+	if (vdev)
+		dp_vdev_unref_delete(soc, vdev, DP_MOD_ID_MISC);
+
+	qdf_nbuf_free(mpdu_buf);
+}
+
 int dp_rx_handle_local_pkt_capture(struct dp_pdev *pdev,
 				   struct hal_rx_ppdu_info *ppdu_info,
-				   qdf_nbuf_t nbuf)
+				   qdf_nbuf_t nbuf, uint8_t mac_id,
+				   uint32_t tlv_status)
 {
-	uint8_t size;
-	struct dp_mon_vdev *mon_vdev;
 	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac = dp_get_mon_mac(pdev, mac_id);
+	qdf_nbuf_t buf, last;
+	uint16_t size;
 
-	if (!mon_pdev->mvdev) {
-		dp_info_rl("Monitor vdev is NULL !!");
-		return 1;
+	qdf_spin_lock_bh(&mon_mac->lpc_lock);
+	switch (tlv_status) {
+	case HAL_TLV_STATUS_MPDU_START:
+	{
+		/* Only Add MPDU to queue if multiple MPDUs present in PPDU */
+		if (qdf_unlikely(mon_mac->first_mpdu)) {
+			mon_mac->first_mpdu = false;
+			break;
+		}
+
+		/* last nbuf of queue points to 1st MSDU of next MPDU */
+		last = qdf_nbuf_queue_last(&mon_mac->msdu_queue);
+		buf = dp_rx_mon_stitch_mpdu(mon_mac, last);
+		/* Add MPDU to queue */
+		if (qdf_likely(buf))
+			qdf_nbuf_queue_add(&mon_mac->mpdu_queue, buf);
+		break;
 	}
 
-	mon_vdev = mon_pdev->mvdev->monitor_vdev;
+	case HAL_TLV_STATUS_HEADER:
+	{
+		buf = qdf_nbuf_clone(nbuf);
+		if (qdf_unlikely(!buf))
+			break;
 
-	if (!ppdu_info->msdu_info.first_msdu_payload) {
-		dp_info_rl("First msdu payload not present");
-		return 1;
+		/* Adding 8 bytes to get to start of 802.11 frame
+		 * after phy_ppdu_id
+		 */
+		size = (ppdu_info->msdu_info.first_msdu_payload -
+			qdf_nbuf_data(buf)) + mon_pdev->phy_ppdu_id_size;
+
+		if (qdf_unlikely(!qdf_nbuf_pull_head(buf, size))) {
+			qdf_nbuf_free(buf);
+			dp_info("No header present");
+			break;
+		}
+
+		/* Only retain RX MSDU payload in the skb */
+		qdf_nbuf_trim_tail(buf, qdf_nbuf_len(buf) -
+				ppdu_info->msdu_info.payload_len +
+				mon_pdev->phy_ppdu_id_size);
+
+		/* Add MSDU to Queue */
+		qdf_nbuf_queue_add(&mon_mac->msdu_queue, buf);
+		break;
 	}
 
-	/* Adding 8 bytes to get to start of 802.11 frame after phy_ppdu_id */
-	size = (ppdu_info->msdu_info.first_msdu_payload -
-		qdf_nbuf_data(nbuf)) + mon_pdev->phy_ppdu_id_size;
-	ppdu_info->msdu_info.first_msdu_payload = NULL;
+	case HAL_TLV_STATUS_PPDU_DONE:
+	{
+		while ((buf = qdf_nbuf_queue_remove(&mon_mac->mpdu_queue)))
+			dp_rx_mon_send_mpdu(pdev, mon_mac, buf);
 
-	if (!qdf_nbuf_pull_head(nbuf, size)) {
-		dp_info_rl("No header present");
-		return 1;
+		/* Stich and send Last MPDU of PPDU */
+		buf = dp_rx_mon_stitch_mpdu(mon_mac, NULL);
+		if (buf)
+			dp_rx_mon_send_mpdu(pdev, mon_mac, buf);
+
+		mon_mac->first_mpdu = true;
+		break;
 	}
 
-	/* Only retain RX MSDU payload in the skb */
-	qdf_nbuf_trim_tail(nbuf, qdf_nbuf_len(nbuf) -
-			   ppdu_info->msdu_info.payload_len +
-			   mon_pdev->phy_ppdu_id_size);
-	if (!qdf_nbuf_update_radiotap(&mon_pdev->ppdu_info.rx_status, nbuf,
-				      qdf_nbuf_headroom(nbuf))) {
-		DP_STATS_INC(pdev, dropped.mon_radiotap_update_err, 1);
-		return 1;
+	default:
+		break;
 	}
 
-	if (mon_vdev && mon_vdev->osif_rx_mon)
-		mon_vdev->osif_rx_mon(mon_pdev->mvdev->osif_vdev, nbuf, NULL);
+	qdf_spin_unlock_bh(&mon_mac->lpc_lock);
 
 	return 0;
 }
@@ -1757,6 +2179,7 @@ dp_mon_process(struct dp_soc *soc, struct dp_intr *int_ctx,
  * @soc: soc handle
  * @nbuf: Mgmt packet
  * @pdev: pdev handle
+ * @mon_mac: mon_mac handle
  *
  * Return: QDF_STATUS_SUCCESS on success
  *         QDF_STATUS_E_INVAL in error
@@ -1765,12 +2188,11 @@ dp_mon_process(struct dp_soc *soc, struct dp_intr *int_ctx,
 static inline QDF_STATUS
 dp_send_mgmt_packet_to_stack(struct dp_soc *soc,
 			     qdf_nbuf_t nbuf,
-			     struct dp_pdev *pdev)
+			     struct dp_pdev *pdev, struct dp_mon_mac *mon_mac)
 {
 	uint32_t *nbuf_data;
 	struct ieee80211_frame *wh;
 	qdf_frag_t addr;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 
 	if (!nbuf)
 		return QDF_STATUS_E_INVAL;
@@ -1799,7 +2221,7 @@ dp_send_mgmt_packet_to_stack(struct dp_soc *soc,
 		qdf_nbuf_free(nbuf);
 		return QDF_STATUS_E_INVAL;
 	}
-	*nbuf_data = mon_pdev->ppdu_info.com_info.ppdu_id;
+	*nbuf_data = mon_mac->ppdu_info.com_info.ppdu_id;
 
 	dp_wdi_event_handler(WDI_EVENT_RX_MGMT_CTRL, soc, nbuf,
 			     HTT_INVALID_PEER,
@@ -1810,7 +2232,7 @@ dp_send_mgmt_packet_to_stack(struct dp_soc *soc,
 static inline QDF_STATUS
 dp_send_mgmt_packet_to_stack(struct dp_soc *soc,
 			     qdf_nbuf_t nbuf,
-			     struct dp_pdev *pdev)
+			     struct dp_pdev *pdev, struct dp_mon_mac *mon_mac)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -1826,11 +2248,13 @@ QDF_STATUS dp_rx_mon_process_dest_pktlog(struct dp_soc *soc,
 	struct ieee80211_frame *wh;
 	uint8_t type, subtype;
 	struct dp_mon_pdev *mon_pdev;
+	struct dp_mon_mac *mon_mac;
 
 	if (!pdev)
 		return QDF_STATUS_E_INVAL;
 
 	mon_pdev = pdev->monitor_pdev;
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
 
 	if (mon_pdev->rx_pktlog_cbf) {
 		if (qdf_nbuf_get_nr_frags(mpdu))
@@ -1850,7 +2274,7 @@ QDF_STATUS dp_rx_mon_process_dest_pktlog(struct dp_soc *soc,
 		subtype = (wh)->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
 		if (type == IEEE80211_FC0_TYPE_MGT &&
 		    subtype == IEEE80211_FCO_SUBTYPE_ACTION_NO_ACK) {
-			msdu_timestamp = mon_pdev->ppdu_info.rx_status.tsft;
+			msdu_timestamp = mon_mac->ppdu_info.rx_status.tsft;
 			dp_rx_populate_cbf_hdr(soc,
 					       mac_id, event,
 					       mpdu,
@@ -1869,17 +2293,20 @@ QDF_STATUS dp_rx_mon_deliver(struct dp_soc *soc, uint32_t mac_id,
 	qdf_nbuf_t mon_mpdu = NULL;
 	struct dp_mon_vdev *mon_vdev;
 	struct dp_mon_pdev *mon_pdev;
+	struct dp_mon_mac *mon_mac;
 
 	if (!pdev)
 		goto mon_deliver_fail;
 
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
 	mon_pdev = pdev->monitor_pdev;
-	rs = &mon_pdev->rx_mon_recv_status;
 
-	if (!mon_pdev->mvdev && !mon_pdev->mcopy_mode &&
-	    !mon_pdev->rx_pktlog_cbf)
+	if (!mon_mac && !mon_mac->mvdev && !mon_pdev->mcopy_mode &&
+	    !mon_pdev->rx_pktlog_cbf &&
+	    mon_mac->mon_chan_num == INVALID_MON_CHAN_NUM)
 		goto mon_deliver_fail;
 
+	rs = &mon_mac->rx_mon_recv_status;
 	/* restitch mon MPDU for delivery via monitor interface */
 	mon_mpdu = dp_rx_mon_restitch_mpdu(soc, mac_id, head_msdu,
 					   tail_msdu, rs);
@@ -1896,22 +2323,23 @@ QDF_STATUS dp_rx_mon_deliver(struct dp_soc *soc, uint32_t mac_id,
 	 * hence same skb can be consumed
 	 */
 	if (mon_pdev->mcopy_mode)
-		return dp_send_mgmt_packet_to_stack(soc, mon_mpdu, pdev);
+		return dp_send_mgmt_packet_to_stack(soc, mon_mpdu,
+						    pdev, mon_mac);
 
-	if (mon_pdev->mvdev &&
-	    mon_pdev->mvdev->osif_vdev &&
-	    mon_pdev->mvdev->monitor_vdev &&
-	    mon_pdev->mvdev->monitor_vdev->osif_rx_mon) {
-		mon_vdev = mon_pdev->mvdev->monitor_vdev;
+	if (mon_mac->mvdev &&
+	    mon_mac->mvdev->osif_vdev &&
+	    mon_mac->mvdev->monitor_vdev &&
+	    mon_mac->mvdev->monitor_vdev->osif_rx_mon) {
+		mon_vdev = mon_mac->mvdev->monitor_vdev;
 
-		mon_pdev->ppdu_info.rx_status.ppdu_id =
-			mon_pdev->ppdu_info.com_info.ppdu_id;
-		mon_pdev->ppdu_info.rx_status.device_id = soc->device_id;
-		mon_pdev->ppdu_info.rx_status.chan_noise_floor =
+		mon_mac->ppdu_info.rx_status.ppdu_id =
+			mon_mac->ppdu_info.com_info.ppdu_id;
+		mon_mac->ppdu_info.rx_status.device_id = soc->device_id;
+		mon_mac->ppdu_info.rx_status.chan_noise_floor =
 			pdev->chan_noise_floor;
 		dp_handle_tx_capture(soc, pdev, mon_mpdu);
 
-		if (!qdf_nbuf_update_radiotap(&mon_pdev->ppdu_info.rx_status,
+		if (!qdf_nbuf_update_radiotap(&mon_mac->ppdu_info.rx_status,
 					      mon_mpdu,
 					      qdf_nbuf_headroom(mon_mpdu))) {
 			DP_STATS_INC(pdev, dropped.mon_radiotap_update_err, 1);
@@ -1920,13 +2348,13 @@ QDF_STATUS dp_rx_mon_deliver(struct dp_soc *soc, uint32_t mac_id,
 		}
 
 		dp_rx_mon_update_pf_tag_to_buf_headroom(soc, mon_mpdu);
-		mon_vdev->osif_rx_mon(mon_pdev->mvdev->osif_vdev,
+		mon_vdev->osif_rx_mon(mon_mac->mvdev->osif_vdev,
 				      mon_mpdu,
-				      &mon_pdev->ppdu_info.rx_status);
+				      &mon_mac->ppdu_info.rx_status);
 	} else {
 		dp_rx_mon_dest_debug("%pK: mon_mpdu=%pK monitor_vdev %pK osif_vdev %pK"
-				     , soc, mon_mpdu, mon_pdev->mvdev,
-				     (mon_pdev->mvdev ? mon_pdev->mvdev->osif_vdev
+				     , soc, mon_mpdu, mon_mac->mvdev,
+				     (mon_mac->mvdev ? mon_mac->mvdev->osif_vdev
 				     : NULL));
 		qdf_nbuf_free(mon_mpdu);
 		return QDF_STATUS_E_INVAL;
@@ -1956,19 +2384,20 @@ QDF_STATUS dp_rx_mon_deliver_non_std(struct dp_soc *soc,
 	qdf_nbuf_t dummy_msdu;
 	struct dp_mon_pdev *mon_pdev;
 	struct dp_mon_vdev *mon_vdev;
+	struct dp_mon_mac *mon_mac;
 
 	/* Sanity checking */
 	if (!pdev || !pdev->monitor_pdev)
 		goto mon_deliver_non_std_fail;
 
 	mon_pdev = pdev->monitor_pdev;
-
-	if (!mon_pdev->mvdev || !mon_pdev->mvdev ||
-	    !mon_pdev->mvdev->monitor_vdev ||
-	    !mon_pdev->mvdev->monitor_vdev->osif_rx_mon)
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+	if (!mon_mac || !mon_mac->mvdev ||
+	    !mon_mac->mvdev->monitor_vdev ||
+	    !mon_mac->mvdev->monitor_vdev->osif_rx_mon)
 		goto mon_deliver_non_std_fail;
 
-	mon_vdev = mon_pdev->mvdev->monitor_vdev;
+	mon_vdev = mon_mac->mvdev->monitor_vdev;
 	/* Generate a dummy skb_buff */
 	osif_rx_mon = mon_vdev->osif_rx_mon;
 	dummy_msdu = qdf_nbuf_alloc(soc->osdev, MAX_MONITOR_HEADER,
@@ -1979,11 +2408,11 @@ QDF_STATUS dp_rx_mon_deliver_non_std(struct dp_soc *soc,
 	qdf_nbuf_set_pktlen(dummy_msdu, 0);
 	qdf_nbuf_set_next(dummy_msdu, NULL);
 
-	mon_pdev->ppdu_info.rx_status.ppdu_id =
-		mon_pdev->ppdu_info.com_info.ppdu_id;
+	mon_mac->ppdu_info.rx_status.ppdu_id =
+		mon_mac->ppdu_info.com_info.ppdu_id;
 
 	/* Apply the radio header to this dummy skb */
-	if (!qdf_nbuf_update_radiotap(&mon_pdev->ppdu_info.rx_status, dummy_msdu,
+	if (!qdf_nbuf_update_radiotap(&mon_mac->ppdu_info.rx_status, dummy_msdu,
 				      qdf_nbuf_headroom(dummy_msdu))) {
 		DP_STATS_INC(pdev, dropped.mon_radiotap_update_err, 1);
 		qdf_nbuf_free(dummy_msdu);
@@ -1991,13 +2420,8 @@ QDF_STATUS dp_rx_mon_deliver_non_std(struct dp_soc *soc,
 	}
 
 	/* deliver to the user layer application */
-	osif_rx_mon(mon_pdev->mvdev->osif_vdev,
+	osif_rx_mon(mon_mac->mvdev->osif_vdev,
 		    dummy_msdu, NULL);
-
-	/* Clear rx_status*/
-	qdf_mem_zero(&mon_pdev->ppdu_info.rx_status,
-		     sizeof(mon_pdev->ppdu_info.rx_status));
-	mon_pdev->mon_ppdu_status = DP_PPDU_STATUS_START;
 
 	return QDF_STATUS_SUCCESS;
 

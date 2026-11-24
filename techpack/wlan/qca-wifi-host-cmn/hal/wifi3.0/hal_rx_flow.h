@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -32,6 +32,7 @@
 #define HAL_FST_HASH_MASK 0x7ffff
 #define HAL_RX_FST_ENTRY_SIZE (NUM_OF_DWORDS_RX_FLOW_SEARCH_ENTRY * 4)
 
+#define HAL_REO_DEST_IND_DROP_RING_ID	5
 /*
  * Four possible options for IP SA/DA prefix, currently use 0x0 which
  * maps to type 2 in HW spec
@@ -81,6 +82,19 @@ hal_rx_flow_setup_fse(hal_soc_handle_t hal_soc_hdl,
 		      struct hal_rx_flow *flow);
 
 /**
+ * hal_rx_flow_write_fse_metadata() - Write fse metadata
+ * @hal_soc_hdl: HAL SOC handle
+ * @fst: Pointer to the Rx Flow Search Table
+ * @table_offset: offset into the table where the flow is to be setup
+ * @flow: Flow Parameters
+ *
+ * Return: Success/Failure
+ */
+void *
+hal_rx_flow_write_fse_metadata(hal_soc_handle_t hal_soc_hdl,
+			       struct hal_rx_fst *fst, uint32_t table_offset,
+			       struct hal_rx_flow *flow);
+/**
  * hal_rx_flow_setup_cmem_fse() - Setup a flow search entry in HW CMEM FST
  * @hal_soc_hdl: HAL SOC handle
  * @cmem_ba: CMEM base address
@@ -92,6 +106,18 @@ hal_rx_flow_setup_fse(hal_soc_handle_t hal_soc_hdl,
 uint32_t
 hal_rx_flow_setup_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t cmem_ba,
 			   uint32_t table_offset, struct hal_rx_flow *flow);
+
+/**
+ * hal_rx_flow_delete_cmem_fse() - Delete flow search entry in HW CMEM FST
+ * @hal_soc_hdl: HAL SOC handle
+ * @cmem_ba: CMEM base address
+ * @table_offset: offset into the table where the flow is to be setup
+ *
+ * Return: Success if entry found valid and gets deleted
+ */
+QDF_STATUS
+hal_rx_flow_delete_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t cmem_ba,
+			    uint32_t table_offset);
 
 /**
  * hal_rx_flow_get_cmem_fse_timestamp() - Get timestamp field from CMEM FSE
@@ -226,4 +252,17 @@ void hal_rx_dump_fse_table(struct hal_rx_fst *fst);
  */
 void hal_rx_dump_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t fse_offset,
 			  int index);
+/**
+ * hal_rx_flow_cmem_update_reo_dst_ind - update reo dest indication in CMEM
+ * @hal_soc_hdl: HAL SOC handle
+ * @cmem_ba: CMEM base address
+ * @flow_idx: flow index for which CMEM update is needed
+ * @reo_dest_ind: reo destination indication
+ *
+ * Return: None
+ */
+void hal_rx_flow_cmem_update_reo_dst_ind(hal_soc_handle_t hal_soc_hdl,
+					 uint32_t cmem_ba,
+					 uint32_t flow_idx,
+					 uint8_t reo_dest_ind);
 #endif /* HAL_RX_FLOW_H */

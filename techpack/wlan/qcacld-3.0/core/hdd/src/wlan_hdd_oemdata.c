@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -42,6 +42,7 @@
 #include "wlan_osif_request_manager.h"
 #include "wlan_hdd_main.h"
 #include "wlan_hdd_sysfs.h"
+#include "wlan_pmo_wow.h"
 
 #ifdef FEATURE_OEM_DATA_SUPPORT
 #ifdef CNSS_GENL
@@ -89,7 +90,7 @@ static int populate_oem_data_cap(struct hdd_adapter *adapter,
 	if (!chan_freq_list)
 		return -ENOMEM;
 
-	strlcpy(data_cap->oem_target_signature, OEM_TARGET_SIGNATURE,
+	strscpy(data_cap->oem_target_signature, OEM_TARGET_SIGNATURE,
 		OEM_TARGET_SIGNATURE_LEN);
 	data_cap->oem_target_type = hdd_ctx->target_type;
 	data_cap->oem_fw_version = hdd_ctx->target_fw_version;
@@ -1217,6 +1218,7 @@ void hdd_oem_event_async_cb(const struct oem_data *oem_event_data)
 	hdd_exit();
 }
 
+
 void hdd_oem_event_handler_cb(const struct oem_data *oem_event_data,
 			      uint8_t vdev_id)
 {
@@ -1493,6 +1495,38 @@ int wlan_hdd_cfg80211_oem_data_handler(struct wiphy *wiphy,
 	osif_vdev_sync_op_stop(vdev_sync);
 
 	return ret;
+}
+#endif
+
+#ifdef FEATURE_SMEM_MAILBOX
+void hdd_oem_event_smem_cb(const struct oem_data *oem_event_data)
+{
+	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+	qdf_device_t qdf_dev;
+	struct wlan_hdd_link_info *link_info;
+	struct wireless_dev *wdev = NULL;
+
+	hdd_enter();
+
+	if (!hdd_ctx)
+		return;
+	qdf_dev = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
+	if (!qdf_dev)
+		return;
+
+	if (oem_event_data->file_name) {
+		hdd_copy_file_name_and_oem_data(hdd_ctx, oem_event_data);
+		return;
+	}
+
+	link_info = hdd_get_link_info_by_vdev(hdd_ctx, oem_event_data->vdev_id);
+	if (link_info)
+		wdev = &link_info->adapter->wdev;
+
+	pld_oem_event_smem_write(qdf_dev->dev, 1,
+				 (const __u8 *)oem_event_data->data,
+				 oem_event_data->data_len);
+	hdd_exit();
 }
 #endif
 #endif

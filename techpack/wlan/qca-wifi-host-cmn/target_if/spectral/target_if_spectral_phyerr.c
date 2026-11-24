@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011,2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1063,7 +1063,7 @@ target_if_populate_fft_bins_info(struct target_if_spectral *spectral,
 	bool is_fragmentation_160;
 	uint8_t spectral_fft_size;
 	uint8_t rpt_mode;
-	uint32_t num_fft_bins;
+	int num_fft_bins;
 	uint16_t start_bin;
 	uint8_t det;
 
@@ -2337,11 +2337,10 @@ target_if_spectral_get_bin_count_after_len_adj(
 				fft_bin_count >>= 1;
 			break;
 		case SPECTRAL_FFTBIN_SIZE_NO_WAR:
+			fallthrough;
+		default:
 			*fft_bin_size = 1;
 			/* No length adjustment */
-			break;
-		default:
-			return 0;
 		}
 
 		if (rpt_mode == 2 && swar->inband_fftbin_size_adj)
@@ -2374,7 +2373,7 @@ target_if_process_sfft_report_gen3(
 	if (!p_fft_report || !p_sfft || !rparams) {
 		spectral_err("null params: p_fft_report %pK p_sfft %pK rparams %pK",
 			     p_fft_report, p_sfft, rparams);
-		return 1;
+		return -EINVAL;
 	}
 
 	/*
@@ -2417,7 +2416,7 @@ target_if_process_sfft_report_gen3(
 	default:
 		spectral_err_rl("Invalid spectral report format: %d",
 				rparams->version);
-		return 1;
+		return -EINVAL;
 	}
 
 	p_sfft->fft_peak_sidx = unsigned_to_signed(peak_sidx, 11);
@@ -3175,16 +3174,7 @@ target_if_consume_sscan_summary_report_gen3(
 	padding = (struct spectral_sscan_summary_report_padding_gen3_v2 *)*data;
 
 	if (scan_radio_blanking) {
-		uint32_t blanking_tag;
-		uint8_t blanking_tag_size;
-		uint8_t blanking_tag_pos;
-
-		blanking_tag_size =
-			SSCAN_SUMMARY_REPORT_PAD_HDR_A_BLANKING_SIZE_GEN3_V2;
-		blanking_tag_pos =
-			SSCAN_SUMMARY_REPORT_PAD_HDR_A_BLANKING_POS_GEN3_V2;
-		blanking_tag = get_bitfield(padding->hdr_a, blanking_tag_size,
-					    blanking_tag_pos);
+		uint32_t blanking_tag = padding->hdr_a;
 
 		if (blanking_tag ==
 		    SSCAN_SUMMARY_REPORT_PAD_HDR_A_BLANKING_TAG_GEN3_V2)
@@ -3541,6 +3531,7 @@ target_if_consume_spectral_report_gen3(
 	QDF_STATUS ret;
 	enum spectral_scan_mode spectral_mode = SPECTRAL_SCAN_MODE_INVALID;
 	bool finite_scan = false;
+	bool is_scan_complete = false;
 	int det = 0;
 	struct sscan_detector_list *det_list;
 	struct spectral_data_stats *spectral_dp_stats;
@@ -3595,6 +3586,20 @@ target_if_consume_spectral_report_gen3(
 	/* Drop the sample if Spectral is not active for the current mode */
 	if (!p_sops->is_spectral_active(spectral, spectral_mode)) {
 		spectral_info_rl("Spectral scan is not active");
+		print_fail_msg = false;
+		goto fail_unlock;
+	}
+
+	ret = target_if_spectral_is_scan_complete(spectral, spectral_mode,
+						  &is_scan_complete);
+	if (QDF_IS_STATUS_ERROR(ret)) {
+		spectral_err_rl("Failed to check scan is completed");
+		goto fail_unlock;
+	}
+
+	/* Drop the sample if Spectral is already completed */
+	if (is_scan_complete) {
+		spectral_info_rl("Spectral scan is already done!");
 		print_fail_msg = false;
 		goto fail_unlock;
 	}
@@ -3678,12 +3683,11 @@ target_if_consume_spectral_report_gen3(
 		goto fail_unlock;
 	}
 
-	qdf_spin_unlock_bh(&spectral->spectral_lock);
 	ret = target_if_spectral_is_finite_scan(spectral, spectral_mode,
 						&finite_scan);
 	if (QDF_IS_STATUS_ERROR(ret)) {
 		spectral_err_rl("Failed to check scan is finite");
-		goto fail;
+		goto fail_unlock;
 	}
 
 	if (finite_scan) {
@@ -3691,9 +3695,10 @@ target_if_consume_spectral_report_gen3(
 							    spectral_mode);
 		if (QDF_IS_STATUS_ERROR(ret)) {
 			spectral_err_rl("Failed to update scan count");
-			goto fail;
+			goto fail_unlock;
 		}
 	}
+	qdf_spin_unlock_bh(&spectral->spectral_lock);
 
 	return 0;
 fail_unlock:

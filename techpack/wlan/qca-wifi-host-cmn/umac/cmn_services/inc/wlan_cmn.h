@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -307,6 +307,7 @@
  * @WLAN_UMAC_COMP_AFC:           AFC component
  * @WLAN_UMAC_COMP_SAWF:          SAWF component
  * @WLAN_UMAC_COMP_LL_SAP:        LL SAP component
+ * @WLAN_UMAC_COMP_MGMT_RX_SRNG:  MGMT Rx over SRNG component
  * @WLAN_UMAC_COMP_ID_MAX:        Maximum components in UMAC
  *
  * This id is static.
@@ -366,6 +367,7 @@ enum wlan_umac_comp_id {
 	WLAN_UMAC_COMP_AFC                = 50,
 	WLAN_UMAC_COMP_SAWF               = 51,
 	WLAN_UMAC_COMP_LL_SAP             = 52,
+	WLAN_UMAC_COMP_MGMT_RX_SRNG       = 53,
 	WLAN_UMAC_COMP_ID_MAX,
 };
 
@@ -642,6 +644,7 @@ enum wifi_traffic_ac {
  * @WLAN_PEER_MLO_TEMP: MLO Peer Temp (host only node)
  * @WLAN_PEER_RTT_PASN: Ranging PASN peer
  * @WLAN_PEER_MLO_BRIDGE: MLO Bridge peer
+ * @WLAN_PEER_NAN_PASN: NAN PASN peer
  */
 enum wlan_peer_type {
 	WLAN_PEER_SELF     = 1,
@@ -657,6 +660,7 @@ enum wlan_peer_type {
 	WLAN_PEER_MLO_TEMP = 11,
 	WLAN_PEER_RTT_PASN = 12,
 	WLAN_PEER_MLO_BRIDGE = 13,
+	WLAN_PEER_NAN_PASN = 14,
 };
 
 /**
@@ -744,4 +748,21 @@ enum host_edca_param_type {
 	HOST_EDCA_PARAM_TYPE_PIFS = 1,
 };
 
+/**
+ * enum ratemask_param_type - ratemask param type
+ * @RATEMASK_PARAMS_TYPE_CCK_OFDM: type CCK_OFDM
+ * @RATEMASK_PARAMS_TYPE_HT: type HT
+ * @RATEMASK_PARAMS_TYPE_VHT: type VHT
+ * @RATEMASK_PARAMS_TYPE_HE: type HE
+ * @RATEMASK_PARAMS_TYPE_EHT: type EHT
+ * @RATEMASK_PARAMS_TYPE_MAX: Max ratemask param type
+ */
+enum ratemask_param_type {
+	RATEMASK_PARAMS_TYPE_CCK_OFDM = 0,
+	RATEMASK_PARAMS_TYPE_HT = 1,
+	RATEMASK_PARAMS_TYPE_VHT = 2,
+	RATEMASK_PARAMS_TYPE_HE = 3,
+	RATEMASK_PARAMS_TYPE_EHT = 4,
+	RATEMASK_PARAMS_TYPE_MAX,
+};
 #endif /* _WLAN_OBJMGR_CMN_H_*/

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -187,18 +187,6 @@ void mlo_roam_copy_partner_info(struct mlo_partner_info *partner_info,
 				uint8_t skip_vdev_id, bool fill_all_links);
 
 /**
- * mlo_roam_init_cu_bpcc() - init cu bpcc per roam sync data
- * @vdev: vdev object
- * @sync_ind: roam sync ind pointer
- *
- * This api will be called to init cu bpcc from connect response.
- *
- * Return: none
- */
-void mlo_roam_init_cu_bpcc(struct wlan_objmgr_vdev *vdev,
-			   struct roam_offload_synch_ind *sync_ind);
-
-/**
  * mlo_roam_update_connected_links - update connected links bitmap after roaming
  *
  * @vdev: vdev pointer
@@ -278,6 +266,7 @@ mlo_get_link_mac_addr_from_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
  *
  * @vdev: vdev pointer
  * @reassoc_rsp: cm vdev reassoc rsp pointer
+ * @auth_status: auth status from roam sync event
  *
  * This api will be called to copy cm vdev reassoc rsp which will
  * be used to later bring up link vdev/s.
@@ -286,7 +275,8 @@ mlo_get_link_mac_addr_from_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
  */
 QDF_STATUS
 mlo_roam_copy_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
-			  struct wlan_cm_connect_resp *reassoc_rsp);
+			  struct wlan_cm_connect_resp *reassoc_rsp,
+			  uint32_t auth_status);
 
 /**
  * mlo_roam_link_connect_notify - Send connect req
@@ -350,6 +340,22 @@ void mlo_roam_free_copied_reassoc_rsp(struct wlan_objmgr_vdev *vdev);
 void mlo_mgr_roam_update_ap_link_info(struct wlan_objmgr_vdev *vdev,
 				      struct ml_setup_link_param *src_link_info,
 				      struct wlan_channel *channel);
+
+#ifdef WLAN_FEATURE_ROAM_OFFLOAD
+/**
+ * mlo_mgr_num_roam_links() - Get number of roaming links
+ * @vdev: VDEV object manager pointer
+ *
+ * Returns the num of links device roamed via FW roam sync event,
+ * for non-MLO VDEV the number of links is one.
+ */
+uint8_t mlo_mgr_num_roam_links(struct wlan_objmgr_vdev *vdev);
+#else
+static inline uint8_t mlo_mgr_num_roam_links(struct wlan_objmgr_vdev *vdev)
+{
+	return 0;
+}
+#endif
 
 /**
  * mlo_cm_roam_sync_cb - Callback function from CM to MLO mgr
@@ -551,11 +557,6 @@ mlo_roam_copy_partner_info(struct mlo_partner_info *partner_info,
 			   uint8_t skip_vdev_id, bool fill_all_links)
 {}
 
-static inline
-void mlo_roam_init_cu_bpcc(struct wlan_objmgr_vdev *vdev,
-			   struct roam_offload_synch_ind *sync_ind)
-{}
-
 static inline void
 mlo_roam_update_connected_links(struct wlan_objmgr_vdev *vdev,
 				struct wlan_cm_connect_resp *connect_rsp)
@@ -609,7 +610,8 @@ mlo_roam_set_link_id(struct wlan_objmgr_vdev *vdev,
 
 static inline QDF_STATUS
 mlo_roam_copy_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
-			  struct wlan_cm_connect_resp *reassoc_rsp)
+			  struct wlan_cm_connect_resp *reassoc_rsp,
+			  uint32_t auth_status)
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }
@@ -647,6 +649,11 @@ void mlo_mgr_roam_update_ap_link_info(struct wlan_objmgr_vdev *vdev,
 				      struct ml_setup_link_param *src_info,
 				      struct wlan_channel *channel)
 {}
+
+static inline uint8_t mlo_mgr_num_roam_links(struct wlan_objmgr_vdev *vdev)
+{
+	return 1;
+}
 
 static inline uint32_t
 mlo_roam_get_link_freq_from_mac_addr(struct roam_offload_synch_ind *sync_ind,

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -423,6 +423,27 @@ void wlan_son_ind_assoc_req_frm(struct wlan_objmgr_vdev *vdev,
 					      frame, frame_len,
 					      &assocstatus);
 	wlan_objmgr_peer_release_ref(peer, WLAN_SON_ID);
+}
+
+int wlan_get_multi_ap_cap(struct wlan_objmgr_vdev *vdev)
+{
+	struct wlan_objmgr_psoc *psoc;
+	struct wlan_lmac_if_rx_ops *rx_ops;
+
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc) {
+		son_err("invalid psoc");
+		return false;
+	}
+	rx_ops = wlan_psoc_get_lmac_if_rxops(psoc);
+
+	if (!rx_ops || !rx_ops->son_rx_ops.get_son_config) {
+		son_err("invalid rx ops");
+		return false;
+	}
+
+	return rx_ops->son_rx_ops.get_son_config(vdev,
+						 SIR_MAP_CAPABILITY_VAP_TYPE);
 }
 
 static int wlan_son_deliver_mlme_event(struct wlan_objmgr_vdev *vdev,
@@ -1405,4 +1426,52 @@ wlan_son_vdev_get_supported_txrx_streams(struct wlan_objmgr_vdev *vdev,
 	*num_rx_streams = nss_cfg->rx_nss[band];
 
 	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+wlan_son_del_ast(struct wlan_objmgr_vdev *vdev,
+		 struct qdf_mac_addr *wds_macaddr,
+		 struct qdf_mac_addr *peer_macaddr)
+{
+	ol_txrx_soc_handle soc;
+	bool ast_entry_found;
+	struct cdp_ast_entry_info wds_ast_entry = {0};
+	uint16_t peer_id;
+
+	soc = wlan_psoc_get_dp_handle(wlan_vdev_get_psoc(vdev));
+	if (!soc) {
+		son_err("failed to get soc");
+		return QDF_STATUS_E_FAILURE;
+	}
+	son_debug("wds " QDF_MAC_ADDR_FMT " , peer " QDF_MAC_ADDR_FMT,
+		  QDF_MAC_ADDR_REF(wds_macaddr->bytes),
+		  QDF_MAC_ADDR_REF(peer_macaddr->bytes));
+
+	ast_entry_found = cdp_peer_get_ast_info_by_soc(
+				soc, wds_macaddr->bytes,
+				&wds_ast_entry);
+
+	if (!ast_entry_found) {
+		son_err("wds ast_entry not found");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	son_debug("wds ast type %d, peer_id %d",
+		  wds_ast_entry.type, wds_ast_entry.peer_id);
+
+	peer_id = cdp_get_peer_id(soc, CDP_VDEV_ALL, peer_macaddr->bytes);
+	if (peer_id == HTT_INVALID_PEER) {
+		son_err("peer " QDF_MAC_ADDR_FMT " not found",
+			QDF_MAC_ADDR_REF(peer_macaddr->bytes));
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	son_debug("peer " QDF_MAC_ADDR_FMT " found peer_id %u",
+		  QDF_MAC_ADDR_REF(peer_macaddr->bytes), peer_id);
+
+	if ((wds_ast_entry.type == CDP_TXRX_AST_TYPE_WDS) &&
+	    (wds_ast_entry.peer_id == peer_id))
+		return cdp_peer_ast_delete_by_soc(soc, wds_macaddr->bytes,
+						  NULL, NULL);
+	return QDF_STATUS_E_FAILURE;
 }

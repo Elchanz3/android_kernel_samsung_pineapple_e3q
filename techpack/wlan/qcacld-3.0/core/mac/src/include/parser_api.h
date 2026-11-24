@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -89,6 +89,12 @@ struct sAvoidChannelIE {
 	uint8_t channel;
 };
 #endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
+
+/*
+ * Host driver uses TBTT info of length 13
+ * in the RNR IE for legacy SAPs.
+ */
+#define CURRENT_RNR_TBTT_INFO_LEN 13
 
 typedef struct sSirCountryInformation {
 	uint8_t countryString[COUNTRY_STRING_LENGTH];
@@ -391,7 +397,18 @@ typedef struct sSirAssocReq {
 	tDot11fIEeht_cap eht_cap;
 	bool is_sae_authenticated;
 	struct mlo_partner_info mlo_info;
+	struct wlan_mlo_eml_cap eml_info;
+	struct wlan_mlo_mld_cap mld_info;
 	uint8_t mld_mac[QDF_MAC_ADDR_SIZE];
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+	tDot11fIEfils_session fils_session;
+	tDot11fIEfils_key_confirmation fils_key_auth;
+	tDot11fIEfils_kde fils_kde;
+	struct qdf_mac_addr dst_mac;
+	struct qdf_mac_addr src_mac;
+	uint16_t hlp_data_len;
+	uint8_t hlp_data[FILS_MAX_HLP_DATA_LEN];
+#endif
 } tSirAssocReq, *tpSirAssocReq;
 
 #define FTIE_SUBELEM_R1KH_ID 1
@@ -545,8 +562,8 @@ typedef struct sSirEseBcnReportMandatoryIe {
  * This structure is used to encode/decode the byte array present in
  * dot11f IE structure.
  */
-
 struct s_ext_cap {
+	/* octet 1 */
 	uint8_t bss_coexist_mgmt_support:1;
 	uint8_t reserved1:1;
 	uint8_t ext_chan_switch:1;
@@ -555,6 +572,7 @@ struct s_ext_cap {
 	uint8_t reserved3:1;
 	uint8_t spsmp_cap:1;
 	uint8_t event:1;
+	/* octet 2 */
 	uint8_t diagnostics:1;
 	uint8_t multi_diagnostics:1;
 	uint8_t loc_tracking:1;
@@ -563,6 +581,7 @@ struct s_ext_cap {
 	uint8_t co_loc_intf_reporting:1;
 	uint8_t civic_loc:1;
 	uint8_t geospatial_loc:1;
+	/* octet 3 */
 	uint8_t tfs:1;
 	uint8_t wnm_sleep_mode:1;
 	uint8_t tim_broadcast:1;
@@ -571,6 +590,7 @@ struct s_ext_cap {
 	uint8_t ac_sta_cnt:1;
 	uint8_t multi_bssid:1;
 	uint8_t timing_meas:1;
+	/* octet 4 */
 	uint8_t chan_usage:1;
 	uint8_t ssid_list:1;
 	uint8_t dms:1;
@@ -579,6 +599,7 @@ struct s_ext_cap {
 	uint8_t tdls_peer_psm_supp:1;
 	uint8_t tdls_channel_switching:1;
 	uint8_t interworking_service:1;
+	/* octet 5 */
 	uint8_t qos_map:1;
 	uint8_t ebr:1;
 	uint8_t sspn_interface:1;
@@ -587,12 +608,14 @@ struct s_ext_cap {
 	uint8_t tdls_support:1;
 	uint8_t tdls_prohibited:1;
 	uint8_t tdls_chan_swit_prohibited:1;
+	/* octet 6 */
 	uint8_t reject_unadmitted_traffic:1;
 	uint8_t service_interval_granularity:3;
 	uint8_t identifier_loc:1;
 	uint8_t uapsd_coexistence:1;
 	uint8_t wnm_notification:1;
 	uint8_t qa_bcapbility:1;
+	/* octet 7 */
 	uint8_t utf8_ssid:1;
 	uint8_t qmf_activated:1;
 	uint8_t qm_frecon_act:1;
@@ -601,6 +624,7 @@ struct s_ext_cap {
 	uint8_t mesh_gcr:1;
 	uint8_t scs:1;
 	uint8_t q_load_report:1;
+	/* octet 8 */
 	uint8_t alternate_edca:1;
 	uint8_t unprot_txo_pneg:1;
 	uint8_t prot_txo_pneg:1;
@@ -609,6 +633,7 @@ struct s_ext_cap {
 	uint8_t tdls_wider_bw:1;
 	uint8_t oper_mode_notification:1;
 	uint8_t max_num_of_msdu_bit1:1;
+	/* octet 9 */
 	uint8_t max_num_of_msdu_bit2:1;
 	uint8_t chan_sch_mgmt:1;
 	uint8_t geo_db_inband_en_signal:1;
@@ -617,6 +642,7 @@ struct s_ext_cap {
 	uint8_t chan_avail_query:1;
 	uint8_t fine_time_meas_responder:1;
 	uint8_t fine_time_meas_initiator:1;
+	/* octet 10 */
 	uint8_t fils_capability:1;
 	uint8_t ext_spectrum_management:1;
 	uint8_t future_channel_guidance:1;
@@ -624,8 +650,18 @@ struct s_ext_cap {
 	uint8_t twt_requestor_support:1;
 	uint8_t twt_responder_support:1;
 	uint8_t reserved8: 1;
+	/* octet 11 */
 	uint8_t reserved9: 4;
 	uint8_t beacon_protection_enable: 1;
+	uint8_t reserved10: 3;
+	/* octet 12 */
+	uint8_t reserved12;
+	/* octet 13 */
+	uint8_t dmg_loc_supp_aps:1;
+	uint8_t i2r_lmr_feedback_policy:1;
+	uint8_t reserved13:6;
+	/* Octet 14 */
+	uint8_t cap_notif_support: 1;
 };
 
 void swap_bit_field16(uint16_t in, uint16_t *out);
@@ -644,8 +680,10 @@ sir_convert_probe_frame2_struct(struct mac_context *mac, uint8_t *frame,
 
 enum wlan_status_code
 sir_convert_assoc_req_frame2_struct(struct mac_context *mac,
+				    struct pe_session *session,
 				    uint8_t *frame, uint32_t len,
-				    tpSirAssocReq assoc);
+				    tpSirAssocReq assoc,
+				    tSirMacAddr peer_mac_addr);
 /**
  * wlan_parse_ftie_sha384() - Parse the FT IE if akm uses sha384 KDF
  * @frame: Pointer to the association response frame
@@ -658,6 +696,20 @@ sir_convert_assoc_req_frame2_struct(struct mac_context *mac,
 QDF_STATUS
 wlan_parse_ftie_sha384(uint8_t *frame, uint32_t frame_len,
 		       struct sSirAssocRsp *assoc_rsp);
+
+/**
+ * wlan_parse_wmm_params() - API to parse WMM params from the frame.
+ * @frame: Pointer to IEs section of the beacon/probe resp frame
+ * @frame_len: Length of @frame buffer
+ * @wmm_params: Pointer to save parsed WMM params.
+ *
+ * The API will look for Vendor OUI containing WMM params and converts
+ * the IE data to internal data structure at @wmm_params.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS wlan_parse_wmm_params(const uint8_t *frame, uint32_t frame_len,
+				 tDot11fIEWMMParams *wmm_params);
 
 QDF_STATUS
 sir_convert_assoc_resp_frame2_struct(struct mac_context *mac,
@@ -722,23 +774,23 @@ sir_convert_meas_req_frame2_struct(struct mac_context *, uint8_t *,
 #endif
 
 /**
- * \brief Populated a tDot11fFfCapabilities
+ * populate_dot11f_capabilities() -Populated a tDot11fFfCapabilities
+ * @mac: Pointer to the global MAC data structure
+ * @pDot11f: Address of a tDot11fFfCapabilities to be filled in
+ * @pe_session: pe session pointer
+ * @update_cu: flag for critical update
  *
- * \param mac Pointer to the global MAC data structure
- *
- * \param pDot11f Address of a tDot11fFfCapabilities to be filled in
- *
- *
- * \note If SIR_MAC_PROP_CAPABILITY_11EQOS is enabled, we'll clear the QOS
+ * If SIR_MAC_PROP_CAPABILITY_11EQOS is enabled, we'll clear the QOS
  * bit in pDot11f
  *
- *
+ * Return: QDF_STATUS
  */
 
 QDF_STATUS
 populate_dot11f_capabilities(struct mac_context *mac,
 			tDot11fFfCapabilities *pDot11f,
-			struct pe_session *pe_session);
+			struct pe_session *pe_session,
+			bool update_cu);
 /**
  * populate_dot11f_max_chan_switch_time() - populate max chan switch time
  * @mac: pointer to mac
@@ -781,6 +833,7 @@ populate_dot_11_f_ext_chann_switch_ann(struct mac_context *mac_ptr,
 
 void
 populate_dot11f_tx_power_env(struct mac_context *mac,
+			     struct pe_session *session,
 			     tDot11fIEtransmit_power_env *pDot11f,
 			     enum phy_ch_width ch_width, uint32_t chan_freq,
 			     uint16_t *num_tpe, bool is_ch_switch);
@@ -962,6 +1015,15 @@ populate_dot11f_ssid(struct mac_context *mac,
 /* / Populate a tDot11fIESSID from CFG */
 QDF_STATUS populate_dot11f_ssid2(struct pe_session *pe_session,
 				tDot11fIESSID *pDot11f);
+
+/* / Populate a lci measurement request in Neighbor report request */
+void
+populate_dot11f_lci(tDot11fIEMeasurementRequest *MeasurementRequest);
+
+/* / Populate a civic measurement request in Neighbor report request */
+void
+populate_dot11f_civic(tDot11fIEMeasurementRequest *MeasurementRequest);
+
 
 /**
  * \brief Populate a tDot11fIESchedule
@@ -1239,6 +1301,31 @@ static inline void populate_dot11f_fils_params(struct mac_context *mac_ctx,
 { }
 #endif
 
+#ifdef WLAN_FEATURE_FILS_SK_SAP
+/**
+ * populate_dot11f_fils_params_assoc_rsp() - Populate FILS IE to frame
+ * @mac_ctx: global mac context
+ * @frm: Assoc request frame
+ * @pe_session: PE session
+ * @peer_mac_addr: Mac address for Peer
+ *
+ * This API is used to populate FILS IE to Association response
+ *
+ * Return: None
+ */
+void populate_dot11f_fils_params_assoc_rsp(struct mac_context *mac_ctx,
+					   tDot11fAssocResponse * frm,
+					   struct pe_session *pe_session,
+					   tSirMacAddr peer_mac_addr);
+#else
+static inline void
+populate_dot11f_fils_params_assoc_rsp(struct mac_context *mac_ctx,
+				      tDot11fAssocResponse *frm,
+				      struct pe_session *pe_session,
+				      tSirMacAddr peer_mac_addr)
+{ }
+#endif
+
 QDF_STATUS
 populate_dot11f_operating_mode(struct mac_context *mac,
 			tDot11fIEOperatingMode *pDot11f,
@@ -1489,32 +1576,37 @@ QDF_STATUS populate_dot11f_tdls_mgmt_mlo_ie(struct mac_context *mac_ctx,
  * @mac_ctx: Global MAC context
  * @session: PE session
  * @dot11f: tDot11fIEreduced_neighbor_report to be filled
+ * @num_rnr: rnr entry size
  *
  * Return: void
  */
 void populate_dot11f_mlo_rnr(struct mac_context *mac_ctx,
 			     struct pe_session *pe_session,
-			     tDot11fIEreduced_neighbor_report *dot11f);
+			     tDot11fIEreduced_neighbor_report *dot11f,
+			     uint16_t *num_rnr);
 
 /**
  * populate_dot11f_rnr_tbtt_info_16() - populate rnr with tbtt_info length 16
  * @mac_ctx: pointer to mac_context
  * @pe_session: pe session
  * @rnr_session: session to populate in rnr ie
- * @dot11f: tDot11fIEreduced_neighbor_report to be filled
+ * @dot11f_out: tDot11fIEreduced_neighbor_report to be filled
+ * @dot11f_in: tDot11fIEreduced_neighbor_report input parameter
  *
  * Return: void
  */
 void populate_dot11f_rnr_tbtt_info_16(struct mac_context *mac_ctx,
 				      struct pe_session *pe_session,
 				      struct pe_session *rnr_session,
-				      tDot11fIEreduced_neighbor_report *dot11f);
+				      tDot11fIEreduced_neighbor_report *dot11f_out,
+				      tDot11fIEreduced_neighbor_report *dot11f_in);
 
 #else
 static inline void populate_dot11f_mlo_rnr(
 				struct mac_context *mac_ctx,
 				struct pe_session *pe_session,
-				tDot11fIEreduced_neighbor_report *dot11f)
+				tDot11fIEreduced_neighbor_report *dot11f,
+				uint16_t *num_rnr)
 {
 }
 
@@ -1522,7 +1614,8 @@ static inline void populate_dot11f_rnr_tbtt_info_16(
 			struct mac_context *mac_ctx,
 			struct pe_session *pe_session,
 			struct pe_session *rnr_session,
-			tDot11fIEreduced_neighbor_report *dot11f)
+			tDot11fIEreduced_neighbor_report *dot11f_out,
+			tDot11fIEreduced_neighbor_report *dot11f_in)
 {
 }
 #endif /* WLAN_FEATURE_11BE_MLO */
@@ -1600,6 +1693,7 @@ void lim_ieee80211_pack_ehtcap(uint8_t *ie, tDot11fIEeht_cap dot11f_eht_cap,
  * @dot11f_eht_cap: output pointer to dot11f EHT capabilities IE structure
  * @dot11f_he_cap: dot11f HE capabilities IE structure
  * @freq: frequency
+ * @is_eht_cap_from_sta: Is the IE received from non-AP STA device.
  *
  * This API is used to strip and decode EHT caps IE which is of variable in
  * length depending on the HE capabilities IE content.
@@ -1609,7 +1703,8 @@ void lim_ieee80211_pack_ehtcap(uint8_t *ie, tDot11fIEeht_cap dot11f_eht_cap,
 QDF_STATUS lim_strip_and_decode_eht_cap(uint8_t *ie, uint16_t ie_len,
 					tDot11fIEeht_cap *dot11f_eht_cap,
 					tDot11fIEhe_cap dot11f_he_cap,
-					uint16_t freq);
+					uint16_t freq,
+					bool is_eht_cap_from_sta);
 
 /**
  * lim_ieee80211_pack_ehtop() - Pack EHT Operations IE
@@ -1648,7 +1743,22 @@ QDF_STATUS lim_strip_and_decode_eht_op(uint8_t *ie, uint16_t ie_len,
 				       tDot11fIEVHTOperation dot11f_vht_op,
 				       tDot11fIEhe_op dot11f_he_op,
 				       tDot11fIEHTInfo dot11f_ht_info);
-
+/**
+ * lim_strip_and_decode_tpe_ie(): API to decode TPE IE
+ * @ie: pointer to IE
+ * @ie_len: length of IE
+ * @transmit_power_env: pointer to dot11f TPE IE structure
+ * @num_transmit_power_env: number of TPE IE
+ *
+ * This API is used to strip and decode TPE IE which is of variable length
+ * depending on the bandwidth.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+lim_strip_and_decode_tpe_ie(uint8_t *ie, uint16_t ie_len,
+			    tDot11fIEtransmit_power_env *transmit_power_env,
+			    uint16_t *num_transmit_power_env);
 #else
 static inline QDF_STATUS
 populate_dot11f_eht_caps(struct mac_context *mac_ctx,
@@ -1693,7 +1803,8 @@ static inline
 QDF_STATUS lim_strip_and_decode_eht_cap(uint8_t *ie, uint16_t ie_len,
 					tDot11fIEeht_cap *dot11f_eht_cap,
 					tDot11fIEhe_cap dot11f_he_cap,
-					uint16_t freq)
+					uint16_t freq,
+					bool is_eht_cap_from_sta)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -1712,6 +1823,14 @@ QDF_STATUS lim_strip_and_decode_eht_op(uint8_t *ie, uint16_t ie_len,
 				       tDot11fIEVHTOperation dot11f_vht_op,
 				       tDot11fIEhe_op dot11f_he_op,
 				       tDot11fIEHTInfo dot11f_ht_info)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+lim_strip_and_decode_tpe_ie(uint8_t *ie, uint16_t ie_len,
+			    tDot11fIEtransmit_power_env *transmit_power_env,
+			    uint16_t *num_transmit_power_env)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -1771,6 +1890,20 @@ QDF_STATUS populate_dot11f_mlo_ie(struct mac_context *mac_ctx,
 QDF_STATUS populate_dot11f_btm_extended_caps(struct mac_context *mac_ctx,
 					     struct pe_session *pe_session,
 					     struct sDot11fIEExtCap *dot11f);
+
+/**
+ * populate_dot11f_reg_connectivity() - Populate Non-AP STA regulatory
+ * connectivity capabilities
+ * @mac_ctx: Global MAC context.
+ * @dot11f: Pointer to the capabilities of the session.
+ *
+ * Populate Non-AP STA's regulatory connectivity capability with Indoor, SP AP.
+ *
+ * Return: QDF_STATUS Success or Failure
+ */
+QDF_STATUS
+populate_dot11f_reg_connectivity(struct mac_context *mac_ctx,
+				 tDot11fIEreg_connect *dot11f);
 
 /**
  * lim_truncate_ppet: truncates ppet of trailing zeros
@@ -1873,26 +2006,31 @@ dot11f_parse_assoc_rsp_mlo_partner_info(struct pe_session *pe_session,
  * @mac_ctx: MAC context
  * @session: reporting session
  * @dot11f: pointer to tDot11fIEreduced_neighbor_report to fill
+ * @num_rnr: number of rnr ie's included
  *
  * Return: none
  */
 void populate_dot11f_6g_rnr(struct mac_context *mac_ctx,
 			    struct pe_session *session,
-			    tDot11fIEreduced_neighbor_report *dot11f);
+			    tDot11fIEreduced_neighbor_report *dot11f,
+			    uint16_t *num_rnr);
 
 /**
- * populate_dot11f_rnr_tbtt_info_7() - populate rnr with tbtt_info length 7
+ * populate_dot11f_rnr_tbtt_info() - populate rnr for the tbtt_len specified
  * @mac_ctx: pointer to mac_context
  * @pe_session: pe session
  * @rnr_session: session to populate in rnr ie
  * @dot11f: tDot11fIEreduced_neighbor_report to be filled
+ * @tbtt_len: length of the TBTT params
  *
- * Return: none
+ * Return: QDF STATUS
  */
-void populate_dot11f_rnr_tbtt_info_7(struct mac_context *mac_ctx,
-				     struct pe_session *pe_session,
-				     struct pe_session *rnr_session,
-				     tDot11fIEreduced_neighbor_report *dot11f);
+QDF_STATUS
+populate_dot11f_rnr_tbtt_info(struct mac_context *mac_ctx,
+			      struct pe_session *pe_session,
+			      struct pe_session *rnr_session,
+			      tDot11fIEreduced_neighbor_report *dot11f,
+			      uint8_t tbtt_len);
 
 /**
  * populate_dot11f_edca_pifs_param_set() - populate edca/pifs param ie
@@ -1920,4 +2058,24 @@ void populate_dot11f_edca_pifs_param_set(
 QDF_STATUS populate_dot11f_bcn_prot_extcaps(struct mac_context *mac_ctx,
 					    struct pe_session *pe_session,
 					    tDot11fIEExtCap *dot11f);
+
+#ifdef WLAN_FEATURE_LL_LT_SAP
+/**
+ * populate_dot11f_ecsa_param_set() - populate ecsa action frame for ll_sap
+ * @vdev: vdev object
+ * @qcn_ie: qcn ie pointer
+ *
+ * Return: None
+ */
+void populate_dot11f_ecsa_param_set_for_ll_sap(
+			struct wlan_objmgr_vdev *vdev,
+			tDot11fIEqcn_ie *qcn_ie);
+#else
+static inline
+void populate_dot11f_ecsa_param_set_for_ll_sap(
+			struct wlan_objmgr_vdev *vdev,
+			tDot11fIEqcn_ie *qcn_ie)
+{
+}
+#endif
 #endif /* __PARSE_H__ */

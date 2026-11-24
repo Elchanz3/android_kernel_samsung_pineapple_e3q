@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -89,7 +89,7 @@ struct app_reg_rsp_vdev_info {
  */
 struct wifi_app_reg_rsp {
 	uint8_t num_inf;
-	struct app_reg_rsp_vdev_info vdevs[1];
+	QDF_FLEX_ARRAY(struct app_reg_rsp_vdev_info, vdevs);
 } qdf_packed;
 
 /**
@@ -222,6 +222,8 @@ typedef void (*wifi_pos_send_rsp_handler)(struct wlan_objmgr_psoc *, uint32_t,
  * @pasn_peer_create_cb: PASN peer create callback
  * @pasn_peer_delete_cb: PASN peer delete callback
  * @pasn_vdev_delete_resume_cb: PASN resume vdev delete callback
+ * @get_rsta_11az_ranging_cap: Get RSTA 11az ranging capability
+ * @get_rsta_sec_ltf_cap: Get RSTA secure LTF capability
  */
 struct wifi_pos_legacy_ops {
 	QDF_STATUS (*pasn_peer_create_cb)(struct wlan_objmgr_psoc *psoc,
@@ -232,6 +234,8 @@ struct wifi_pos_legacy_ops {
 					  uint8_t vdev_id,
 					  bool no_fw_peer_delete);
 	QDF_STATUS (*pasn_vdev_delete_resume_cb)(struct wlan_objmgr_vdev *vdev);
+	uint32_t (*get_rsta_11az_ranging_cap)(struct wlan_objmgr_psoc *psoc);
+	bool (*get_rsta_sec_ltf_cap)(struct wlan_objmgr_psoc *psoc);
 };
 
 /**
@@ -316,7 +320,7 @@ struct wifi_pos_psoc_priv_obj {
 	qdf_spinlock_t wifi_pos_lock;
 	bool oem_6g_support_disable;
 	bool enable_rsta_secure_ltf_support;
-	bool enable_rsta_11az_ranging;
+	uint32_t enable_rsta_11az_ranging;
 	struct wifi_pos_legacy_ops *legacy_ops;
 	QDF_STATUS (*wifi_pos_req_handler)(struct wlan_objmgr_psoc *psoc,
 				    struct wifi_pos_req_msg *req);

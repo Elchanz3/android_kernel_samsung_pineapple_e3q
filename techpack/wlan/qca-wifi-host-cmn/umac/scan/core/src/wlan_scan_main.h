@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -166,10 +166,15 @@ struct probe_time_dwell_time {
 #define PASSIVE_DWELL_TIME_BT_A2DP_ENABLED 28
 
 /* Aux Scan Flags */
-#define SCAN_FLAG_EXT_AUX_LOW_POWER_SCAN	0x0000020000
-#define SCAN_FLAG_EXT_AUX_LOW_LATENCY_SCAN	0x0000040000
-#define SCAN_FLAG_EXT_AUX_FAST_SCAN		0x0000080000
-#define SCAN_FLAG_EXT_AUX_RELIABLE_SCAN		0x0000100000
+#define SCAN_FLAG_EXT_AUX_LOW_LATENCY_SCAN	0x00008000
+#define SCAN_FLAG_EXT_AUX_RELIABLE_SCAN		0x00010000
+#define SCAN_FLAG_EXT_AUX_LOW_POWER_SCAN	0x00040000
+#define SCAN_FLAG_EXT_AUX_FAST_SCAN		0x00020000
+
+#define SCAN_FLAG_EXT_STOP_IF_BSSID_FOUND	0x00080000
+
+/* Indicate to use STA vdev for P2P scan */
+#define SCAN_FLAG_EXT_P2P_SCAN                  0x00100000
 
 /**
  * struct cb_handler - defines scan event handler
@@ -186,10 +191,13 @@ struct cb_handler {
  * struct pdev_scan_ev_handler - pdev scan event handlers
  * @handler_cnt: number of valid entries in @cb_handler
  * @cb_handlers: array of registered scan handlers
+ * @cached_scan_ev_handler: Callback to handle cached scan report from FW.
  */
 struct pdev_scan_ev_handler {
 	uint32_t handler_cnt;
 	struct cb_handler cb_handlers[MAX_SCAN_EVENT_HANDLERS_PER_PDEV];
+	QDF_STATUS (*cached_scan_ev_handler)(struct wlan_objmgr_pdev *pdev,
+					     void *cached_scan_report);
 };
 
 /**
@@ -237,12 +245,14 @@ struct pdev_scan_info {
  * @pno_in_progress: pno in progress
  * @scan_disabled: if scan is disabled for this vdev
  * @first_scan_done: Whether its the first scan or not for this particular vdev.
+ * @is_obbs_scan_enabled: flag to check if obss scan is enabled
  */
 struct scan_vdev_obj {
 	bool pno_match_evt_received;
 	bool pno_in_progress;
 	uint32_t scan_disabled;
-	bool first_scan_done;
+	bool first_scan_done;;
+	bool is_obbs_scan_enabled;
 };
 
 #ifdef FEATURE_WLAN_SCAN_PNO
@@ -408,6 +418,8 @@ struct extscan_def_config {
  * @scan_ev_resumed: notify scan resumed event
  * @scan_events: variable to read and set scan_ev_* flags in one shot
  *               can be used to dump all scan_ev_* flags for debug
+ * @scan_cache_report_max_time_in_sec: Max value for scan cache report
+ *                                     in seconds
  */
 struct scan_default_params {
 	uint32_t active_dwell;
@@ -507,6 +519,7 @@ struct scan_default_params {
 		};
 		uint32_t scan_events;
 	};
+	uint64_t scan_cache_report_max_time_in_sec;
 };
 
 /**
@@ -972,4 +985,45 @@ QDF_STATUS wlan_scan_vdev_created_notification(struct wlan_objmgr_vdev *vdev,
 QDF_STATUS wlan_scan_vdev_destroyed_notification(struct wlan_objmgr_vdev *vdev,
 	void *arg_list);
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+/**
+ * scm_scan_get_cached_scan_report_fw_cap() - API to get FW capability to
+ * send cached scan report.
+ * @pdev: PDEV object manager.
+ *
+ * Return: True if FW supports else return false.
+ */
+bool scm_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * scm_scan_request_cached_scan_report() - API to send cache scan report request
+ * command to FW.
+ * @pdev: PDEV object manager.
+ *
+ * The API send command to FW to get the cached scan report of scan entries
+ * received while device in WOW.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS scm_scan_request_cached_scan_report(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * scm_scan_cached_scan_report_ev_handler() - Process the event data from FW
+ * for cached scan report.
+ * @pdev: PDEV object manager.
+ * @cached_scan_report: Pointer to extracted scan report
+ *
+ * Calls wrapper API to handle the FW data. Callee to consume the data.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS scm_scan_cached_scan_report_ev_handler(struct wlan_objmgr_pdev *pdev,
+						  void *cached_scan_report);
+#else
+static inline bool
+scm_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev)
+{
+	return false;
+}
+#endif
 #endif

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -283,7 +283,10 @@ struct tgt_info {
  * @ema_init: Initialize Enhanced MBSSID advertisement feature
  * @mlo_capable: Checks if the SoC is MLO capable
  * @mlo_get_group_id: Get the MLO group id of the SoC
+ * @mlo_get_chip_id: Get the MLO chip id of the SoC
+ * @mlo_is_shmem_capable: Check if the MLO group is SHMEM capable or not
  * @mlo_setup_done_event: MLO setup sequence complete event handler
+ * @wifi_radar_support_enable: wifi radar support enable
  */
 struct target_ops {
 	QDF_STATUS (*ext_resource_config_enable)
@@ -350,8 +353,15 @@ struct target_ops {
 #if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_MLO_MULTI_CHIP)
 	bool (*mlo_capable)(struct wlan_objmgr_psoc *psoc);
 	uint8_t (*mlo_get_group_id)(struct wlan_objmgr_psoc *psoc);
+	uint8_t (*mlo_get_chip_id)(struct wlan_objmgr_psoc *psoc);
+	bool (*mlo_is_shmem_capable)(struct wlan_objmgr_psoc *psoc,
+				     uint8_t grp_id, uint8_t chip_id);
 	void (*mlo_setup_done_event)(struct wlan_objmgr_psoc *psoc);
 #endif
+	void (*wifi_radar_support_enable)(struct wlan_objmgr_psoc *psoc,
+					  struct target_psoc_info *tgt_hdl,
+					  uint8_t *event);
+
 };
 
 /**
@@ -2125,6 +2135,28 @@ static inline void target_if_cfr_support_enable(struct wlan_objmgr_psoc *psoc,
 }
 
 /**
+ * target_if_wifi_radar_support_enable() - Enable wifi radar support
+ * @psoc:  psoc object
+ * @tgt_hdl: target_psoc_info pointer
+ * @evt_buf: Event buffer received from FW
+ *
+ * API to enable wifi radar support
+ *
+ * Return: none
+ */
+static inline void
+target_if_wifi_radar_support_enable(struct wlan_objmgr_psoc *psoc,
+				    struct target_psoc_info *tgt_hdl,
+				    uint8_t *evt_buf)
+{
+	if ((tgt_hdl->tif_ops) &&
+	    (tgt_hdl->tif_ops->wifi_radar_support_enable))
+		tgt_hdl->tif_ops->wifi_radar_support_enable(psoc,
+							    tgt_hdl,
+							    evt_buf);
+}
+
+/**
  * target_if_set_pktlog_checksum() - Set pktlog checksum
  * @pdev: pdev object
  * @tgt_hdl: target_psoc_info pointer
@@ -2612,6 +2644,24 @@ uint16_t target_if_res_cfg_get_num_max_mlo_link(struct target_psoc_info *tgt_hdl
 }
 #endif
 
+#ifdef WLAN_FEATURE_MULTI_LINK_SAP
+static inline
+uint32_t target_psoc_get_mlo_sap_support_link(struct target_psoc_info *tgt_hdl)
+{
+	if (!tgt_hdl)
+		return 0;
+
+	return tgt_hdl->info.service_ext2_param.
+			num_max_mlo_link_per_ml_sap_supp;
+}
+#else
+static inline
+uint32_t target_psoc_get_mlo_sap_support_link(struct target_psoc_info *tgt_hdl)
+{
+	return 0;
+}
+#endif
+
 #ifdef WLAN_SUPPORT_TWT
 #ifdef WLAN_TWT_AP_PDEV_COUNT_NUM_PHY
 static inline void target_if_set_twt_ap_pdev_count
@@ -2911,6 +2961,39 @@ void target_psoc_set_twt_ack_cap(struct target_psoc_info *psoc_info, bool val)
 }
 
 /**
+ * target_psoc_set_twt_wake_dur_and_intvl() - Set twt min-max wake duration
+ * and wake interval supported by firmware
+ *
+ * @psoc_info: Pointer to struct target_psoc_info.
+ * @min_wake_dur: minimum wake duration supported by firmware in microsec
+ * @max_wake_dur: maximum wake duration supported by firmware in microsec
+ * @min_wake_intvl: minimum wake interval supported by firmware in microsec
+ * @max_wake_intvl: maximum wake interval supported by firmware in microsec
+ *
+ * Return: None
+ *
+ */
+static inline
+void target_psoc_set_twt_wake_dur_and_intvl(struct target_psoc_info *psoc_info,
+					    uint16_t min_wake_dur,
+					    uint16_t max_wake_dur,
+					    uint16_t min_wake_intvl,
+					    uint16_t max_wake_intvl)
+{
+	if (!psoc_info)
+		return;
+
+	psoc_info->info.service_ext2_param.twt_wake_dur_and_intvl.min_wake_dur =
+								min_wake_dur;
+	psoc_info->info.service_ext2_param.twt_wake_dur_and_intvl.max_wake_dur =
+								max_wake_dur;
+	psoc_info->info.service_ext2_param.twt_wake_dur_and_intvl.min_wake_intvl =
+								min_wake_intvl;
+	psoc_info->info.service_ext2_param.twt_wake_dur_and_intvl.max_wake_intvl =
+								max_wake_intvl;
+}
+
+/**
  * target_psoc_get_twt_ack_cap() - Get twt ack capability
  *
  * @psoc_info: Pointer to struct target_psoc_info.
@@ -3047,6 +3130,7 @@ static inline void target_if_set_reo_shared_qref_feature(struct wlan_objmgr_psoc
 
 	if (target_psoc_get_target_type(tgt_hdl) == TARGET_TYPE_QCN9224 ||
 	    target_psoc_get_target_type(tgt_hdl) == TARGET_TYPE_QCA5332 ||
+	    target_psoc_get_target_type(tgt_hdl) == TARGET_TYPE_QCA5424 ||
 	    target_psoc_get_target_type(tgt_hdl) == TARGET_TYPE_QCN6432)
 		info->wlan_res_cfg.reo_qdesc_shared_addr_table_enabled = true;
 	else

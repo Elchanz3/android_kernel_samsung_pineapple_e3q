@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -210,7 +210,7 @@ error:
 			pe_session = NULL;
 		}
 	}
-	lim_send_sme_join_reassoc_rsp(mac, eWNI_SME_REASSOC_RSP, resultCode,
+	lim_send_sme_join_reassoc_rsp(mac, true, resultCode,
 		protStatusCode, pe_session, smesessionId);
 }
 
@@ -300,7 +300,7 @@ void lim_process_mlm_reassoc_cnf(struct mac_context *mac_ctx, uint32_t *msg_buf)
 
 		/* Need to send Reassoc rsp with Reassoc success to Host. */
 		lim_send_sme_join_reassoc_rsp(
-					mac_ctx, eWNI_SME_REASSOC_RSP,
+					mac_ctx, true,
 					lim_mlm_reassoc_cnf->resultCode,
 					lim_mlm_reassoc_cnf->protStatusCode,
 					session, session->smeSessionId);
@@ -312,7 +312,7 @@ void lim_process_mlm_reassoc_cnf(struct mac_context *mac_ctx, uint32_t *msg_buf)
 		 * so that disconnect can be initiated.
 		 */
 		lim_send_sme_join_reassoc_rsp(
-					mac_ctx, eWNI_SME_REASSOC_RSP,
+					mac_ctx, true,
 					lim_mlm_reassoc_cnf->resultCode,
 					lim_mlm_reassoc_cnf->protStatusCode,
 					session, session->smeSessionId);
@@ -367,7 +367,7 @@ QDF_STATUS lim_sta_reassoc_error_handler(struct reassoc_params *param)
 
 		/* Need to send Reassoc rsp with Assoc failure to Host. */
 		lim_send_sme_join_reassoc_rsp(
-					mac_ctx, eWNI_SME_REASSOC_RSP,
+					mac_ctx, true,
 					param->result_code,
 					param->prot_status_code,
 					session, session->smeSessionId);
@@ -546,6 +546,39 @@ end:
 			     (uint32_t *) &mlmReassocCnf);
 }
 
+/**
+ * lim_update_rmf_for_ft_reassoc() - Update reassoc rmf
+ * @mac_ctx: Global MAC context
+ * @pe_session: PE Session
+ *
+ * This function is used to update reassoc rmf when roaming
+ * occur between wpa2/wpa3.
+ *
+ *  Return: None
+ */
+static void
+lim_update_rmf_for_ft_reassoc(struct mac_context *mac_ctx,
+			      struct pe_session *session)
+{
+	struct bss_params *add_bss;
+
+	session->limRmfEnabled =
+			lim_get_vdev_rmf_capable(mac_ctx, session);
+
+	if (session->ftPEContext.pAddBssReq) {
+		add_bss = (struct bss_params *)
+			session->ftPEContext.pAddBssReq;
+
+		if (session->limRmfEnabled) {
+			add_bss->rmfEnabled = 1;
+			add_bss->staContext.rmfEnabled = 1;
+		} else {
+			add_bss->rmfEnabled = 0;
+			add_bss->staContext.rmfEnabled = 0;
+		}
+	}
+}
+
 void lim_process_mlm_ft_reassoc_req(struct mac_context *mac,
 				    tLimMlmReassocReq *reassoc_req)
 {
@@ -585,6 +618,8 @@ void lim_process_mlm_ft_reassoc_req(struct mac_context *mac,
 		pe_err("pAddBssReq is NULL");
 		return;
 	}
+
+	lim_update_rmf_for_ft_reassoc(mac, session);
 
 	qdf_mem_copy(reassoc_req->peerMacAddr,
 		     session->bssId, sizeof(tSirMacAddr));

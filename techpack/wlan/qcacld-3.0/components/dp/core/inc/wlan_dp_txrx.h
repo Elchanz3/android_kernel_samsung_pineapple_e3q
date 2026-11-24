@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -49,11 +49,11 @@
 
 /**
  * wlan_dp_intf_get_pkt_type_bitmap_value() - Get packt type bitmap info
- * @intf_ctx: DP interface context
+ * @link_ctx: DP link context
  *
  * Return: bitmap information
  */
-uint32_t wlan_dp_intf_get_pkt_type_bitmap_value(void *intf_ctx);
+uint32_t wlan_dp_intf_get_pkt_type_bitmap_value(void *link_ctx);
 
 #if defined(WLAN_SUPPORT_RX_FISA)
 /**
@@ -294,6 +294,19 @@ QDF_STATUS wlan_dp_rx_deliver_to_stack(struct wlan_dp_intf *dp_intf,
  *	   QDF_STATUS_SUCCESS otherwise
  */
 QDF_STATUS dp_rx_thread_gro_flush_ind_cbk(void *link_ctx, int rx_ctx_id);
+
+/**
+ * dp_rx_gro_flush_cbk() - receive handler to flush GRO packets
+ * @link_ctx: pointer to DP interface context
+ * @rx_ctx_id: RX CTX Id for which flush should happen
+ *
+ * Receive callback registered with DP layer which flushes GRO packets
+ * for a given RX CTX ID
+ *
+ * Return: QDF_STATUS_E_FAILURE if any errors encountered,
+ *	   QDF_STATUS_SUCCESS otherwise
+ */
+QDF_STATUS dp_rx_gro_flush_cbk(void *link_ctx, int rx_ctx_id);
 
 /**
  * dp_rx_pkt_thread_enqueue_cbk() - receive pkt handler to enqueue into thread

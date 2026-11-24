@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -28,6 +28,8 @@
 #include "wlan_fwol_ucfg_api.h"
 #include <qca_vendor.h>
 #include <linux/errqueue.h>
+#include "wlan_hdd_ll_lt_sap.h"
+
 #if defined(WLAN_FEATURE_TSF_PLUS_EXT_GPIO_IRQ) || \
 	defined(WLAN_FEATURE_TSF_PLUS_EXT_GPIO_SYNC) || \
 	defined(WLAN_FEATURE_TSF_ACCURACY)
@@ -2484,6 +2486,11 @@ static int hdd_tx_timestamp(enum htt_tx_status status,
 			break;
 		}
 
+		/* Remove SKB from internal tracking table before submitting
+		 * it to stack
+		 */
+		qdf_net_buf_debug_release_skb(new_netbuf);
+
 		hdd_debug("packet status %d, sock ee_errno %d",
 			  status, serr->ee.ee_errno);
 
@@ -3000,6 +3007,20 @@ static void wlan_hdd_phc_deinit(struct hdd_context *hdd_ctx)
 }
 #endif /* WLAN_FEATURE_TSF_PTP */
 
+#if defined(WLAN_FEATURE_UL_JITTER)
+static
+bool ul_jitter_log_enabled(struct hdd_context *hdd_ctx)
+{
+	return hdd_ctx->config->ul_jitter_log;
+}
+#elif defined(WLAN_FEATURE_TSF_AUTO_REPORT) || defined(WLAN_FEATURE_TSF_UPLINK_DELAY)
+static
+bool ul_jitter_log_enabled(struct hdd_context *hdd_ctx)
+{
+	return false;
+}
+#endif
+
 #ifdef WLAN_FEATURE_TSF_AUTO_REPORT
 void hdd_tsf_auto_report_init(struct hdd_adapter *adapter)
 {
@@ -3012,7 +3033,11 @@ hdd_set_tsf_auto_report(struct hdd_adapter *adapter, bool ena,
 {
 	int ret = 0;
 	bool enabled;
+	struct hdd_context *hdd_ctx;
+	bool log_enabled = false;
 
+	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	log_enabled = ul_jitter_log_enabled(hdd_ctx);
 	enabled = !!adapter->tsf.auto_rpt_src;
 	if (enabled == ena) {
 		hdd_debug_rl("source %d current %d and no action is required",
@@ -3035,6 +3060,9 @@ set_src:
 		qdf_atomic_set_bit(source, &adapter->tsf.auto_rpt_src);
 	else
 		qdf_atomic_clear_bit(source, &adapter->tsf.auto_rpt_src);
+	if (log_enabled)
+		hdd_info(" enable %d, tsf autoreport status %lu",
+			 ena, adapter->tsf.auto_rpt_src);
 
 out:
 	return ret;
@@ -3148,7 +3176,13 @@ QDF_STATUS hdd_add_uplink_delay(struct hdd_adapter *adapter,
 	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
 	QDF_STATUS status;
 	uint32_t ul_delay;
+	struct hdd_context *hdd_ctx;
+	bool log_enabled = false;
 
+	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	log_enabled = ul_jitter_log_enabled(hdd_ctx);
+	if (log_enabled)
+		hdd_info("Received hdd_add_uplink_delay");
 	if (adapter->device_mode != QDF_STA_MODE &&
 	    adapter->device_mode != QDF_P2P_CLIENT_MODE)
 		return QDF_STATUS_SUCCESS;
@@ -3159,12 +3193,16 @@ QDF_STATUS hdd_add_uplink_delay(struct hdd_adapter *adapter,
 		if (QDF_IS_STATUS_ERROR(status))
 			ul_delay = 0;
 	} else {
+		if (log_enabled)
+			hdd_info("tsf report not enabled for delay");
 		ul_delay = 0;
 	}
 
 	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY,
 			ul_delay))
 		return QDF_STATUS_E_FAILURE;
+	if (log_enabled)
+		hdd_info("uplink_delay %d", ul_delay);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -3175,6 +3213,170 @@ hdd_set_tsf_ul_delay_report(struct hdd_adapter *adapter, bool ena)
 	return -ENOTSUPP;
 }
 #endif /* WLAN_FEATURE_TSF_UPLINK_DELAY */
+
+#ifdef WLAN_FEATURE_UL_JITTER
+#define TX_RX_NSS_VENDOR_SIZE 3
+#define SS_COUNT_JITTER 2
+#define TX_NSS_CNT_IDX 0
+#define RX_NSS_CNT_IDX 1
+
+QDF_STATUS hdd_get_txrx_nss(struct hdd_adapter *adapter,
+			    struct sk_buff *skb)
+{
+	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	int **nss_stats, **aggr_nss_stats;
+	struct nlattr *nss_nest, *nss;
+	int nestid, i;
+	struct hdd_context *hdd_ctx;
+	bool log_enabled = false;
+	struct wlan_hdd_link_info *link_info;
+
+	nss_stats = qdf_mem_malloc(SS_COUNT_JITTER * sizeof(int *));
+	if (!nss_stats) {
+		hdd_err_rl("failed to allocate nss_stats");
+		return QDF_STATUS_E_NOMEM;
+	}
+
+	aggr_nss_stats = qdf_mem_malloc(SS_COUNT_JITTER * sizeof(int *));
+	if (!aggr_nss_stats) {
+		hdd_err_rl("failed to allocate aggr_nss_stats");
+		qdf_mem_free(nss_stats);
+		return QDF_STATUS_E_NOMEM;
+	}
+
+	for (i = 0; i < SS_COUNT_JITTER; i++) {
+		nss_stats[i] = qdf_mem_malloc(TX_RX_NSS_VENDOR_SIZE *
+					      sizeof(int));
+		if (!nss_stats[i]) {
+			hdd_err_rl("failed to allocate nss_stats column");
+			status = QDF_STATUS_E_NOMEM;
+			goto free_mem;
+		}
+		aggr_nss_stats[i] = qdf_mem_malloc(TX_RX_NSS_VENDOR_SIZE *
+						   sizeof(int));
+		if (!aggr_nss_stats[i]) {
+			hdd_err_rl("failed to allocate aggr_nss_stats column");
+			status = QDF_STATUS_E_NOMEM;
+			goto free_mem;
+		}
+	}
+
+	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	log_enabled = ul_jitter_log_enabled(hdd_ctx);
+	if (log_enabled)
+		hdd_info("Received Tx Rx NSS request");
+
+	hdd_adapter_for_each_active_link_info(adapter, link_info) {
+		if (!hdd_cm_is_vdev_associated(link_info))
+			continue;
+
+		status = cdp_get_txrx_nss(soc, link_info->vdev_id, nss_stats);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_err_rl("Get stats failed, vdev_id: %d status: %d",
+				   link_info->vdev_id, status);
+			status = QDF_STATUS_E_FAILURE;
+			goto free_mem;
+		}
+		for (i = 0; i < SS_COUNT_JITTER; i++) {
+			aggr_nss_stats[i][TX_NSS_CNT_IDX] +=
+				nss_stats[i][TX_NSS_CNT_IDX];
+			aggr_nss_stats[i][RX_NSS_CNT_IDX] +=
+				nss_stats[i][RX_NSS_CNT_IDX];
+		}
+	}
+
+	nestid = QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_NSS_PKT_COUNT;
+	nss_nest = nla_nest_start(skb, nestid);
+	if (!nss_nest) {
+		hdd_err("nla_nest_start failed");
+		wlan_cfg80211_vendor_free_skb(skb);
+		status = QDF_STATUS_E_FAILURE;
+		goto free_mem;
+	}
+
+	for (i = 0; i < SS_COUNT_JITTER; i++) {
+		nss = nla_nest_start(skb, i + 1);
+		if (!nss) {
+			hdd_err("nla_nest_start failed");
+			wlan_cfg80211_vendor_free_skb(skb);
+			status = QDF_STATUS_E_FAILURE;
+			goto free_mem;
+		}
+		nla_put_u8(skb,
+			   QCA_WLAN_VENDOR_ATTR_NSS_PKT_NSS_VALUE,
+			   i + 1);
+		wlan_cfg80211_nla_put_u64(skb,
+			    QCA_WLAN_VENDOR_ATTR_NSS_PKT_TX_PACKET_COUNT,
+			    (u64)aggr_nss_stats[i][TX_NSS_CNT_IDX]);
+		wlan_cfg80211_nla_put_u64(skb,
+			    QCA_WLAN_VENDOR_ATTR_NSS_PKT_RX_PACKET_COUNT,
+			    (u64)aggr_nss_stats[i][RX_NSS_CNT_IDX]);
+		if (log_enabled)
+			hdd_info("nss val %d tx_pkt %llu rx_pkt %llu",
+				 i + 1, (u64)aggr_nss_stats[i][TX_NSS_CNT_IDX],
+				 (u64)aggr_nss_stats[i][RX_NSS_CNT_IDX]);
+		nla_nest_end(skb, nss);
+	}
+
+	nla_nest_end(skb, nss_nest);
+
+free_mem:
+	for (i = 0; i < SS_COUNT_JITTER; i++) {
+		if (!nss_stats[i])
+			break;
+
+		qdf_mem_free(nss_stats[i]);
+
+		if (!aggr_nss_stats[i])
+			continue;
+
+		qdf_mem_free(aggr_nss_stats[i]);
+	}
+
+	qdf_mem_free(nss_stats);
+	qdf_mem_free(aggr_nss_stats);
+
+	return status;
+}
+
+QDF_STATUS hdd_add_uplink_jitter(struct hdd_adapter *adapter,
+				 struct sk_buff *skb)
+{
+	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	uint32_t ul_jitter;
+	struct hdd_context *hdd_ctx;
+	bool log_enabled = false;
+
+	hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	log_enabled = ul_jitter_log_enabled(hdd_ctx);
+	if (log_enabled)
+		hdd_info("Received hdd_add_uplink_jitter");
+
+	if (hdd_tsf_auto_report_enabled(adapter)) {
+		status = cdp_get_uplink_jitter(soc, adapter->deflink->vdev_id,
+					       &ul_jitter);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_err("Error getting jitter");
+			ul_jitter = 0;
+		}
+
+		if (log_enabled)
+			hdd_info("jitter %d", ul_jitter);
+		if (nla_put_u32(skb,
+				QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY_JITTER,
+				ul_jitter)) {
+			status = QDF_STATUS_E_FAILURE;
+		}
+	} else {
+		if (log_enabled)
+			hdd_err("jitter request with tsf_auto_report_disabled");
+	}
+
+	return status;
+}
+#endif
 
 /**
  * hdd_get_tsf_cb() - handle tsf callback
@@ -3300,6 +3502,7 @@ static int __wlan_hdd_cfg80211_handle_tsf_cmd(struct wiphy *wiphy,
 	bool enable_auto_rpt;
 	enum hdd_tsf_auto_rpt_source source =
 		HDD_TSF_AUTO_RPT_SOURCE_UPLINK_DELAY;
+	uint64_t target_tsf = 0;
 
 	hdd_enter_dev(wdev->netdev);
 
@@ -3367,6 +3570,29 @@ static int __wlan_hdd_cfg80211_handle_tsf_cmd(struct wiphy *wiphy,
 		status = hdd_handle_tsf_dynamic_start(adapter, attr);
 	} else if (tsf_cmd == QCA_TSF_SYNC_STOP) {
 		status = hdd_handle_tsf_dynamic_stop(adapter);
+	} else if (tsf_cmd == QCA_TSF_SYNC_GET_CSA_TIMESTAMP) {
+		status = wlan_hdd_ll_lt_sap_get_csa_timestamp(
+							hdd_ctx->psoc,
+							adapter->deflink->vdev,
+							&target_tsf);
+		if (status != 0)
+			goto end;
+
+		reply_skb =
+			wlan_cfg80211_vendor_event_alloc(hdd_ctx->wiphy, NULL,
+							 sizeof(uint64_t) +
+							 NLMSG_HDRLEN,
+							 index, GFP_KERNEL);
+		if (hdd_wlan_nla_put_u64(reply_skb,
+					 QCA_WLAN_VENDOR_ATTR_TSF_TIMER_VALUE,
+					 target_tsf)) {
+			hdd_err("nla put fail");
+			wlan_cfg80211_vendor_free_skb(reply_skb);
+			status = -EINVAL;
+			goto end;
+		}
+		status = wlan_cfg80211_vendor_cmd_reply(reply_skb);
+		return status;
 	} else {
 		status = 0;
 	}
@@ -3468,7 +3694,7 @@ void wlan_hdd_tsf_init(struct hdd_context *hdd_ctx)
 	status = hdd_tsf_set_gpio(hdd_ctx);
 
 	if (QDF_STATUS_SUCCESS != status) {
-		hdd_err("set tsf GPIO failed, status: %d", status);
+		hdd_debug("set tsf GPIO failed, status: %d", status);
 		goto fail;
 	}
 

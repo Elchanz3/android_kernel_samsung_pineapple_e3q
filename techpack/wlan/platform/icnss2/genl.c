@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2020, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved. */
 
 #define pr_fmt(fmt) "cnss_genl: " fmt
 
@@ -11,6 +12,7 @@
 
 #include "main.h"
 #include "debug.h"
+#include "genl.h"
 
 #define ICNSS_GENL_FAMILY_NAME "cnss-genl"
 #define ICNSS_GENL_MCAST_GROUP_NAME "cnss-genl-grp"
@@ -96,9 +98,9 @@ static int icnss_genl_send_data(u8 type, char *file_name, u32 total_size,
 		     type, file_name, total_size, seg_id, end, data_len);
 
 	if (!file_name)
-		strlcpy(filename, "default", sizeof(filename));
+		strscpy(filename, "default", sizeof(filename));
 	else
-		strlcpy(filename, file_name, sizeof(filename));
+		strscpy(filename, file_name, sizeof(filename));
 
 	skb = genlmsg_new(NLMSG_HDRLEN +
 			  nla_total_size(sizeof(type)) +

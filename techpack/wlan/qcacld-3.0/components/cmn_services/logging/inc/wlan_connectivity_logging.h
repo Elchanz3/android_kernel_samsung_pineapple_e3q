@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -337,6 +337,141 @@ enum wlan_diag_btm_block_reason {
 };
 
 /**
+ * enum wlan_diag_tx_rx_status - TX/RX packet status
+ * @WLAN_DIAG_TX_RX_STATUS_INVALID: default invalid status
+ * @WLAN_DIAG_TX_RX_STATUS_OK: successfully sent + acked
+ * @WLAN_DIAG_TX_RX_STATUS_FW_DISCARD: queued but not sent over air
+ * @WLAN_DIAG_TX_RX_STATUS_NO_ACK: packet sent but no ack received
+ * @WLAN_DIAG_TX_RX_STATUS_DROP: packet dropped due to congestion
+ * @WLAN_DIAG_TX_RX_STATUS_DOWNLOAD_SUCC: packet delivered to target
+ * @WLAN_DIAG_TX_RX_STATUS_MAX: Max status value
+ */
+enum wlan_diag_tx_rx_status {
+	WLAN_DIAG_TX_RX_STATUS_INVALID,
+	WLAN_DIAG_TX_RX_STATUS_OK,
+	WLAN_DIAG_TX_RX_STATUS_FW_DISCARD,
+	WLAN_DIAG_TX_RX_STATUS_NO_ACK,
+	WLAN_DIAG_TX_RX_STATUS_DROP,
+	WLAN_DIAG_TX_RX_STATUS_DOWNLOAD_SUCC,
+	WLAN_DIAG_TX_RX_STATUS_MAX
+};
+
+/**
+ * enum wlan_diag_roam_failure_reason_code - Roaming failure reason codes
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_SCAN_START: Scan start failed
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_AP_FOUND: No roamable AP found
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_CAND_AP_FOUND: No candidate AP found
+ * @WLAN_DIAG_ROAM_FAIL_REASON_HOST: Host aborted roaming due to vdev stop from
+ * host
+ * @WLAN_DIAG_ROAM_FAIL_REASON_AUTH_SEND: Auth TX failure
+ * @WLAN_DIAG_ROAM_FAIL_REASON_AUTH_RECV: Authentication response received with
+ * error status code
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_AUTH_RESP: No Authentication response
+ * received
+ * @WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_SEND: Reassoc request TX failed
+ * @WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_RECV: Reassoc response frame received
+ * with failure status
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_REASSOC_RESP: No reassociation response
+ * received
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_TIMEOUT: EAPoL timedout
+ * @WLAN_DIAG_ROAM_FAIL_REASON_MLME: MLME internal error
+ * @WLAN_DIAG_ROAM_FAIL_REASON_INTERNAL_ABORT: Abort due to internal firmware
+ * error
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SCAN_START: Not able to start roam scan
+ * @WLAN_DIAG_ROAM_FAIL_REASON_AUTH_NO_ACK: No ack received for Auth request
+ * frame
+ * @WLAN_DIAG_ROAM_FAIL_REASON_AUTH_INTERNAL_DROP: Auth request dropped
+ * internally
+ * @WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_NO_ACK: No ack received for reassoc
+ * request frame
+ * @WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_INTERNAL_DROP: Reassoc frame dropped
+ * internally at firmware
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_SEND: EAPoL M2 send failed
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_INTERNAL_DROP: EAPoL M2 frame dropped
+ * internally at firmware
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_NO_ACK: No ack received for EAPoL M2
+ * frame
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M3_TIMEOUT: EAPoL M3 not received from AP
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_SEND: EAPoL M4 frame TX failed
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_INTERNAL_DROP: EAPoL M4 frame dropped
+ * internally
+ * @WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_NO_ACK: No ack received for EAPoL M4
+ * frame
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_SCAN_FOR_FINAL_BMISS: Roam scan start failed
+ * for final bmiss case
+ * @WLAN_DIAG_ROAM_FAIL_REASON_DISCONNECT: Deauth/Disassoc frame received from
+ * AP during roaming
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SYNC: Roam failure due to host wake-up during
+ * roaming in progress
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SAE_INVALID_PMKID: Invalid PMKID during SAE
+ * roaming
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SAE_PREAUTH_TIMEOUT: SAE roaming
+ * preauthentication timedout
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SAE_PREAUTH_FAIL: SAE preauthentication failure
+ * @WLAN_DIAG_ROAM_FAIL_REASON_UNABLE_TO_START_ROAM_HO: Start handoff failed
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_AP_FOUND_AND_FINAL_BMISS_SENT: No AP found
+ * after final BMISS
+ * @WLAN_DIAG_ROAM_FAIL_REASON_NO_CAND_AP_FOUND_AND_FINAL_BMISS_SENT: No
+ * Candidate AP found after final BMISS.
+ * @WLAN_DIAG_ROAM_FAIL_REASON_CURR_AP_STILL_OK: Background scan was abort, but
+ * current network condition is fine.
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SCAN_CANCEL: Roam fail reason, scan cancelled
+ * @WLAN_DIAG_ROAM_FAIL_REASON_SCREEN_ACTIVITY: Roam fail reason screen activity
+ * happened
+ * @WLAN_DIAG_ROAM_FAIL_REASON_OTHER_PRIORITY_ROAM_SCAN: Roam fail due to other
+ * priority roam scan started.
+ * @WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_TO_SAME_AP: Host internal reason code.
+ * Reassoc command rejected due to reassociation request received for same AP.
+ * @WLAN_DIAG_ROAM_FAIL_REASON_MLD_EXTRA_SCAN_REQUIRED: Roaming is not triggered
+ * as part of the first roam scan as additional scan is required to scan all
+ * MLD links
+ * @WLAN_DIAG_ROAM_FAIL_REASON_UNKNOWN: Default reason
+ */
+enum wlan_diag_roam_failure_reason_code {
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_SCAN_START = 1,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_AP_FOUND,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_CAND_AP_FOUND,
+	WLAN_DIAG_ROAM_FAIL_REASON_HOST,
+	WLAN_DIAG_ROAM_FAIL_REASON_AUTH_SEND,
+	WLAN_DIAG_ROAM_FAIL_REASON_AUTH_RECV,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_AUTH_RESP,
+	WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_SEND,
+	WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_RECV,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_REASSOC_RESP,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_TIMEOUT,
+	WLAN_DIAG_ROAM_FAIL_REASON_MLME,
+	WLAN_DIAG_ROAM_FAIL_REASON_INTERNAL_ABORT,
+	WLAN_DIAG_ROAM_FAIL_REASON_SCAN_START,
+	WLAN_DIAG_ROAM_FAIL_REASON_AUTH_NO_ACK,
+	WLAN_DIAG_ROAM_FAIL_REASON_AUTH_INTERNAL_DROP,
+	WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_NO_ACK,
+	WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_INTERNAL_DROP,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_SEND,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_INTERNAL_DROP,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M2_NO_ACK,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M3_TIMEOUT,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_SEND,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_INTERNAL_DROP,
+	WLAN_DIAG_ROAM_FAIL_REASON_EAPOL_M4_NO_ACK,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_SCAN_FOR_FINAL_BMISS,
+	WLAN_DIAG_ROAM_FAIL_REASON_DISCONNECT,
+	WLAN_DIAG_ROAM_FAIL_REASON_SYNC,
+	WLAN_DIAG_ROAM_FAIL_REASON_SAE_INVALID_PMKID,
+	WLAN_DIAG_ROAM_FAIL_REASON_SAE_PREAUTH_TIMEOUT,
+	WLAN_DIAG_ROAM_FAIL_REASON_SAE_PREAUTH_FAIL,
+	WLAN_DIAG_ROAM_FAIL_REASON_UNABLE_TO_START_ROAM_HO,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_AP_FOUND_AND_FINAL_BMISS_SENT,
+	WLAN_DIAG_ROAM_FAIL_REASON_NO_CAND_AP_FOUND_AND_FINAL_BMISS_SENT,
+	WLAN_DIAG_ROAM_FAIL_REASON_CURR_AP_STILL_OK,
+	WLAN_DIAG_ROAM_FAIL_REASON_SCAN_CANCEL,
+	WLAN_DIAG_ROAM_FAIL_REASON_SCREEN_ACTIVITY,
+	WLAN_DIAG_ROAM_FAIL_REASON_OTHER_PRIORITY_ROAM_SCAN,
+	WLAN_DIAG_ROAM_FAIL_REASON_REASSOC_TO_SAME_AP,
+	WLAN_DIAG_ROAM_FAIL_REASON_MLD_EXTRA_SCAN_REQUIRED,
+	WLAN_DIAG_ROAM_FAIL_REASON_UNKNOWN = 255,
+};
+
+/**
  * struct wlan_connectivity_log_diag_cmn - Structure for diag event
  * @bssid: bssid
  * @vdev_id: Vdev id
@@ -393,8 +528,34 @@ struct wlan_diag_mlo_cmn_info {
 	uint8_t link_addr[QDF_MAC_ADDR_SIZE];
 } qdf_packed;
 
+/**
+ * struct wlan_diag_mlo_cmn_info_ext - Extended MLO common info
+ * @band: Indicates link on which mlo setup is initiated.
+ * Refer enum enum wlan_diag_wifi_band.
+ * @link_id: Link id of the link when link is accepted
+ * @vdev_id: vdev id associated with the link
+ * @tid_ul: TID-to-link mapping information on the uplink
+ * @tid_dl: TID-to-link mapping information on the downlink
+ * @status: MLO setup status. 0 - Success, 1 - failure
+ * @link_addr: Link address of the link.
+ * @freq: frequency on which MLO setup is performed.
+ */
+struct wlan_diag_mlo_cmn_info_ext {
+	uint8_t band;
+	uint8_t link_id;
+	uint8_t vdev_id;
+	uint8_t tid_ul;
+	uint8_t tid_dl;
+	uint8_t status;
+	uint8_t link_addr[QDF_MAC_ADDR_SIZE];
+	uint32_t freq;
+} qdf_packed;
+
 #define DIAG_MLO_SETUP_VERSION 1
 #define DIAG_MLO_SETUP_VERSION_V2 2
+
+/* The mlo setup version 3 logs the frequency on which the link is associated */
+#define DIAG_MLO_SETUP_VERSION_V3 3
 
 #define MAX_NUM_LINKS_PER_EVENT 3
 /**
@@ -402,16 +563,21 @@ struct wlan_diag_mlo_cmn_info {
  * @diag_cmn: Common diag info
  * @version: structure version
  * @num_links: Number of links associated for MLO setup
- * @reserved: Reserved field
- * @status: status code of the link. Non-zero value when link is rejected
+ * @num_link_ext: Extended num links
+ * @max_links_ext: Maximum number of links
  * @mlo_cmn_info: MLO common info
+ * @ext_link_info_size: Extended mlo common link info size
+ * @mlo_cmn_info_ext: Extended MLO common info
  */
 struct wlan_diag_mlo_setup {
 	struct wlan_connectivity_log_diag_cmn diag_cmn;
 	uint8_t version;
 	uint8_t num_links;
-	uint16_t reserved;
+	uint8_t num_link_ext;
+	uint8_t max_links_ext;
 	struct wlan_diag_mlo_cmn_info mlo_cmn_info[MAX_NUM_LINKS_PER_EVENT];
+	uint32_t ext_link_info_size;
+	struct wlan_diag_mlo_cmn_info_ext mlo_cmn_info_ext[MAX_NUM_LINKS_PER_EVENT];
 } qdf_packed;
 
 #define DIAG_MLO_RECONFIG_VERSION 1
@@ -494,24 +660,28 @@ struct wlan_diag_mlo_t2lm_teardown {
 } qdf_packed;
 
 #define DIAG_MLO_LINK_STATUS_VERSION 1
+#define DIAG_MLO_LINK_STATUS_VERSION_2 2
 /**
  * struct wlan_diag_mlo_link_status - MLO Link status diag event structure
  * @diag_cmn: Common diag info
  * @version: structure version
- * @active_link: List of current active links. BIT 0: 2.4GHz BIT 1: 5GHz
- * BIT 2: 6GHz
- * @prev_active_link: List of inactive links. BIT 0: 2.4GHz BIT 1: 5GHz
- * BIT 2: 6GHz
+ * @active_link: List of current active links. BIT 0: 2.4 GHz BIT 1: 5 GHz
+ * BIT 2: 6 GHz
+ * @prev_active_link: List of previous active links. BIT 0: 2.4 G Hz
+ * BIT 1: 5 GHz BIT 2: 6 GHz
+ * @associated_links: Links associated in the current connection.
+ * BIT 0: 2.4 GHz BIT 1: 5 GHz BIT 2: 6 GHz
+ * @reserved: Reserved field
  * @reason: Reason for changed link status. Refer
  * enum wlan_diag_mlo_link_switch_reason
- * @reserved: Reserved field
  */
 struct wlan_diag_mlo_link_status {
 	struct wlan_connectivity_log_diag_cmn diag_cmn;
 	uint8_t version;
-	uint8_t active_link:5;
-	uint8_t prev_active_link:5;
-	uint8_t reserved:6;
+	uint16_t active_link:5;
+	uint16_t prev_active_link:5;
+	uint16_t associated_links:5;
+	uint16_t reserved:1;
 	uint8_t reason;
 } qdf_packed;
 
@@ -593,6 +763,9 @@ struct wlan_diag_bcn_rpt {
 #define DIAG_ROAM_CAND_VERSION 1
 #define DIAG_ROAM_CAND_VERSION_V2 2
 
+/* Version 3 includes the etp value of Current AP */
+#define DIAG_ROAM_CAND_VERSION_V3 3
+
 /**
  * struct wlan_diag_roam_candidate_info  - Roam candidate information for
  * logging
@@ -646,7 +819,11 @@ struct wlan_diag_roam_scan_done {
 	uint32_t scan_freq[WLAN_MAX_LOGGING_FREQ];
 } qdf_packed;
 
-#define DIAG_ROAM_RESULT_VERSION 1
+/*
+ * The version 3 for Roam Result event will log the Roam Fail reason
+ * in NO ROAM scenario
+ */
+#define DIAG_ROAM_RESULT_VERSION 2
 
 /**
  * struct wlan_diag_roam_result - Roam result data
@@ -764,6 +941,9 @@ struct wlan_diag_btm_info {
 
 #define DIAG_MGMT_VERSION 1
 #define DIAG_MGMT_VERSION_V2 2
+
+/* this version mandates to print the tx failure reason for DP events */
+#define DIAG_MGMT_VERSION_V3 3
 #define MAX_VSIE_LEN 255
 
 /**
@@ -784,7 +964,6 @@ struct wlan_diag_btm_info {
  * @is_tx: Packet direction indicator. 0 - RX, 1 - TX
  * @supported_links: link id bitmap indicates the links involved
  * in MLO connection.
- * @reserved: Reserved field
  * @subtype: Diag event defined in  enum qca_conn_diag_log_event_type
  * @assoc_id: Association ID
  * @eap_len: EAP data length
@@ -1158,6 +1337,7 @@ struct wlan_connectivity_log_buf_data {
 
 #if (defined(CONNECTIVITY_DIAG_EVENT) && \
 	defined(WLAN_FEATURE_ROAM_OFFLOAD))
+
 /**
  * wlan_print_cached_sae_auth_logs() - Enqueue SAE authentication frame logs
  * @psoc: Global psoc pointer
@@ -1240,6 +1420,10 @@ void wlan_clear_sae_auth_logs_cache(struct wlan_objmgr_psoc *psoc,
 #endif
 
 #if defined(CONNECTIVITY_DIAG_EVENT)
+
+#define ACCEPTED_LINK_STATUS 0
+#define REJECTED_LINK_STATUS 1
+
 /**
  * wlan_connectivity_mgmt_event()  - Fill and enqueue a new record
  * for management frame information.
@@ -1311,10 +1495,12 @@ wlan_connectivity_mlo_reconfig_event(struct wlan_objmgr_vdev *vdev);
 /**
  * wlan_connectivity_mlo_setup_event() - Fill and send MLO setup data
  * @vdev: vdev pointer
+ * @is_band_present: If Band is present(Associated link band is shared by FW)
  *
  * Return: None
  */
-void wlan_connectivity_mlo_setup_event(struct wlan_objmgr_vdev *vdev);
+void wlan_connectivity_mlo_setup_event(struct wlan_objmgr_vdev *vdev,
+				       bool is_band_present);
 
 /**
  * wlan_connectivity_t2lm_req_resp_event - API to send t2lm Req/resp
@@ -1378,7 +1564,8 @@ wlan_connectivity_mlo_reconfig_event(struct wlan_objmgr_vdev *vdev)
 }
 
 static inline void
-wlan_connectivity_mlo_setup_event(struct wlan_objmgr_vdev *vdev)
+wlan_connectivity_mlo_setup_event(struct wlan_objmgr_vdev *vdev,
+				  bool is_band_present)
 {
 }
 
@@ -1433,6 +1620,16 @@ wlan_populate_vsie(struct wlan_objmgr_vdev *vdev,
  */
 enum wlan_diag_wifi_band
 wlan_convert_freq_to_diag_band(uint16_t ch_freq);
+
+/**
+ * wlan_get_qdf_to_diag_txrx_status() - API to convert qdf_dp_tx_rx_status
+ * to wlan_diag_tx_rx_status
+ * @tx_status: TX status of the frame
+ *
+ * Return: Converted QDF TX status value of Diag TX status of frame
+ */
+enum wlan_diag_tx_rx_status
+wlan_get_qdf_to_diag_txrx_status(enum qdf_dp_tx_rx_status tx_status);
 
 static inline void wlan_connectivity_logging_stop(void)
 {}
@@ -1573,6 +1770,19 @@ enum wlan_diag_wifi_band
 wlan_convert_freq_to_diag_band(uint16_t ch_freq);
 
 /**
+ * wlan_get_qdf_to_diag_txrx_status() - API to convert qdf_dp_tx_rx_status
+ * to wlan_diag_tx_rx_status
+ * @tx_status: TX status of outgoing frame. Refer enum qdf_dp_tx_rx_status
+ *
+ * Return: TX status of the frame.
+ */
+static inline enum wlan_diag_tx_rx_status
+wlan_get_qdf_to_diag_txrx_status(enum qdf_dp_tx_rx_status tx_status)
+{
+	return WLAN_DIAG_TX_RX_STATUS_INVALID;
+}
+
+/**
  * wlan_populate_vsie() - Populate VSIE field for logging
  * @vdev: vdev pointer
  * @data: Diag packet info data
@@ -1672,6 +1882,12 @@ wlan_connectivity_t2lm_req_resp_event(struct wlan_objmgr_vdev *vdev,
 				      qdf_freq_t freq,
 				      bool is_rx, uint8_t subtype)
 {}
+
+static inline enum wlan_diag_tx_rx_status
+wlan_get_qdf_to_diag_txrx_status(enum qdf_dp_tx_rx_status tx_status)
+{
+	return WLAN_DIAG_TX_RX_STATUS_INVALID;
+}
 
 static inline void
 wlan_connectivity_t2lm_status_event(struct wlan_objmgr_vdev *vdev)

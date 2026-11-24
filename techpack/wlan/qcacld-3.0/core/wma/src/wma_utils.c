@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -72,6 +72,8 @@
 #include "wma_eht.h"
 #include <target_if_spatial_reuse.h>
 #include "wlan_dp_ucfg_api.h"
+#include "cfg_hif.h"
+#include "wlan_pmo_wow.h"
 
 /* MCS Based rate table */
 /* HT MCS parameters with Nss = 1 */
@@ -713,7 +715,6 @@ int wma_stats_ext_event_handler(void *handle, uint8_t *event_buf,
 			  param_buf->num_partner_link_stats);
 
 	stats_ext_info = param_buf->fixed_param;
-	buf_ptr = (uint8_t *)stats_ext_info;
 
 	alloc_len += sizeof(tSirStatsExtEvent);
 	alloc_len += stats_ext_info->data_len;
@@ -743,7 +744,7 @@ int wma_stats_ext_event_handler(void *handle, uint8_t *event_buf,
 	if (!stats_ext_event)
 		return -ENOMEM;
 
-	buf_ptr += sizeof(wmi_stats_ext_event_fixed_param) + WMI_TLV_HDR_SIZE;
+	buf_ptr = (uint8_t *)param_buf->data;
 
 	stats_ext_event->vdev_id = stats_ext_info->vdev_id;
 	stats_ext_event->event_data_len = stats_ext_info->data_len;
@@ -817,7 +818,6 @@ int wma_stats_ext_event_handler(void *handle, uint8_t *event_buf,
 	}
 
 	stats_ext_info = param_buf->fixed_param;
-	buf_ptr = (uint8_t *)stats_ext_info;
 
 	alloc_len = sizeof(tSirStatsExtEvent);
 	alloc_len += stats_ext_info->data_len;
@@ -833,7 +833,7 @@ int wma_stats_ext_event_handler(void *handle, uint8_t *event_buf,
 	if (!stats_ext_event)
 		return -ENOMEM;
 
-	buf_ptr += sizeof(wmi_stats_ext_event_fixed_param) + WMI_TLV_HDR_SIZE;
+	buf_ptr = (uint8_t *)param_buf->data;
 
 	stats_ext_event->vdev_id = stats_ext_info->vdev_id;
 	stats_ext_event->event_data_len = stats_ext_info->data_len;
@@ -1407,6 +1407,15 @@ wma_fill_rx_stats(struct sir_wifi_ll_ext_stats *ll_stats,
 			 wmi_peer_rx, wmi_rx, peer_stats);
 		return QDF_STATUS_E_FAILURE;
 	}
+
+	/* Check if num_rx_stats is sufficient to avoid buffer overflow */
+	if (param_buf->num_rx_stats <
+	    fix_param->num_peer_ac_rx_stats * WLAN_MAX_AC) {
+		wma_err("Insufficient rx_stats buffer: available %d, required %d",
+			param_buf->num_rx_stats,
+			fix_param->num_peer_ac_rx_stats * WLAN_MAX_AC);
+		return QDF_STATUS_E_FAILURE;
+	}
 	for (i = 0; i < fix_param->num_peer_ac_rx_stats; i++) {
 		uint32_t peer_id = wmi_peer_rx[i].peer_id;
 		struct sir_wifi_rx *ac;
@@ -1705,7 +1714,7 @@ static QDF_STATUS wma_get_dp_peer_stats(wmi_unified_t wmi_handle,
 
 	return ucfg_dp_get_per_link_peer_stats(dp_soc, vdev_id, peer_mac,
 					       dp_stats, CDP_WILD_PEER_TYPE,
-					       WLAN_MAX_MLD);
+					       DP_STAT_NUM_SINGLE_LINK);
 }
 
 /**
@@ -2393,7 +2402,9 @@ __wma_unified_link_radio_stats_event_handler(tp_wma_handle wma_handle,
 		}
 
 		for (count = 0; count < radio_stats->num_channels; count++) {
-			if (exclude_selftx_from_cca_busy)
+			if (exclude_selftx_from_cca_busy &&
+			    channel_stats->cca_busy_time >=
+			    channel_stats->tx_time)
 				channel_stats->cca_busy_time -=
 						channel_stats->tx_time;
 
@@ -2421,7 +2432,7 @@ __wma_unified_link_radio_stats_event_handler(tp_wma_handle wma_handle,
 
 			if (stats_len >= (WMI_MAX_RADIO_STATS_LOGS -
 					WMI_MAX_RADIO_SINGLE_STATS_LEN)) {
-				wmi_nofl_debug("freq[width][freq0][freq1][awake time][cca busy time][rx time][tx time] :%s",
+				wmi_nofl_debug("freq[width][freq0][freq1][awake time][cca busy time][tx time][rx time] :%s",
 					       info);
 				stats_len = 0;
 			}
@@ -2437,7 +2448,7 @@ __wma_unified_link_radio_stats_event_handler(tp_wma_handle wma_handle,
 		}
 
 		if (stats_len)
-			wmi_nofl_debug("freq[width][freq0][freq1][awake time][cca busy time][rx time][tx time] :%s",
+			wmi_nofl_debug("freq[width][freq0][freq1][awake time][cca busy time][tx time][rx time] :%s",
 				       info);
 
 		qdf_mem_free(info);
@@ -2735,11 +2746,10 @@ QDF_STATUS wma_process_ll_stats_set_req(tp_wma_handle wma,
 #ifdef FEATURE_CLUB_LL_STATS_AND_GET_STATION
 static QDF_STATUS
 wma_send_ll_stats_get_cmd(tp_wma_handle wma_handle,
-			  struct ll_stats_get_params *cmd)
+			  struct ll_stats_get_params *cmd,
+			  bool is_unified_ll_stats)
 {
-	if (!(cfg_get(wma_handle->psoc, CFG_CLUB_LL_STA_AND_GET_STATION) &&
-	      wmi_service_enabled(wma_handle->wmi_handle,
-				  wmi_service_get_station_in_ll_stats_req) &&
+	if (!(is_unified_ll_stats &&
 	      wma_handle->interfaces[cmd->vdev_id].type == WMI_VDEV_TYPE_STA))
 		return wmi_unified_process_ll_stats_get_cmd(
 						wma_handle->wmi_handle, cmd);
@@ -2750,7 +2760,8 @@ wma_send_ll_stats_get_cmd(tp_wma_handle wma_handle,
 #else
 static QDF_STATUS
 wma_send_ll_stats_get_cmd(tp_wma_handle wma_handle,
-			  struct ll_stats_get_params *cmd)
+			  struct ll_stats_get_params *cmd,
+			  bool is_unified_ll_stats)
 {
 	return wmi_unified_process_ll_stats_get_cmd(wma_handle->wmi_handle,
 						    cmd);
@@ -2840,7 +2851,8 @@ QDF_STATUS wma_process_ll_stats_get_req(tp_wma_handle wma,
 		}
 	}
 
-	ret = wma_send_ll_stats_get_cmd(wma, &cmd);
+	ret = wma_send_ll_stats_get_cmd(wma, &cmd,
+					getReq->is_unified_ll_stats);
 	if (ret) {
 		wma_err("Failed to send get link stats request");
 		return QDF_STATUS_E_FAILURE;
@@ -3736,30 +3748,15 @@ uint8_t *wma_get_vdev_address_by_vdev_id(uint8_t vdev_id)
 	return wlan_vdev_mlme_get_macaddr(vdev);
 }
 
-QDF_STATUS wma_get_connection_info(uint8_t vdev_id,
-		struct policy_mgr_vdev_entry_info *conn_table_entry)
-{
-	struct wma_txrx_node *wma_conn_table_entry;
-
-	wma_conn_table_entry = wma_get_interface_by_vdev_id(vdev_id);
-	if (!wma_conn_table_entry) {
-		wma_err("can't find vdev_id %d in WMA table", vdev_id);
-		return QDF_STATUS_E_FAILURE;
-	}
-	conn_table_entry->chan_width = wma_conn_table_entry->chan_width;
-	conn_table_entry->mac_id = wma_conn_table_entry->mac_id;
-	conn_table_entry->mhz = wma_conn_table_entry->ch_freq;
-	conn_table_entry->sub_type = wma_conn_table_entry->sub_type;
-	conn_table_entry->type = wma_conn_table_entry->type;
-	conn_table_entry->ch_flagext = wma_conn_table_entry->ch_flagext;
-
-	return QDF_STATUS_SUCCESS;
-}
-
 QDF_STATUS wma_ndi_update_connection_info(uint8_t vdev_id,
 				struct nan_datapath_channel_info *ndp_chan_info)
 {
 	struct wma_txrx_node *wma_iface_entry;
+	tp_wma_handle wma;
+
+	wma = cds_get_context(QDF_MODULE_ID_WMA);
+	if (!wma)
+		return QDF_STATUS_E_FAILURE;
 
 	wma_iface_entry = wma_get_interface_by_vdev_id(vdev_id);
 	if (!wma_iface_entry) {
@@ -3780,7 +3777,7 @@ QDF_STATUS wma_ndi_update_connection_info(uint8_t vdev_id,
 	wma_iface_entry->chan_width = ndp_chan_info->ch_width;
 	wma_iface_entry->ch_freq = ndp_chan_info->freq;
 	wma_iface_entry->nss = ndp_chan_info->nss;
-	wma_iface_entry->mac_id = ndp_chan_info->mac_id;
+	wlan_mlme_set_vdev_mac_id(wma->pdev, vdev_id, ndp_chan_info->mac_id);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -3855,7 +3852,7 @@ void wma_update_intf_hw_mode_params(uint32_t vdev_id, uint32_t mac_id,
 			 cfgd_hw_mode_index);
 		return;
 	}
-	wma->interfaces[vdev_id].mac_id = mac_id;
+	wlan_mlme_set_vdev_mac_id(wma->pdev, vdev_id, mac_id);
 	if (mac_id == 0)
 		wma->interfaces[vdev_id].tx_streams =
 			hw_mode.mac0_tx_ss;
@@ -4079,12 +4076,14 @@ QDF_STATUS wma_send_vdev_stop_to_fw(t_wma_handle *wma, uint8_t vdev_id)
 		return status;
 	}
 
+	wlan_mlme_reset_sta_keepalive_period(wma->psoc, iface->vdev);
+	iface->bss_max_idle_period = 0;
+
 	vdev_mlme = wlan_vdev_mlme_get_cmpt_obj(iface->vdev);
 	if (!vdev_mlme) {
 		wma_err("Failed to get vdev mlme obj for vdev id %d", vdev_id);
 		return status;
 	}
-
 	/*
 	 * Reset the dynamic nss chains config to the ini values, as when the
 	 * vdev gets its started again, this would be a fresh connection,
@@ -4447,6 +4446,8 @@ void wma_remove_bss_peer_on_failure(tp_wma_handle wma, uint8_t vdev_id)
 		return;
 	}
 
+	wma_delete_peer_mlo(wma->psoc, bss_peer.bytes);
+
 	wma_remove_peer(wma, bss_peer.bytes, vdev_id, false);
 }
 
@@ -4505,7 +4506,7 @@ QDF_STATUS wma_remove_bss_peer_before_join(
 		del_req = wma_fill_hold_req(wma, vdev_id,
 					    WMA_DELETE_STA_REQ,
 					    WMA_DELETE_STA_CONNECT_RSP,
-					    cm_join_req,
+					    mac_addr, cm_join_req,
 					    WMA_DELETE_STA_TIMEOUT);
 		if (!del_req) {
 			wma_err("Failed to allocate request. vdev_id %d",
@@ -4866,6 +4867,26 @@ QDF_STATUS wma_mon_mlme_vdev_down_send(struct vdev_mlme_obj *vdev_mlme,
 	return status;
 }
 
+QDF_STATUS wma_mon_mlme_vdev_stop_resp(struct vdev_mlme_obj *vdev_mlme)
+{
+	QDF_STATUS qdf_status = QDF_STATUS_SUCCESS;
+	struct scheduler_msg sme_msg = {0};
+
+	sme_msg.type = eWNI_SME_MONITOR_MODE_VDEV_STOP;
+	sme_msg.bodyptr = NULL;
+	sme_msg.bodyval = wlan_vdev_get_id(vdev_mlme->vdev);
+
+	qdf_status = scheduler_post_message(QDF_MODULE_ID_WMA,
+					    QDF_MODULE_ID_SME,
+					    QDF_MODULE_ID_SME, &sme_msg);
+	if (!QDF_IS_STATUS_SUCCESS(qdf_status)) {
+		wma_err("Fail to post set vdev stop response");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
 #ifdef FEATURE_WLM_STATS
 int wma_wlm_stats_req(int vdev_id, uint32_t bitmask, uint32_t max_size,
 		      wma_wlm_stats_cb cb, void *cookie)
@@ -5103,6 +5124,38 @@ int wma_latency_level_event_handler(void *wma_ctx, uint8_t *event_buff,
 }
 #endif
 
+#ifdef FEATURE_SMEM_MAILBOX
+static int wma_oem_smem_event_handler(tp_wma_handle wma,
+				      struct mac_context *pmac,
+				      struct oem_data *oem_event_data)
+{
+	if (!cfg_get(wma->psoc, CFG_ENABLE_SMEM_MAILBOX)) {
+		QDF_DEBUG_PANIC("SMEM MAILBOX support not enabled");
+		return QDF_STATUS_E_FAILURE;
+	}
+	if (pmo_get_wow_suspend_type(wma->psoc) ==
+	    QDF_SYSTEM_SUSPEND) {
+		if (pmac->sme.oem_data_smem_event_handler_cb)
+			pmac->sme.oem_data_smem_event_handler_cb(
+				oem_event_data);
+	} else {
+		if (pmac->sme.oem_data_async_event_handler_cb)
+			pmac->sme.oem_data_async_event_handler_cb(
+					oem_event_data);
+	}
+	return QDF_STATUS_SUCCESS;
+}
+
+#elif defined FEATURE_OEM_DATA
+static int wma_oem_smem_event_handler(tp_wma_handle wma,
+				      struct mac_context *pmac,
+				      struct oem_data *oem_event_data)
+{
+	QDF_DEBUG_PANIC("SMEM MAILBOX support not included");
+	return QDF_STATUS_E_FAILURE;
+}
+#endif
+
 #ifdef FEATURE_OEM_DATA
 int wma_oem_event_handler(void *wma_ctx, uint8_t *event_buff, uint32_t len)
 {
@@ -5111,6 +5164,14 @@ int wma_oem_event_handler(void *wma_ctx, uint8_t *event_buff, uint32_t len)
 		(struct mac_context *)cds_get_context(QDF_MODULE_ID_PE);
 	wmi_oem_data_event_fixed_param *event;
 	struct oem_data oem_event_data;
+	tp_wma_handle wma;
+
+	wma = cds_get_context(QDF_MODULE_ID_WMA);
+
+	if (!wma) {
+		wma_err("NULL wma handle");
+		return -EINVAL;
+	}
 
 	if (!pmac) {
 		wma_err("NULL mac handle");
@@ -5161,6 +5222,9 @@ int wma_oem_event_handler(void *wma_ctx, uint8_t *event_buff, uint32_t len)
 		if (pmac->sme.oem_data_async_event_handler_cb)
 			pmac->sme.oem_data_async_event_handler_cb(
 					&oem_event_data);
+	} else if (event->event_cause == WMI_OEM_DATA_EVT_CAUSE_SMEM_MAILBOX) {
+		if (wma_oem_smem_event_handler(wma, pmac, &oem_event_data))
+			return QDF_STATUS_E_FAILURE;
 	} else {
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -5218,3 +5282,22 @@ vht_ch_width:
 	return wma_get_vht_ch_width();
 }
 #endif
+
+QDF_STATUS wma_send_reduce_pwr_scan_mode(uint32_t pdev_id, uint32_t param_val)
+{
+	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+	struct pdev_params pparam = {0};
+	QDF_STATUS status;
+
+	if (!wma)
+		return QDF_STATUS_E_FAILURE;
+
+	pparam.param_id = WMI_PDEV_PARAM_SCAN_MODE;
+	pparam.param_value = param_val;
+	status = wmi_unified_pdev_param_send(wma->wmi_handle,
+					     &pparam, pdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		wma_err("Unable to send reduce power scan mode");
+
+	return status;
+}

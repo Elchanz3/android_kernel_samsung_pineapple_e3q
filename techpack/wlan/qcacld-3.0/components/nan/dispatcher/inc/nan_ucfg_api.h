@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -445,6 +445,22 @@ bool ucfg_nan_is_vdev_creation_allowed(struct wlan_objmgr_psoc *psoc);
 bool ucfg_nan_is_sta_nan_ndi_4_port_allowed(struct wlan_objmgr_psoc *psoc);
 
 /**
+ * ucfg_nan_is_sta_sap_ndp_supported()- Get support for STA + SAP + NDI
+ * @psoc: pointer to psoc object
+ *
+ * Return: True if STA + SAP + NDP supported
+ */
+bool ucfg_nan_is_sta_sap_ndp_supported(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_nan_is_sta_p2p_ndp_supported()- Get support for STA + P2P + NDP
+ * @psoc: pointer to psoc object
+ *
+ * Return: True if STA + P2P + NDP supported
+ */
+bool ucfg_nan_is_sta_p2p_ndp_supported(struct wlan_objmgr_psoc *psoc);
+
+/**
  * ucfg_nan_is_beamforming_supported- Get support for beamforing
  * @psoc: pointer to psoc object
  *
@@ -544,6 +560,82 @@ bool ucfg_get_disable_6g_nan(struct wlan_objmgr_psoc *psoc);
  */
 bool ucfg_is_mlo_sta_nan_ndi_allowed(struct wlan_objmgr_psoc *psoc);
 
+/**
+ * ucfg_nan_send_pasn_peer_create_cmd: This API post NAN peer create message to
+ * the scheduler and wait for NAN peer create response.
+ * @psoc: pointer to PSOC object
+ * @vdev: pointer to VDEV object
+ * @peer_mac_addr: mac address of the peer
+ *
+ * Return: Success on posting the message otherwise error
+ */
+QDF_STATUS
+ucfg_nan_send_pasn_peer_create_cmd(struct wlan_objmgr_psoc *psoc,
+				   struct wlan_objmgr_vdev *vdev,
+				   struct qdf_mac_addr peer_mac_addr);
+
+/**
+ * ucfg_nan_send_delete_pasn_peer() - This API post NAN peer delete message to
+ * the scheduler and wait for NAN peer delete response.
+ * @psoc: pointer to PSOC object
+ * @vdev_id: VDEV id
+ * @peer_mac_addr: pointer to peer mac address
+ *
+ * Return: status of operation
+ */
+QDF_STATUS ucfg_nan_send_delete_pasn_peer(struct wlan_objmgr_psoc *psoc,
+					  uint8_t vdev_id,
+					  struct qdf_mac_addr *peer_mac_addr);
+
+/**
+ * ucfg_nan_get_prefer_nan_chan_for_p2p() - get value of prefer NAN social
+ * channels for P2P
+ * @psoc: pointer to psoc object
+ *
+ * Return: Boolean flag indicating whether NAN social channels can be preferred
+ * for P2P or not
+ */
+bool ucfg_nan_get_prefer_nan_chan_for_p2p(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_nan_get_fw_addr() - wrapper for nan_get_fw_addr() API
+ * @psoc: pointer to psoc object
+ *
+ * Return: NAN MAC address
+ */
+struct qdf_mac_addr *ucfg_nan_get_fw_addr(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_nan_cache_ndp_peer_mac_addr() - This API is wrapper for function
+ * nan_cache_ndp_peer_mac_addr()
+ * @psoc: pointer to PSOC object
+ * @peer_mac_addr: peer mac address
+ *
+ * Return: QDF status
+ */
+QDF_STATUS ucfg_nan_cache_ndp_peer_mac_addr(struct wlan_objmgr_psoc *psoc,
+					    struct qdf_mac_addr *peer_mac_addr);
+
+/**
+ * ucfg_nan_remove_ndp_peer_mac_addr() - This API is wrapper for function
+ * nan_remove_ndp_peer_mac_addr()
+ * @psoc: pointer to PSOC object
+ * @peer_mac_addr: peer mac address
+ *
+ * Return: QDF status
+ */
+QDF_STATUS
+ucfg_nan_remove_ndp_peer_mac_addr(struct wlan_objmgr_psoc *psoc,
+				  struct qdf_mac_addr *peer_mac_addr);
+
+/**
+ * ucfg_nan_is_allowed() - This API is wrapper for function nan_is_allowed()
+ *
+ * @psoc: pointer to PSOC object
+ *
+ * Return: true if nan  is allowed otherwise false
+ */
+bool ucfg_nan_is_allowed(struct wlan_objmgr_psoc *psoc);
 #else /* WLAN_FEATURE_NAN */
 
 static inline
@@ -609,6 +701,17 @@ bool ucfg_nan_is_vdev_creation_allowed(struct wlan_objmgr_psoc *psoc)
 
 static inline
 bool ucfg_nan_is_sta_nan_ndi_4_port_allowed(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline ucfg_nan_is_sta_sap_ndp_supported(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline bool
+ucfg_nan_is_sta_p2p_ndp_supported(struct wlan_objmgr_psoc *psoc)
 {
 	return false;
 }
@@ -683,6 +786,38 @@ ucfg_nan_get_peer_mc_list(struct wlan_objmgr_vdev *vdev,
 
 static inline bool
 ucfg_is_mlo_sta_nan_ndi_allowed(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline QDF_STATUS
+ucfg_nan_send_pasn_peer_create_cmd(struct wlan_objmgr_psoc *psoc,
+				   struct wlan_objmgr_vdev *vdev,
+				   struct qdf_mac_addr peer_mac_addr)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline QDF_STATUS
+ucfg_nan_send_delete_pasn_peer(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+			       struct qdf_mac_addr *peer_mac_addr)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline bool
+ucfg_nan_get_prefer_nan_chan_for_p2p(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline struct qdf_mac_addr *
+ucfg_nan_get_fw_addr(struct wlan_objmgr_psoc *psoc)
+{
+	return NULL;
+}
+
+static inline bool ucfg_nan_is_allowed(struct wlan_objmgr_psoc *psoc)
 {
 	return false;
 }

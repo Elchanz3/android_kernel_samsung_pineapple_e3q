@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1857,6 +1857,47 @@ QDF_STATUS hdd_get_rx_nss(struct wlan_hdd_link_info *link_info, uint8_t *rx_nss)
 	return status;
 }
 
+int hdd_phymode_to_vendor_mode(eCsrPhyMode csr_phy_mode,
+			       enum qca_wlan_vendor_phy_mode *vendor_phy_mode)
+{
+	switch (csr_phy_mode) {
+	case eCSR_DOT11_MODE_AUTO:
+	case eCSR_DOT11_MODE_11be:
+	case eCSR_DOT11_MODE_11be_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_AUTO;
+		break;
+	case eCSR_DOT11_MODE_11a:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11A;
+		break;
+	case eCSR_DOT11_MODE_11b:
+	case eCSR_DOT11_MODE_11b_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11B;
+		break;
+	case eCSR_DOT11_MODE_11g:
+	case eCSR_DOT11_MODE_11g_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11G;
+		break;
+	case eCSR_DOT11_MODE_11n:
+	case eCSR_DOT11_MODE_11n_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11AGN;
+		break;
+	case eCSR_DOT11_MODE_11ac:
+	case eCSR_DOT11_MODE_11ac_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11AC_VHT160;
+		break;
+	case eCSR_DOT11_MODE_11ax:
+	case eCSR_DOT11_MODE_11ax_ONLY:
+		*vendor_phy_mode = QCA_WLAN_VENDOR_PHY_MODE_11AX_HE160;
+		break;
+	case eCSR_DOT11_MODE_abg:
+	default:
+		hdd_err("Not supported mode %d", csr_phy_mode);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int hdd_vendor_mode_to_phymode(enum qca_wlan_vendor_phy_mode vendor_phy_mode,
 			       eCsrPhyMode *csr_phy_mode)
 {
@@ -2021,6 +2062,7 @@ int hdd_phymode_to_dot11_mode(eCsrPhyMode phymode,
 {
 	switch (phymode) {
 	case eCSR_DOT11_MODE_AUTO:
+	case eCSR_DOT11_MODE_11be:
 		*dot11_mode = eHDD_DOT11_MODE_AUTO;
 		break;
 	case eCSR_DOT11_MODE_11a:
@@ -2301,6 +2343,9 @@ int hdd_set_tx_stbc(struct wlan_hdd_link_info *link_info, int value)
 					link_info->vdev_id, value);
 	if (ret)
 		hdd_err("Failed to set HE TX STBC value");
+
+	ret = sme_set_auto_rate_stbc(mac_handle, link_info->vdev_id,
+				     (value ? 0 : 1));
 
 	return ret;
 }
@@ -2604,6 +2649,50 @@ static void hdd_restore_sme_config(struct wlan_hdd_link_info *link_info,
 	}
 }
 
+/**
+ * wlan_update_mlo_link_chn_width() - API to update mlo link chn width
+ * @adapter: the pointer to adapter
+ * @ch_width: channel width to update
+ * @link_id: mlo link id
+ *
+ * Get link id and channel bandwidth from user space and save in link_info.
+ * When link switch happen and host driver connect done, if the link change
+ * from standby to non-standby, ch_width will send to fw again.
+ *
+ * Return: QDF_STATUS
+ */
+
+#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_HDD_MULTI_VDEV_SINGLE_NDEV)
+static struct wlan_hdd_link_info *
+wlan_update_mlo_link_chn_width(struct hdd_adapter *adapter,
+			       enum phy_ch_width ch_width,
+			       uint8_t link_id)
+{
+	struct wlan_hdd_link_info *link_info;
+	struct hdd_station_ctx *sta_ctx;
+
+	link_info = hdd_get_link_info_by_ieee_link_id(adapter, link_id, false);
+	if (!link_info)
+		return NULL;
+
+	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(link_info);
+
+	sta_ctx->user_cfg_chn_width = ch_width;
+	hdd_debug("save ch_width:%u to link_id:%u vdev_id:%u",
+		  ch_width, link_id, link_info->vdev_id);
+
+	return link_info;
+}
+#else
+static struct wlan_hdd_link_info *
+wlan_update_mlo_link_chn_width(struct hdd_adapter *adapter,
+			       enum phy_ch_width ch_width,
+			       uint8_t link_id)
+{
+	return NULL;
+}
+#endif
+
 int hdd_update_channel_width(struct wlan_hdd_link_info *link_info,
 			     enum eSirMacHTChannelWidth chwidth,
 			     uint32_t bonding_mode, uint8_t link_id,
@@ -2611,11 +2700,10 @@ int hdd_update_channel_width(struct wlan_hdd_link_info *link_info,
 {
 	struct hdd_context *hdd_ctx;
 	int ret;
-	enum phy_ch_width ch_width = CH_WIDTH_INVALID;
+	enum phy_ch_width ch_width;
 	struct wlan_objmgr_vdev *link_vdev;
 	struct wlan_objmgr_vdev *vdev;
 	struct wlan_hdd_link_info *link_info_t;
-	bool is_mlo_link = false;
 	uint8_t link_vdev_id;
 	enum QDF_OPMODE op_mode;
 	QDF_STATUS status;
@@ -2628,23 +2716,42 @@ int hdd_update_channel_width(struct wlan_hdd_link_info *link_info,
 		return -EINVAL;
 	}
 
-	vdev = link_info->vdev;
-	if (!vdev) {
-		mlme_legacy_err("vdev %d: vdev not found", vdev_id);
-		return QDF_STATUS_E_FAILURE;
+	op_mode = link_info->adapter->device_mode;
+	if (op_mode != QDF_STA_MODE) {
+		hdd_debug("vdev %d: op mode %d, CW update not supported",
+			  vdev_id, op_mode);
+		return -EINVAL;
 	}
 
-	if (wlan_vdev_mlme_is_mlo_vdev(vdev) && link_id != 0xFF) {
-		link_vdev = mlo_get_vdev_by_link_id(vdev, link_id,
-						    WLAN_MLME_OBJMGR_ID);
-		if (!link_vdev) {
-			mlme_legacy_debug("vdev is null for the link id:%u",
-					  link_id);
-			wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_OBJMGR_ID);
-			return QDF_STATUS_E_FAILURE;
+	vdev = hdd_objmgr_get_vdev_by_user(link_info, WLAN_OSIF_ID);
+	if (!vdev) {
+		hdd_err("vdev %d: vdev not found", vdev_id);
+		return -EINVAL;
+	}
+
+	ch_width = hdd_convert_chwidth_to_phy_chwidth(chwidth);
+
+	/**
+	 * Link_id check is for disconnect restore process.
+	 * Disconnect will not update channel bandwidth into cache struct.
+	 */
+	if (wlan_vdev_mlme_is_mlo_vdev(vdev) &&
+	    link_id != WLAN_INVALID_LINK_ID) {
+		link_info_t = wlan_update_mlo_link_chn_width(link_info->adapter,
+							     ch_width, link_id);
+		if (!link_info_t) {
+			hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_ID);
+			return -EINVAL;
 		}
-		is_mlo_link = true;
-		link_vdev_id = wlan_vdev_get_id(link_vdev);
+
+		hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_ID);
+
+		link_vdev = hdd_objmgr_get_vdev_by_user(link_info_t,
+							WLAN_OSIF_ID);
+		if (!link_vdev)
+			return 0;
+
+		link_vdev_id = link_info_t->vdev_id;
 		status = wlan_mlme_get_bw_no_punct(hdd_ctx->psoc,
 						   link_vdev,
 						   wlan_vdev_mlme_get_des_chan(link_vdev),
@@ -2654,43 +2761,34 @@ int hdd_update_channel_width(struct wlan_hdd_link_info *link_info,
 	} else {
 		link_vdev = vdev;
 		link_vdev_id = vdev_id;
-		mlme_legacy_debug("vdev mlme is not mlo vdev");
-	}
-
-	link_info_t = hdd_get_link_info_by_vdev(hdd_ctx, link_vdev_id);
-	if (!link_info_t) {
-		mlme_legacy_debug("vdev mlme is not mlo vdev");
-		return QDF_STATUS_E_FAILURE;
+		link_info_t = link_info;
 	}
 
 	if (ucfg_mlme_is_chwidth_with_notify_supported(hdd_ctx->psoc) &&
 	    hdd_cm_is_vdev_connected(link_info_t)) {
-		op_mode = wlan_vdev_mlme_get_opmode(vdev);
-		if (op_mode != QDF_STA_MODE) {
-			mlme_legacy_debug("vdev %d: op mode %d, CW update not supported",
-				          link_vdev_id, op_mode);
-			wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_OBJMGR_ID);
-			return QDF_STATUS_E_NOSUPPORT;
-		}
-
 		ch_width = hdd_convert_chwidth_to_phy_chwidth(chwidth);
 		hdd_debug("vdev %d : process update ch width request to %d",
 			  link_vdev_id, ch_width);
-
 		status = ucfg_mlme_send_ch_width_update_with_notify(hdd_ctx->psoc,
 								    link_vdev,
 								    ch_width,
 								    link_vdev_id);
-		if (is_mlo_link)
-			wlan_objmgr_vdev_release_ref(link_vdev,
-						     WLAN_MLME_OBJMGR_ID);
-		if (QDF_IS_STATUS_ERROR(status))
+
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_objmgr_put_vdev_by_user(link_vdev, WLAN_OSIF_ID);
 			return -EIO;
+		}
 		status = hdd_update_bss_rate_flags(link_info_t, hdd_ctx->psoc,
 						   ch_width);
-		if (QDF_IS_STATUS_ERROR(status))
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_objmgr_put_vdev_by_user(link_vdev, WLAN_OSIF_ID);
 			return -EIO;
+		}
+
+		hdd_objmgr_put_vdev_by_user(link_vdev, WLAN_OSIF_ID);
+		return 0;
 	}
+	hdd_objmgr_put_vdev_by_user(link_vdev, WLAN_OSIF_ID);
 
 	ret = wma_cli_set_command(link_vdev_id, wmi_vdev_param_chwidth,
 				  chwidth, VDEV_CMD);

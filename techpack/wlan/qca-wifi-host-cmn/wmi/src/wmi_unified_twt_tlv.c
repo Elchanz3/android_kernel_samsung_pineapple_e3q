@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -126,9 +126,10 @@ static QDF_STATUS send_twt_disable_cmd_tlv(wmi_unified_t wmi_handle,
 			(wmi_twt_disable_cmd_fixed_param));
 
 	cmd->pdev_id =
-		wmi_handle->ops->convert_pdev_id_host_to_target(
+		wmi_handle->ops->convert_host_pdev_id_to_target(
 						wmi_handle,
 						params->pdev_id);
+
 	if (params->ext_conf_present) {
 		TWT_EN_DIS_FLAGS_SET_SPLIT_CONFIG(cmd->flags, 1);
 		TWT_EN_DIS_FLAGS_SET_REQ_RESP(cmd->flags, params->twt_role);
@@ -137,6 +138,9 @@ static QDF_STATUS send_twt_disable_cmd_tlv(wmi_unified_t wmi_handle,
 
 	cmd->reason_code = wmi_convert_dis_reason_code(
 					params->dis_reason_code);
+
+	wmi_debug("pdev id %d, flags %d reason code %d", cmd->pdev_id, cmd->flags,
+		cmd->reason_code);
 	status = wmi_unified_cmd_send(wmi_handle, buf, sizeof(*cmd),
 				      WMI_TWT_DISABLE_CMDID);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -678,6 +682,13 @@ static QDF_STATUS extract_twt_add_dialog_comp_additional_parameters
 	additional_params->b_twt_id0 = TWT_FLAGS_GET_BTWT_ID0(flags);
 	additional_params->info_frame_disabled =
 				TWT_FLAGS_GET_TWT_INFO_FRAME_DISABLED(flags);
+
+	if (wmi_service_enabled(wmi_handle, wmi_service_sta_twt_stats_ext)) {
+		additional_params->implicit = TWT_FLAGS_GET_IMPLICIT(flags);
+		additional_params->renegotiate = TWT_FLAGS_GET_RENEGOTIATE(
+									flags);
+	}
+
 	additional_params->wake_dur_us = param_buf->twt_params[idx].wake_dur_us;
 	additional_params->wake_intvl_us =
 				param_buf->twt_params[idx].wake_intvl_us;
@@ -721,6 +732,8 @@ wmi_get_converted_twt_del_dialog_status(WMI_DEL_TWT_STATUS_T tgt_status)
 		return HOST_TWT_DEL_STATUS_CHAN_SW_IN_PROGRESS;
 	case WMI_DEL_TWT_STATUS_SCAN_IN_PROGRESS:
 		return HOST_TWT_DEL_STATUS_SCAN_IN_PROGRESS;
+	case WMI_DEL_TWT_STATUS_UNSUPPORTED_MLMR_MODE:
+		return HOST_TWT_DEL_STATUS_MULTIPLE_LINKS_ACTIVE_TERMINATE;
 	default:
 		return HOST_TWT_DEL_STATUS_UNKNOWN_ERROR;
 	}
@@ -1093,13 +1106,21 @@ extract_twt_session_stats_event_data(wmi_unified_t wmi_handle,
 		return QDF_STATUS_E_INVAL;
 	}
 
-	if (idx >= param_buf->num_twt_sessions) {
+	/* For LL_LT_SAP vdev, firmware can send current tsf stats
+	 * even if twt session is not present using event_type as
+	 * WMI_TWT_SESSION_QUERY_RSP
+	 */
+	if (idx > param_buf->num_twt_sessions) {
 		wmi_err("wrong idx, idx=%d, num_sessions=%d",
 			 idx, param_buf->num_twt_sessions);
 		return QDF_STATUS_E_INVAL;
 	}
 
 	twt_session = &param_buf->twt_sessions[idx];
+	if (!twt_session) {
+		wmi_err("twt_session stats not present for idx %d", idx);
+		return QDF_STATUS_E_INVAL;
+	}
 
 	session->vdev_id = twt_session->vdev_id;
 	m1 = &twt_session->peer_mac;
@@ -1124,11 +1145,15 @@ extract_twt_session_stats_event_data(wmi_unified_t wmi_handle,
 	session->sp_offset_us = twt_session->sp_offset_us;
 	session->sp_tsf_us_lo = twt_session->sp_tsf_us_lo;
 	session->sp_tsf_us_hi = twt_session->sp_tsf_us_hi;
-	wmi_debug("type=%d id=%d bcast=%d trig=%d announ=%d diagid=%d wake_dur=%ul wake_int=%ul offset=%ul",
+	session->curr_tsf_us_lo = twt_session->curr_tsf_us_lo;
+	session->curr_tsf_us_hi = twt_session->curr_tsf_us_hi;
+	wmi_debug("type=%d id=%d bcast=%d trig=%d announ=%d diagid=%d wake_dur=%ul wake_int=%ul offset=%ul sp_tsf_us_lo=%ul sp_tsf_us_hi=%ul curr_tsf_us_lo=%ul curr_tsf_us_hi=%ul",
 		 session->event_type, session->flow_id,
 		 session->bcast, session->trig,
 		 session->announ, session->dialog_id, session->wake_dura_us,
-		 session->wake_intvl_us, session->sp_offset_us);
+		 session->wake_intvl_us, session->sp_offset_us,
+		 session->sp_tsf_us_lo, session->sp_tsf_us_hi,
+		 session->curr_tsf_us_lo, session->curr_tsf_us_hi);
 	wmi_debug("resp_pm_valid=%d resp_pm=%d",
 		  session->pm_responder_bit_valid, session->pm_responder_bit);
 
@@ -1152,6 +1177,17 @@ static QDF_STATUS extract_twt_cap_service_ready_ext2_tlv(
 
 	var->twt_ack_support_cap = WMI_GET_BITS(twt_caps->twt_capability_bitmap,
 						0, 1);
+
+	if (wmi_service_enabled(wmi_handle, wmi_service_sta_twt_stats_ext)) {
+		var->max_wake_dur = TWT_CAPS_GET_MAX_WAKE_DUR(
+					twt_caps->min_max_wake_dur_us);
+		var->min_wake_dur = TWT_CAPS_GET_MIN_WAKE_DUR(
+					twt_caps->min_max_wake_dur_us);
+		var->max_wake_intvl = TWT_CAPS_GET_MAX_WAKE_INTVL(
+					twt_caps->min_max_wake_intvl_us);
+		var->min_wake_intvl = TWT_CAPS_GET_MIN_WAKE_INTVL(
+					twt_caps->min_max_wake_intvl_us);
+	}
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -2235,11 +2271,15 @@ extract_twt_session_stats_event_data(wmi_unified_t wmi_handle,
 	session->sp_offset_us = twt_session->sp_offset_us;
 	session->sp_tsf_us_lo = twt_session->sp_tsf_us_lo;
 	session->sp_tsf_us_hi = twt_session->sp_tsf_us_hi;
-	wmi_debug("type=%d id=%d bcast=%d trig=%d announ=%d diagid=%d wake_dur=%ul wake_int=%ul offset=%ul",
+	session->curr_tsf_us_lo = twt_session->curr_tsf_us_lo;
+	session->curr_tsf_us_hi = twt_session->curr_tsf_us_hi;
+	wmi_debug("type=%d id=%d bcast=%d trig=%d announ=%d diagid=%d wake_dur=%ul wake_int=%ul offset=%ul sp_tsf_us_lo=%ul sp_tsf_us_hi=%ul curr_tsf_us_lo=%ul curr_tsf_us_hi=%ul",
 		 session->event_type, session->flow_id,
 		 session->bcast, session->trig,
 		 session->announ, session->dialog_id, session->wake_dura_us,
-		 session->wake_intvl_us, session->sp_offset_us);
+		 session->wake_intvl_us, session->sp_offset_us,
+		 session->sp_tsf_us_lo, session->sp_tsf_us_hi,
+		 session->curr_tsf_us_lo, session->curr_tsf_us_hi);
 	wmi_debug("resp_pm_valid=%d resp_pm=%d",
 		  session->pm_responder_bit_valid, session->pm_responder_bit);
 

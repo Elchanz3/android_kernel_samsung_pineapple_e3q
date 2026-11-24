@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -128,6 +128,17 @@ wlan_twt_nudge_req(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS wlan_twt_ac_pdev_param_send(struct wlan_objmgr_psoc *psoc,
 				       enum twt_traffic_ac twt_ac);
 
+/**
+ * wlan_twt_send_unavailability_mode() - Send TWT unavailability mode
+ * @psoc: Pointer to PSOC object
+ * @vdev: Pointer to vdev object
+ * @unavailability_mode: unavailability mode value
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS wlan_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+					     struct wlan_objmgr_vdev *vdev,
+					     bool unavailability_mode);
 /**
  * wlan_twt_is_setup_in_progress() - Get if TWT setup command is in progress
  * for given dialog id
@@ -318,6 +329,78 @@ void wlan_twt_set_work_params(
 void wlan_twt_get_work_params(struct wlan_objmgr_vdev *vdev,
 			      struct twt_work_params *params,
 			      uint32_t *next_action);
+
+/*
+ * wlan_twt_cfg_get_wake_dur_and_interval() - Get TWT wake duration and wake
+ * interval of peer.
+ * @psoc: Pointer to psoc object
+ * @vdev_id: Vdev Id
+ * @peer_mac: Peer mac address
+ * @dialog_id: Dialog Id
+ * @wake_dur: TWT wake duration
+ * @wake_interval: TWT wake interval
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_twt_cfg_get_wake_dur_and_interval(struct wlan_objmgr_psoc *psoc,
+				       uint8_t vdev_id,
+				       struct qdf_mac_addr *peer_mac,
+				       uint32_t *dialog_id,
+				       uint32_t *wake_dur,
+				       uint32_t *wake_interval);
+
+/**
+ * wlan_is_twt_session_present_for_given_peer() - Check whether TWT
+ * session is present for a given peer
+ * @psoc: psoc object
+ * @peer_macaddr: peer macaddr
+ *
+ * Return: boolean value
+ */
+bool
+wlan_is_twt_session_present_for_given_peer(struct wlan_objmgr_psoc *psoc,
+					   uint8_t *peer_macaddr);
+
+/**
+ * wlan_twt_set_requestor_enable_cmd_in_progress - Check and set TWT requestor
+ * enable command in progress
+ * @psoc: Pointer to psoc object
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_twt_set_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * wlan_twt_reset_requestor_enable_cmd_in_progress - Reset TWT requestor
+ * enable command in progress
+ * @psoc: Pointer to psoc object
+ *
+ * Return: None
+ */
+void
+wlan_twt_reset_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * wlan_twt_tgt_caps_get_wake_dur_and_wake_intvl() - get min_max_wake_dur
+ * and min_max_wake_intvl supported by firmware
+ * @psoc: psoc pointer
+ * @min_wake_dur: min wake_dur supported by firmware
+ * @max_wake_dur: max wake_dur supported by firmware
+ * @min_wake_intvl: min wake_intvl supported by firmware
+ * @max_wake_intvl: max wake_intvl supported by firmware
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_twt_tgt_caps_get_wake_dur_and_wake_intvl(
+				struct wlan_objmgr_psoc *psoc,
+				uint32_t *min_wake_dur,
+				uint32_t *max_wake_dur,
+				uint32_t *min_wake_intvl,
+				uint32_t *max_wake_intvl);
+
 #else
 
 static inline bool
@@ -382,6 +465,22 @@ wlan_twt_ac_pdev_param_send(struct wlan_objmgr_psoc *psoc,
 			    enum twt_traffic_ac twt_ac)
 {
 	return QDF_STATUS_SUCCESS;
+}
+
+static inline
+QDF_STATUS wlan_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+					     struct wlan_objmgr_vdev *vdev,
+					     bool unavailability_mode)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline
+QDF_STATUS wlan_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+					     struct wlan_objmgr_vdev *vdev,
+					     bool unavailability_mode)
+{
+	return QDF_STATUS_E_NOSUPPORT;
 }
 
 static inline bool
@@ -493,5 +592,50 @@ void wlan_twt_get_work_params(struct wlan_objmgr_vdev *vdev,
 			      struct twt_work_params *params,
 			      uint32_t *next_action)
 {
+}
+
+QDF_STATUS
+wlan_twt_cfg_get_wake_dur_and_interval(struct wlan_objmgr_psoc *psoc,
+				       uint8_t vdev_id,
+				       struct qdf_mac_addr *peer_mac,
+				       uint32_t *dialog_id,
+				       uint32_t *wake_dur,
+				       uint32_t *wake_interval)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+bool
+wlan_is_twt_session_present_for_given_peer(struct wlan_objmgr_psoc *psoc,
+					   uint8_t *peer_macaddr)
+{
+	return 0;
+}
+
+static inline QDF_STATUS
+wlan_twt_set_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline void
+wlan_twt_reset_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+}
+
+QDF_STATUS
+wlan_twt_tgt_caps_get_wake_dur_and_wake_intvl(
+				struct wlan_objmgr_psoc *psoc,
+				uint32_t *min_wake_dur,
+				uint32_t *max_wake_dur,
+				uint32_t *min_wake_intvl,
+				uint32_t *max_wake_intvl)
+{
+	*min_wake_dur = 0;
+	*max_wake_dur = 0;
+	*min_wake_intvl = 0;
+	*max_wake_intvl = 0;
+
+	return QDF_STATUS_SUCCESS;
 }
 #endif

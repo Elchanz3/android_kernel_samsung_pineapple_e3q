@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -42,6 +42,16 @@ void wlan_scan_get_feature_info(struct wlan_objmgr_psoc *psoc,
 #endif
 
 /**
+ * wlan_scan_get_scan_cache_report_max_time_in_sec() - Get scan cache report
+ * max time in second info
+ * @psoc: pointer to psoc object
+ *
+ * Return: scan cache report max time in min value
+ */
+uint64_t
+wlan_scan_get_scan_cache_report_max_time_in_sec(struct wlan_objmgr_psoc *psoc);
+
+/**
  * wlan_scan_get_scan_entry_by_mac_freq() - API to get scan entry
  * info from scan db by mac addr
  * @pdev: pointer to pdev object
@@ -54,6 +64,22 @@ struct scan_cache_entry *
 wlan_scan_get_scan_entry_by_mac_freq(struct wlan_objmgr_pdev *pdev,
 				     struct qdf_mac_addr *bssid,
 				     uint16_t freq);
+
+/*
+ * wlan_scan_entry_by_bssid_and_security() - API to get scan entry
+ * from the bssid and crypto params of the vdev
+ * @pdev: pointer to pdev object
+ * @bssid: pointer to mac addr
+ * @vdev_id: vdev id
+ *
+ * Return: scan entry if found, else NULL
+ *
+ * Caller needs to free the scan entry after use
+ */
+struct scan_cache_entry *
+wlan_scan_entry_by_bssid_and_security(struct wlan_objmgr_pdev *pdev,
+				      struct qdf_mac_addr *bssid,
+				      uint8_t vdev_id);
 
 /**
  * wlan_scan_cfg_set_active_2g_dwelltime() - API to set scan active 2g dwelltime
@@ -327,6 +353,7 @@ bool wlan_scan_is_snr_monitor_enabled(struct wlan_objmgr_psoc *psoc);
  * @buf: frame buf
  * @rx_param: rx event params
  * @frm_type: frame type
+ * @is_gen_entry: is generated entry
  *
  * handle bcn without posting to scheduler thread, this should be called
  * while caller is already in scheduler thread context
@@ -337,7 +364,8 @@ QDF_STATUS
 wlan_scan_process_bcn_probe_rx_sync(struct wlan_objmgr_psoc *psoc,
 				    qdf_nbuf_t buf,
 				    struct mgmt_rx_event_params *rx_param,
-				    enum mgmt_frame_type frm_type);
+				    enum mgmt_frame_type frm_type,
+				    bool is_gen_entry);
 
 /**
  * wlan_scan_get_aging_time  - Get the scan aging time config
@@ -542,6 +570,18 @@ struct scan_cache_entry *
 wlan_scan_get_entry_by_bssid(struct wlan_objmgr_pdev *pdev,
 			     struct qdf_mac_addr *bssid);
 
+/*
+ * wlan_scan_flush_locally_generated_entry() - Function to flush
+ * locally generated scan entry
+ * @pdev: pdev object
+ * @bssid: bssid to be fetched from scan db
+ *
+ * Return : true if scan entry is flushed; false otherwise
+ */
+bool
+wlan_scan_flush_locally_generated_entry(struct wlan_objmgr_pdev *pdev,
+					struct qdf_mac_addr *bssid);
+
 /**
  * wlan_scan_get_mld_addr_by_link_addr() - Function to get MLD address
  * in the scan entry from the link BSSID.
@@ -559,6 +599,7 @@ wlan_scan_get_mld_addr_by_link_addr(struct wlan_objmgr_pdev *pdev,
 				    struct qdf_mac_addr *link_addr,
 				    struct qdf_mac_addr *mld_mac_addr);
 
+#ifdef WLAN_AUX_SUPPORT
 /**
  * wlan_scan_get_aux_support() - get aux scan policy
  * @psoc: psoc object
@@ -568,5 +609,106 @@ wlan_scan_get_mld_addr_by_link_addr(struct wlan_objmgr_pdev *pdev,
  * Return: true/false
  */
 bool wlan_scan_get_aux_support(struct wlan_objmgr_psoc *psoc);
+#else
+static inline bool wlan_scan_get_aux_support(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+#endif /*WLAN_AUX_SUPPORT*/
 
+static inline bool
+wlan_scan_entries_contain_cmn_akm(struct scan_cache_entry *entry1,
+				  struct scan_cache_entry *entry2)
+{
+	return scm_scan_entries_contain_cmn_akm(entry1, entry2);
+}
+
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+/**
+ * wlan_cfg80211_scan_request_cached_scan_report() - Function to send command
+ * to FW to get the cached scan report.
+ * @wiphy: Global WIPHY pointer.
+ * @wdev: WDEV pointer on the interface.
+ * @pdev: PDEV object manager.
+ *
+ * The API checks the FW capability on whether a request can be sent to FW
+ * to get cached scan report while the device is in WOW and waits for FW
+ * response. To avoid entering WOW while waiting, the API takes wakelock and
+ * RTPM lock. The wait will resume on FW event completing the event or when
+ * timeouts.
+ *
+ * On success, in the same context a vendor response is sent with the fetched
+ * scan report.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_cfg80211_scan_request_cached_scan_report(struct wiphy *wiphy,
+					      struct wireless_dev *wdev,
+					      struct wlan_objmgr_pdev *pdev);
+
+/**
+ * wlan_scan_cached_scan_report_ev_handler() - Handler API for received
+ * cached scan report from FW.
+ * @pdev: PDEV object manager
+ * @data: Pointer to data extracted from FW event.
+ *
+ * The API completes the data processing for any waiting threads to consume and
+ * if no threads are waiting the buffer pointed by @data is consumed by this
+ * API. The API makes sure to typecast or conversions if any for the consumers
+ * to use.
+ *
+ * Return: QDF_STATUS.
+ */
+QDF_STATUS
+wlan_scan_cached_scan_report_ev_handler(struct wlan_objmgr_pdev *pdev,
+					void *data);
+
+static inline bool
+wlan_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev)
+{
+	return scm_scan_get_cached_scan_report_fw_cap(pdev);
+}
+
+/**
+ * wlan_scan_register_cached_scan_ev_handler() - Wrapper API to register
+ * callback function to handle cached scan report
+ * @pdev: PDEV object manager
+ *
+ * Return: void
+ */
+void wlan_scan_register_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * wlan_scan_deregister_cached_scan_ev_handler() - Wrapper API to deregister
+ * callback function to handle cached scan report.
+ * @pdev: PDEV object manager.
+ * Returun: void
+ */
+void wlan_scan_deregister_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev);
+
+static inline QDF_STATUS
+wlan_scan_request_cached_scan_report(struct wlan_objmgr_pdev *pdev)
+{
+	return scm_scan_request_cached_scan_report(pdev);
+}
+#else
+static inline void
+wlan_scan_register_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+}
+
+static inline void
+wlan_scan_deregister_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+}
+#endif
+
+/**
+ * wlan_scan_set_obss_scan_enable() - Wrapper API to set OBSS scan enable flag
+ * @vdev: vdev pointer
+ *
+ * Returun: void
+ */
+void wlan_scan_set_obss_scan_enable(struct wlan_objmgr_vdev *vdev);
 #endif

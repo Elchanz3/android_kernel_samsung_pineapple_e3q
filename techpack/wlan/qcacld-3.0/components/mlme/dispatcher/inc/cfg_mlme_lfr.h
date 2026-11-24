@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -92,7 +93,7 @@
 # define RoamScan_AwayTime_default 0
 # define RoamRSSI_Trigger_min -100
 # define RoamRSSI_Trigger_max -50
-# define RoamRSSI_Trigger_default -78
+# define RoamRSSI_Trigger_default -76
 # define RoamCU_Trigger_min 0
 # define RoamCU_Trigger_max 100
 # define RoamCU_Trigger_default 70
@@ -126,6 +127,7 @@
 # define RoamIdle_InactiveTime_default 10
 #endif
 
+# define Aggressive_RoamRSSI_Trigger_default -65
 /*
  * <ini>
  * RoamScan_PassiveCH_DwellTime - Set max channel time for roam passive scan
@@ -1407,6 +1409,38 @@
 
 /*
  * <ini>
+ * roam_rssi_delta_from_6ghz_to_non_6ghz - Enable roam to  Non 6 GHz AP based
+ * on rssi
+ * @Min: 0
+ * @Max: 100
+ * @Default: 0
+ *
+ * This INI is used to decide whether to roam to Non 6 GHz AP or not based on
+ * RSSI. AP1 is the currently associated AP(6 GHz) and AP2(2.4 GHz / 5 GHz) is
+ * chosen for roaming. The Roaming will happen only if AP2 has better Signal
+ * Quality and it has a RSSI better than AP1.
+ * roam_rssi_delta_from_6ghz_to_non_6ghz is the number of dB units AP2 is
+ * better than AP1.
+ *
+ *
+ * Related: None
+ *
+ * Supported Feature: Roaming
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_LFR_ROAM_RSSI_DELTA_6GHZ_TO_NON_6GHZ CFG_INI_UINT( \
+	"roam_rssi_delta_from_6ghz_to_non_6ghz", \
+	0, \
+	100, \
+	0, \
+	CFG_VALUE_OR_DEFAULT, \
+	"Enable 6 GHz to non 6 GHz roam based on rssi")
+
+/*
+ * <ini>
  * bg_rssi_threshold - To set RSSI Threshold for BG scan roaming
  * @Min: 0
  * @Max: 100
@@ -1560,9 +1594,9 @@
  * <ini>
  * gNeighborLookupThreshold/RoamRSSI_Trigger - Set neighbor lookup rssi
  * threshold
- * @Min: 50
- * @Max: 100
- * @Default: 78
+ * @Min: -100
+ * @Max: -50
+ * @Default: -76
  *
  * This is used to control the RSSI threshold for neighbor lookup.
  *
@@ -1579,6 +1613,32 @@
 	RoamRSSI_Trigger_min, \
 	RoamRSSI_Trigger_max, \
 	RoamRSSI_Trigger_default, \
+	CFG_VALUE_OR_DEFAULT, \
+	"Neighbor lookup rssi threshold")
+
+/*
+ * <ini>
+ * Aggressive_RoamRSSI_Trigger  - Set neighbor
+ * lookup rssi threshold
+ * @Min: -100
+ * @Max: -50
+ * @Default: -65
+ *
+ * This is used to control the Aggressive RSSI threshold for neighbor lookup.
+ *
+ * Related: None
+ *
+ * Supported Feature: LFR Scan
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_LFR_AGGRESSIVE_NEIGHBOR_LOOKUP_RSSI_THRESHOLD CFG_INI_INT( \
+	"Aggressive_RoamRSSI_Trigger", \
+	RoamRSSI_Trigger_min, \
+	RoamRSSI_Trigger_max, \
+	Aggressive_RoamRSSI_Trigger_default, \
 	CFG_VALUE_OR_DEFAULT, \
 	"Neighbor lookup rssi threshold")
 
@@ -2239,6 +2299,29 @@
 		CFG_VALUE_OR_DEFAULT, \
 		"bss load threshold")
 
+ /*
+  * <ini>
+  * bss_load_alpha - bss load multiplier value in percentage of the current
+  * channel utilization which should be used to calculate the bss load average
+  * @Min: 0
+  * @Max: 100
+  * @Default: 70
+  *
+  * Related: None
+  *
+  * Supported Feature: Roaming
+  *
+  * Usage: External
+  *
+  * </ini>
+  */
+#define CFG_BSS_LOAD_ALPHA CFG_INI_UINT( \
+		"bss_load_alpha", \
+		0, \
+		100, \
+		70, \
+		CFG_VALUE_OR_DEFAULT, \
+		"bss load alpha")
 /*
  * <ini>
  * bss_load_sample_time - Time in milliseconds for which the bss load values
@@ -3369,6 +3452,7 @@
 	CFG(CFG_LFR_FAST_TRANSITION_ENABLED) \
 	CFG(CFG_LFR_ROAM_RSSI_DIFF) \
 	CFG(CFG_LFR_ROAM_RSSI_DIFF_6GHZ) \
+	CFG(CFG_LFR_ROAM_RSSI_DELTA_6GHZ_TO_NON_6GHZ) \
 	CFG(CFG_LFR_ROAM_BG_RSSI_TH) \
 	CFG(CFG_LFR_ENABLE_WES_MODE) \
 	CFG(CFG_LFR_ROAM_SCAN_OFFLOAD_ENABLED) \
@@ -3397,6 +3481,7 @@
 	CFG(CFG_LFR_DELAY_BEFORE_VDEV_STOP) \
 	CFG(CFG_ENABLE_BSS_LOAD_TRIGGERED_ROAM) \
 	CFG(CFG_BSS_LOAD_THRESHOLD) \
+	CFG(CFG_BSS_LOAD_ALPHA) \
 	CFG(CFG_BSS_LOAD_SAMPLE_TIME) \
 	CFG(CFG_ROAM_CU_MONITOR_TIME) \
 	CFG(CFG_LFR3_ROAM_HO_DELAY_FOR_RX) \
@@ -3424,6 +3509,7 @@
 	CFG(CFG_LFR_BEACONLOSS_TIMEOUT_ON_WAKEUP) \
 	CFG(CFG_LFR_BEACONLOSS_TIMEOUT_ON_SLEEP) \
 	CFG(CFG_LFR3_ROAM_INFO_STATS_NUM) \
-	CFG(CFG_HS_20_BTM_OFFLOAD_DISABLE)
+	CFG(CFG_HS_20_BTM_OFFLOAD_DISABLE) \
+	CFG(CFG_LFR_AGGRESSIVE_NEIGHBOR_LOOKUP_RSSI_THRESHOLD)
 
 #endif /* CFG_MLME_LFR_H__ */

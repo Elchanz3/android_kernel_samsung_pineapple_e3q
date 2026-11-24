@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -163,6 +163,7 @@ static QDF_STATUS mlme_vdev_obj_destroy_handler(struct wlan_objmgr_vdev *vdev,
 						void *arg)
 {
 	struct vdev_mlme_obj *vdev_mlme;
+	struct wlan_objmgr_psoc *psoc;
 
 	if (!vdev) {
 		mlme_err(" VDEV is NULL");
@@ -170,8 +171,16 @@ static QDF_STATUS mlme_vdev_obj_destroy_handler(struct wlan_objmgr_vdev *vdev,
 	}
 
 	vdev_mlme = wlan_vdev_mlme_get_cmpt_obj(vdev);
+
 	if (!vdev_mlme) {
-		mlme_info(" VDEV MLME component object is NULL");
+		mlme_err("VDEV MLME component object is NULL");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	psoc = wlan_vdev_get_psoc(vdev);
+
+	if (!psoc) {
+		mlme_err("PSOC object is NULL");
 		return QDF_STATUS_SUCCESS;
 	}
 
@@ -183,8 +192,7 @@ static QDF_STATUS mlme_vdev_obj_destroy_handler(struct wlan_objmgr_vdev *vdev,
 					      vdev_mlme);
 
 	wlan_minidump_remove(vdev_mlme, sizeof(*vdev_mlme),
-			     wlan_vdev_get_psoc(vdev),
-			     WLAN_MD_OBJMGR_VDEV_MLME, "vdev_mlme");
+			     psoc, WLAN_MD_OBJMGR_VDEV_MLME, "vdev_mlme");
 
 	qdf_mem_free(vdev_mlme);
 
@@ -338,6 +346,11 @@ void wlan_vdev_mlme_notify_set_mac_addr_response(struct wlan_objmgr_vdev *vdev,
 {
 	if (wlan_vdev_mlme_is_mlo_link_switch_in_progress(vdev)) {
 		wlan_mlo_mgr_link_switch_set_mac_addr_resp(vdev, resp_status);
+		return;
+	}
+
+	if (wlan_vdev_mlme_is_mlo_link_rejection_in_progress(vdev)) {
+		wlan_mlo_mgr_link_rej_set_mac_addr_resp(vdev, resp_status);
 		return;
 	}
 

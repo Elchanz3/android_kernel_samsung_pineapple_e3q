@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -46,6 +46,8 @@
 #include "lim_session.h"
 #include "lim_ser_des_utils.h"
 #include "wlan_dlm_api.h"
+#include <lim_mlo.h>
+#include "wlan_tdls_api.h"
 
 /**
  * lim_delete_sta_util - utility function for deleting station context
@@ -114,6 +116,8 @@ static void lim_delete_sta_util(struct mac_context *mac_ctx, tpDeleteStaContext 
 #ifdef FEATURE_WLAN_TDLS
 		if (LIM_IS_STA_ROLE(session_entry) &&
 		    STA_ENTRY_TDLS_PEER == stads->staType) {
+			wlan_tdls_update_peer_kickout_count(session_entry->vdev,
+							    stads->staAddr);
 			/*
 			 * TeardownLink with PEER reason code
 			 * HAL_DEL_STA_REASON_CODE_KEEP_ALIVE means
@@ -164,7 +168,8 @@ static void lim_delete_sta_util(struct mac_context *mac_ctx, tpDeleteStaContext 
 
 #ifdef FEATURE_WLAN_TDLS
 		/* Delete all TDLS peers connected before leaving BSS */
-		lim_delete_tdls_peers(mac_ctx, session_entry);
+		lim_delete_tdls_peers(mac_ctx, session_entry,
+				      TDLS_PEER_DEL_REASON_NONE);
 #endif
 		if (LIM_IS_STA_ROLE(session_entry))
 			lim_post_sme_message(mac_ctx, LIM_MLM_DEAUTH_IND,
@@ -247,6 +252,8 @@ void lim_delete_sta_context(struct mac_context *mac_ctx,
 			ap_info.reject_ap_type = DRIVER_AVOID_TYPE;
 			ap_info.reject_reason = REASON_STA_KICKOUT;
 			ap_info.source = ADDED_BY_DRIVER;
+			wlan_update_mlo_reject_ap_info(mac_ctx->pdev,
+						       msg->vdev_id, &ap_info);
 			wlan_dlm_add_bssid_to_reject_list(mac_ctx->pdev,
 							  &ap_info);
 
@@ -333,11 +340,7 @@ lim_trigger_sta_deletion(struct mac_context *mac_ctx, tpDphHashNode sta_ds,
 	mlm_disassoc_ind.sessionId = session_entry->peSessionId;
 	lim_post_sme_message(mac_ctx, LIM_MLM_DISASSOC_IND,
 			(uint32_t *) &mlm_disassoc_ind);
-	if (mac_ctx->mlme_cfg->gen.fatal_event_trigger)
-		cds_flush_logs(WLAN_LOG_TYPE_FATAL,
-				WLAN_LOG_INDICATOR_HOST_DRIVER,
-				WLAN_LOG_REASON_HB_FAILURE,
-				false, false);
+
 	/* Issue Disassoc Indication to SME */
 	lim_send_sme_disassoc_ind(mac_ctx, sta_ds, session_entry);
 } /*** end lim_trigger_st_adeletion() ***/
@@ -403,14 +406,20 @@ lim_tear_down_link_with_ap(struct mac_context *mac, uint8_t sessionId,
 	 */
 	pe_session->pmmOffloadInfo.bcnmiss = false;
 
+	/* Delete all TDLS peers connected before leaving BSS */
+	lim_delete_tdls_peers(mac, pe_session, TDLS_PEER_DEL_REASON_NONE);
+
 	/* Announce loss of link to Roaming algorithm */
 	/* and cleanup by sending SME_DISASSOC_REQ to SME */
 
 	sta = dph_get_hash_entry(mac, DPH_STA_HASH_INDEX_PEER,
 				 &pe_session->dph.dphHashTable);
-
-	if (!sta)
+	if (!sta) {
+		pe_debug("vdev:%d no sta hash entry for peer:" QDF_MAC_ADDR_FMT,
+			 pe_session->vdev_id,
+			 QDF_MAC_ADDR_REF(pe_session->bssId));
 		return;
+	}
 
 	if ((sta->mlmStaContext.disassocReason ==
 	    REASON_DEAUTH_NETWORK_LEAVING) ||
@@ -419,11 +428,6 @@ lim_tear_down_link_with_ap(struct mac_context *mac, uint8_t sessionId,
 		pe_err("Host already issued deauth, do nothing");
 		return;
 	}
-
-#ifdef FEATURE_WLAN_TDLS
-	/* Delete all TDLS peers connected before leaving BSS */
-	lim_delete_tdls_peers(mac, pe_session);
-#endif
 
 	sta->mlmStaContext.disassocReason = reasonCode;
 	sta->mlmStaContext.cleanupTrigger = trigger;
@@ -460,6 +464,8 @@ lim_tear_down_link_with_ap(struct mac_context *mac, uint8_t sessionId,
 		sta->mlmStaContext.cleanupTrigger;
 
 	if (LIM_IS_STA_ROLE(pe_session)) {
+		lim_mlo_sta_notify_peer_disconn(pe_session);
+
 		lim_connectivity_bmiss_disconn_event(sta, mac->psoc, reasonCode,
 						     pe_session->vdev_id);
 

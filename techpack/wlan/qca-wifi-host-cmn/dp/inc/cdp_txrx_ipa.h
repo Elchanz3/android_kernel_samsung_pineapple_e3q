@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -539,7 +539,7 @@ cdp_ipa_setup_iface(ol_txrx_soc_handle soc, char *ifname, uint8_t *mac_addr,
 	}
 
 	if (soc->ops->ipa_ops->ipa_setup_iface)
-		return soc->ops->ipa_ops->ipa_setup_iface(ifname, mac_addr,
+		return soc->ops->ipa_ops->ipa_setup_iface(soc, ifname, mac_addr,
 							  prod_client,
 							  cons_client,
 							  session_id,
@@ -774,6 +774,7 @@ cdp_ipa_tx_buf_smmu_unmapping(ol_txrx_soc_handle soc, uint8_t pdev_id,
  * cdp_ipa_rx_buf_smmu_pool_mapping() - Create SMMU mappings for Rx pool
  * @soc: data path soc handle
  * @pdev_id: pdev id
+ * @is_ipa_deinit: called from ipa deinit
  * @create: Map/unmap
  * @line: line number
  * @func: function name
@@ -784,7 +785,8 @@ cdp_ipa_tx_buf_smmu_unmapping(ol_txrx_soc_handle soc, uint8_t pdev_id,
  */
 static inline QDF_STATUS
 cdp_ipa_rx_buf_smmu_pool_mapping(ol_txrx_soc_handle soc, uint8_t pdev_id,
-				 bool create, const char *func, uint32_t line)
+				 bool is_ipa_deinit, bool create,
+				 const char *func, uint32_t line)
 {
 	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
 		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
@@ -794,7 +796,7 @@ cdp_ipa_rx_buf_smmu_pool_mapping(ol_txrx_soc_handle soc, uint8_t pdev_id,
 
 	if (soc->ops->ipa_ops->ipa_rx_buf_smmu_pool_mapping)
 		return soc->ops->ipa_ops->ipa_rx_buf_smmu_pool_mapping(soc,
-						pdev_id, create, func, line);
+				pdev_id, is_ipa_deinit, create, func, line);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -929,6 +931,7 @@ cdp_ipa_update_peer_rx_stats(ol_txrx_soc_handle soc, uint8_t vdev_id,
 
 #ifdef IPA_OPT_WIFI_DP
 #define RX_CCE_SUPER_RULE_SETUP_NUM 2
+#define TX_SUPER_RULE_SETUP_NUM 3
 struct addr_params {
 	uint8_t valid;
 	uint8_t src_ipv4_addr[4];
@@ -942,6 +945,9 @@ struct addr_params {
 	uint32_t flt_hdl;
 	uint8_t ipa_flt_evnt_required;
 	bool ipa_flt_in_use;
+	qdf_event_t ipa_ctrl_flt_rm_evt;
+	uint16_t req_src;
+	uint8_t ipa_flt_add_success;
 };
 
 struct wifi_dp_flt_setup {
@@ -950,6 +956,25 @@ struct wifi_dp_flt_setup {
 	uint8_t num_filters;
 	uint32_t ipa_flt_evnt_response;
 	struct addr_params flt_addr_params[RX_CCE_SUPER_RULE_SETUP_NUM];
+};
+
+/*
+ * struct wifi_dp_tx_flt_setup - parameters for tx filter setup
+ * in opt_dp_ctrl
+ * @pdev_id: pdev ID
+ * @op: op code
+ * @num_filters: no. of filters
+ * @ipa_flt_evnt_response: filter event response
+ * @flt_addr_params: filter parameters
+ * @flt_rem_lock: spin lock for filter remove
+ */
+struct wifi_dp_tx_flt_setup {
+	uint8_t pdev_id;
+	uint8_t op;
+	uint8_t num_filters;
+	uint32_t ipa_flt_evnt_response;
+	struct addr_params flt_addr_params[TX_SUPER_RULE_SETUP_NUM];
+	qdf_spinlock_t flt_rem_lock;
 };
 
 static inline QDF_STATUS
@@ -968,6 +993,57 @@ cdp_ipa_rx_cce_super_rule_setup(ol_txrx_soc_handle soc,
 
 	return QDF_STATUS_SUCCESS;
 }
+
+#ifdef IPA_OPT_WIFI_DP_CTRL
+static inline QDF_STATUS
+cdp_ipa_tx_super_rule_setup(ol_txrx_soc_handle soc,
+			    void *flt_params)
+{
+	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
+			  "%s invalid instance", __func__);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (soc->ops->ipa_ops->ipa_tx_super_rule_setup)
+		return soc->ops->ipa_ops->ipa_tx_super_rule_setup(soc,
+								  flt_params);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+cdp_ipa_tx_opt_dp_ctrl_pkt(ol_txrx_soc_handle soc,
+			   uint8_t vdev_id, qdf_nbuf_t nbuf)
+{
+	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
+			  "%s invalid instance", __func__);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (soc->ops->ipa_ops->ipa_tx_opt_dp_ctrl_pkt)
+		return soc->ops->ipa_ops->ipa_tx_opt_dp_ctrl_pkt(soc,
+								 vdev_id,
+								 nbuf);
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline bool
+cdp_ipa_opt_dp_ctrl_debug_enable(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
+			  "%s invalid instance", __func__);
+		return false;
+	}
+
+	if (soc->ops->ipa_ops->ipa_tx_opt_dp_ctrl_pkt)
+		return soc->ops->ipa_ops->ipa_opt_dp_ctrl_debug_enable(soc);
+
+	return false;
+}
+#endif
 
 static inline QDF_STATUS
 cdp_ipa_opt_dp_enable_disable_low_power_mode(struct wlan_objmgr_pdev *pdev,
@@ -1030,6 +1106,20 @@ cdp_ipa_opt_dp_enable_disable_low_power_mode(struct wlan_objmgr_pdev *pdev,
 	return status;
 }
 #endif /* IPA_OPT_WIFI_DP */
+#ifndef IPA_OPT_WIFI_DP_CTRL
+static inline QDF_STATUS
+cdp_ipa_tx_opt_dp_ctrl_pkt(ol_txrx_soc_handle soc,
+			   uint8_t vdev_id, qdf_nbuf_t nbuf)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline bool
+cdp_ipa_opt_dp_ctrl_debug_enable(ol_txrx_soc_handle soc)
+{
+	return false;
+}
+#endif
 
 /**
  * cdp_ipa_get_wdi_version - Get WDI version
@@ -1049,6 +1139,50 @@ cdp_ipa_get_wdi_version(ol_txrx_soc_handle soc, uint8_t *wdi_ver)
 
 	if (soc->ops->ipa_ops->ipa_get_wdi_version)
 		soc->ops->ipa_ops->ipa_get_wdi_version(soc, wdi_ver);
+}
+
+/**
+ * cdp_ipa_check_is_ring_ipa_rx - check rx ring is used by IPA
+ * @soc: data path soc handle
+ * @ring_id: rx ring id
+ *
+ * Return: bool
+ */
+static inline bool
+cdp_ipa_check_is_ring_ipa_rx(ol_txrx_soc_handle soc, uint8_t ring_id)
+{
+	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_FATAL,
+			  "%s invalid instance", __func__);
+		return false;
+	}
+
+	if (soc->ops->ipa_ops->ipa_is_ring_ipa_rx)
+		return soc->ops->ipa_ops->ipa_is_ring_ipa_rx(soc, ring_id);
+
+	return false;
+}
+
+/**
+ * cdp_ipa_is_completion_pending() - Check for pending packets in tx comp ring
+ *
+ * @soc: DP SOC handle
+ *
+ * Return: True if entries are pending in completion ring, false otherwise
+ *
+ */
+static inline bool
+cdp_ipa_is_completion_pending(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ops || !soc->ops->ipa_ops) {
+		dp_err("pointer null");
+		return false;
+	}
+
+	if (soc->ops->ipa_ops->ipa_is_completion_pending)
+		return soc->ops->ipa_ops->ipa_is_completion_pending(soc);
+
+	return false;
 }
 #endif /* IPA_OFFLOAD */
 #endif /* _CDP_TXRX_IPA_H_ */

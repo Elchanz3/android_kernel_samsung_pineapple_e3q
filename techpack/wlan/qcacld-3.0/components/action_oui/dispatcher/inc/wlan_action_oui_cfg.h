@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -567,7 +567,7 @@
 	"gActionOUIDisableTWT", \
 	0, \
 	ACTION_OUI_MAX_STR_LEN, \
-	"001018 00 01 000986 00 01 000ce7 00 01 00e0fc 00 01", \
+	"001018 00 01 000986 00 01 000ce7 00 01 00e0fc 00 01 000b86 04 01040817 F0 01 000b86 04 0104080F F0 01 000b86 04 01040819 F0 01", \
 	"Used to specify action OUIs to control TWT configuration")
 
 /*
@@ -707,10 +707,11 @@
  * capability for specified AP with some conditions
  *
  * Example OUIs: (All values in Hex)
- * OUI 1: 000c43
- *       OUI data Len: 04
- *       OUI Data : 03000000
- *       OUI data Mask: F0 - 11110000
+ * gActionOUIDisableBFORMEE=00E04C 03 020160 E0 01
+ *       OUI: 00E04C
+ *       OUI data Len: 03
+ *       OUI Data : 020160
+ *       OUI data Mask: E0 - 11100000
  *       Info Mask : 01 - only OUI present in Info mask
  *
  * Refer to gEnableActionOUI for more detail about the format.
@@ -763,6 +764,44 @@
 
 /*
  * <ini>
+ * g_action_oui_enable_cts_2_self - Used to enable CTS2SELF for specified APs
+ *
+ * Default OUIs: (All values in Hex)
+ * OUI 1: 000C43
+ * OUI data Len: 04
+ * OUI Data : 07000000
+ * OUI data Mask: F0 - 11110000
+ * Info Mask : 21 - 0010 0001 Check for OUI and Band
+ * Capabilities: C0 - 1100 0000 Band == 2 GHz || Band == 5 GHz
+ *
+ * OUI 2 : 000C43
+ * OUI data Len : 04
+ * OUI Data : 03000000
+ * OUI data Mask: F0 - 11110000
+ * Info Mask : 21 - 0010 0001 Check for OUI and Band
+ * Capabilities: C0 - 1100 0000 Band == 2 GHz || Band == 5 GHz
+ *
+ * g_action_oui_enable_cts_2_self=000C43 04 07000000 F0 21 C0 000C43 04 03000000 F0 21 C0
+ *
+ * Refer to gEnableActionOUI for more detail about the format.
+ *
+ * Related: gEnableActionOUI
+ *
+ * Supported Feature: Action OUIs
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ACTION_OUI_ENABLE_CTS2SELF CFG_INI_STRING( \
+	"g_action_oui_enable_cts_2_self", \
+	0, \
+	ACTION_OUI_MAX_STR_LEN, \
+	"000C43 04 07000000 F0 21 C0 000C43 04 03000000 F0 21 C0", \
+	"Used to enable CTS2SELF frame for specified APs")
+
+/*
+ * <ini>
  * gActionOUISendSMPSFrameWithOMN - Used to send SMPS frame along with OMN
  * for specified APs
  *
@@ -792,6 +831,118 @@
 	"", \
 	"Used to send SMPS frame along with OMN for specified APs")
 
+/*
+ * <ini>
+ * gActionOUIRestrictMaxMLOLinks - Used to downgrade 3 link to 2 link ML
+ * connection for specific AP build version.
+ *
+ * Sample OUIs: (All values in Hex)
+ * OUI 3 : 8CFDF0
+ *   OUI data Len : 13
+ *   OUI Data : 040000494c510302097201cb17000009110000
+ *   OUI data Mask: FFFFE0 - 1111 1111 1111 1111 1110 0000
+ *   Info Mask : 01 - only OUI present in Info mask
+ *
+ * gActionOUIRestrictMaxMLOLinks=8CFDF0 13 040000494c510c00203000cb17000009110000 FFFFE0 01
+ * Refer to gEnableActionOUI for more detail about the format.
+ *
+ * Related: gEnableActionOUI
+ *
+ * Supported Feature: Action OUIs
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ACTION_OUI_RESTRICT_MAX_MLO_LINKS CFG_INI_STRING( \
+	"gActionOUIRestrictMaxMLOLinks", \
+	0, \
+	ACTION_OUI_MAX_STR_LEN, \
+	"8CFDF0 13 040000494c510302097201cb17000009110000 FFFFE0 01", \
+	"To restrict matching OUI APs to two link connection at max")
+
+/*
+ * <ini>
+ * CFG_ACTION_OUI_LIMIT_BW - Used to limit BW for specified AP
+ *
+ * Example OUIs: (All values in Hex)
+ * OUI 1: 00904c
+ *       OUI data Len: 04
+ *       OUI Data : 0201009C
+ *       OUI data Mask: F0 - 11110000
+ *       Info Mask : 01 - only OUI present in Info mask
+ *
+ * Refer to gEnableActionOUI for more detail about the format.
+ *
+ * Related: gEnableActionOUI
+ *
+ * Supported Feature: Action OUIs
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ACTION_OUI_LIMIT_BW CFG_INI_STRING( \
+	"gActionOUILimitBW", \
+	0, \
+	ACTION_OUI_MAX_STR_LEN, \
+	"", \
+	"Limit BW for specified AP")
+
+/*
+ * <ini>
+ * gActionOUIDisableAuxListen - Used to specify action OUIs to disable AUX
+ * Listen operation during the connection with specified APs.
+ *
+ * This ini is used to specify AP OUIs. Aux listen is prone to ITO issues.
+ * Thus, this INI is needed to ensure Aux listen can be disabled if we detect
+ * some ITO issue with specific APs.
+ * Note: User should strictly add new action OUIs at the end of this
+ * default value.
+ * If no OUI set, then allow STA to disable Aux listen for ALL APs.
+ * If INI is set to "ffffff 00 01", then STA is not allowed to disable Aux
+ * listen for any AP.
+ *
+ * Supported Feature: Action OUIs
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ACTION_OUI_DISABLE_AUX_LISTEN CFG_INI_STRING( \
+	"gActionOUIDisableAuxListen", \
+	0, \
+	ACTION_OUI_MAX_STR_LEN, \
+	"ffffff 00 01", \
+	"Used to specify action OUIs to control Aux listen configuration")
+
+/*
+ * <ini>
+ * CFG_ACTION_OUI_DISABLE_DYNAMIC_SMPS - Used to disable Dynamic SMPS
+ * capability for specified AP.
+ *
+ * Default OUIs: (All values in Hex)
+ * OUI 1: f832e4
+ *   OUI data Len: 00
+ *   Info Mask : 01 - only OUI present in Info mask
+ *
+ * Refer to gEnableActionOUI for more detail about the format.
+ *
+ * Related: gEnableActionOUI
+ *
+ * Supported Feature: Action OUIs
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ACTION_OUI_DISABLE_DYNAMIC_SMPS CFG_INI_STRING( \
+	"gActionOUIDisableDynamicSMPS", \
+	0, \
+	ACTION_OUI_MAX_STR_LEN, \
+	"F832E4 00 01", \
+	"disable dynamic SMPS capability for specified AP")
+
 #define CFG_ACTION_OUI \
 	CFG(CFG_ACTION_OUI_CCKM_1X1) \
 	CFG(CFG_ACTION_OUI_CONNECT_1X1) \
@@ -807,9 +958,14 @@
 	CFG(CFG_ACTION_OUI_TAKE_ALL_BAND_INFO) \
 	CFG(CFG_ACTION_OUI_11BE_ALLOW_LIST) \
 	CFG(CFG_ACTION_OUI_DISABLE_DYNAMIC_QOS_NULL_TX_RATE) \
+	CFG(CFG_ACTION_OUI_ENABLE_CTS2SELF) \
 	CFG(CFG_ACTION_OUI_ENABLE_CTS2SELF_WITH_QOS_NULL) \
+	CFG(CFG_ACTION_OUI_RESTRICT_MAX_MLO_LINKS) \
 	CFG(CFG_ACTION_OUI_SEND_SMPS_FRAME_WITH_OMN) \
 	CFG(CFG_ACTION_OUI_AUTH_ASSOC_6MBPS_2GHZ) \
 	CFG(CFG_ACTION_OUI_DISABLE_BFORMEE) \
+	CFG(CFG_ACTION_OUI_LIMIT_BW) \
+	CFG(CFG_ACTION_OUI_DISABLE_AUX_LISTEN) \
+	CFG(CFG_ACTION_OUI_DISABLE_DYNAMIC_SMPS) \
 	CFG(CFG_ENABLE_ACTION_OUI)
 #endif

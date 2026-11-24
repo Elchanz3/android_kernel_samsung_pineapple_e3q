@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -203,7 +203,6 @@ struct pld_platform_cap {
  * @PLD_FW_HANG_EVENT: firmware update hang event
  * @PLD_BUS_EVENT: update bus/link event
  * @PLD_SMMU_FAULT: SMMU fault
- * @PLD_SYS_REBOOT: system is rebooting
  */
 enum pld_uevent {
 	PLD_FW_DOWN,
@@ -212,17 +211,18 @@ enum pld_uevent {
 	PLD_FW_HANG_EVENT,
 	PLD_BUS_EVENT,
 	PLD_SMMU_FAULT,
-	PLD_SYS_REBOOT,
 };
 
 /**
  * enum pld_bus_event - PLD bus event types
  * @PLD_BUS_EVENT_PCIE_LINK_DOWN: PCIe link is down
+ * @PLD_BUS_EVENT_PCIE_LINK_RESUME_FAIL: PCIe link resume failed
  * @PLD_BUS_EVENT_INVALID: invalid event type
  */
 
 enum pld_bus_event {
 	PLD_BUS_EVENT_PCIE_LINK_DOWN = 0,
+	PLD_BUS_EVENT_PCIE_LINK_RESUME_FAIL = 1,
 
 	PLD_BUS_EVENT_INVALID = 0xFFFF,
 };
@@ -281,6 +281,21 @@ struct pld_ce_tgt_pipe_cfg {
 	u32 flags;
 	u32 reserved;
 };
+
+#ifdef CONFIG_CE_CMN_REG_CFG_QMI
+/**
+ * struct pld_ce_cmn_register_config - CE common register configuration
+ * structure
+ * @offset: offset of common register from base address of CE register.
+ * @mask: bit mask for values which are going to be set.
+ * @value: final value of the ce common register
+ */
+struct pld_ce_cmn_register_config {
+	u32 offset;
+	u32 mask;
+	u32 value;
+};
+#endif
 
 /**
  * struct pld_ce_svc_pipe_cfg - copy engine service pipe configuration
@@ -353,6 +368,8 @@ struct pld_rri_over_ddr_cfg {
  * @rri_over_ddr_cfg: rri over ddr config
  * @num_shadow_reg_v3_cfg: number of shadow register version 3 configuration
  * @shadow_reg_v3_cfg: shadow register version 3 configuration
+ * @num_ce_cmn_reg_config: Number of common CE register configurations
+ * @ce_cmn_reg_cfg: CE common registers configuration
  *
  * pld_wlan_enable_cfg stores WLAN FW configurations. It will be
  * passed to WLAN FW when WLAN host driver calls wlan_enable.
@@ -371,6 +388,10 @@ struct pld_wlan_enable_cfg {
 #ifdef CONFIG_SHADOW_V3
 	u32 num_shadow_reg_v3_cfg;
 	struct pld_shadow_reg_v3_cfg *shadow_reg_v3_cfg;
+#endif
+#ifdef CONFIG_CE_CMN_REG_CFG_QMI
+	u32 num_ce_cmn_reg_config;
+	struct pld_ce_cmn_register_config *ce_cmn_reg_cfg;
 #endif
 };
 
@@ -1219,6 +1240,56 @@ int pld_force_wake_request(struct device *dev);
 bool pld_is_direct_link_supported(struct device *dev);
 
 /**
+ * pld_ce_cmn_cfg_supported() - Get whether ce cmn register config is supported
+ *                              by FW or not
+ * @dev: device
+ *
+ * Return: true if supported
+ *         false on failure or if not supported
+ */
+bool pld_ce_cmn_cfg_supported(struct device *dev);
+
+/**
+ * pld_audio_is_direct_link_supported() - Get whether direct_link is supported
+ *					  by Audio or not
+ * @dev: device
+ *
+ * Return: true if supported
+ *         false on failure or if not supported
+ */
+bool pld_audio_is_direct_link_supported(struct device *dev);
+
+/**
+ * pld_is_audio_shared_iommu_group() - whether iommu group is shared with
+ *  audio or not
+ * @dev: device
+ *
+ * Return: true if supported
+ *         false on failure or if not supported
+ */
+bool pld_is_audio_shared_iommu_group(struct device *dev);
+
+/**
+ * pld_get_direct_link_sid() - get direct link use case SID value
+ * @dev: device
+ * @sid: SID value to get
+ *
+ * Return: 0 for success
+ *         Non zero failure code for errors
+ */
+int pld_get_direct_link_sid(struct device *dev, uint16_t *sid);
+
+/**
+ * pld_is_ipa_shared_smmu_enable() - Get whether shared ctx bank is supported
+ *				     by IPA or not
+ * @dev: device
+ *
+ * Return: true if supported
+ *         false on failure or if not supported
+ */
+bool pld_is_ipa_shared_smmu_enable(struct device *dev);
+
+/**
  * pld_force_wake_request_sync() - Request to awake MHI synchronously
  * @dev: device
  * @timeout_us: timeout in micro-sec request to wake
@@ -1458,7 +1529,8 @@ void *pld_smmu_get_mapping(struct device *dev);
 int pld_smmu_map(struct device *dev, phys_addr_t paddr,
 		 uint32_t *iova_addr, size_t size);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || \
+	defined(CNSS_PLAT_WIFI_KOBJ_SUPPORT))
 struct kobject *pld_get_wifi_kobj(struct device *dev);
 #else
 static inline struct kobject *pld_get_wifi_kobj(struct device *dev)
@@ -1637,6 +1709,33 @@ int pld_qmi_send_put(struct device *dev);
 int pld_qmi_send(struct device *dev, int type, void *cmd,
 		 int cmd_len, void *cb_ctx,
 		 int (*cb)(void *ctx, void *event, int event_len));
+
+/**
+ * pld_qmi_indication() - Send data request over QMI
+ * @dev: device pointer
+ * @cb_ctx: context pointer if any to pass back in callback
+ * @cb: callback pointer to pass response back
+ *
+ * This API can be used to register for QMI events.
+ *
+ * Return: 0 if registration is successful
+ *         Non zero failure code for errors
+ */
+int pld_qmi_indication(struct device *dev, void *cb_ctx,
+		       int (*cb)(void *ctx, uint16_t type,
+				 void *event, int event_len));
+
+/**
+ * pld_get_dump_inprogress() - Get dump_inprogress sysfs value
+ * @dev: device pointer
+ * @val: address to store the value
+ *
+ * This API can be used to get dump_inprogress sysfs value
+ *
+ * Return: 0 if successful
+ *         Non zero failure code for errors
+ */
+int pld_get_dump_inprogress(struct device *dev, uint8_t *val);
 
 /**
  * pld_is_fw_dump_skipped() - get fw dump skipped status.
@@ -2099,6 +2198,17 @@ int pld_audio_smmu_map(struct device *dev, phys_addr_t paddr, dma_addr_t iova,
  * Return: None
  */
 void pld_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size);
+
+/**
+ * pld_get_fw_lpass_shared_mem()- Get information of the FW-LPASS shared memory
+ * @dev: pointer to device structure
+ * @iova: DMA address
+ * @size: memory region size
+ *
+ * Return: 0 on success else failure code
+ */
+int pld_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				size_t *size);
 #else
 static inline
 int pld_audio_smmu_map(struct device *dev, phys_addr_t paddr, dma_addr_t iova,
@@ -2109,6 +2219,56 @@ int pld_audio_smmu_map(struct device *dev, phys_addr_t paddr, dma_addr_t iova,
 
 static inline
 void pld_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
+{
+}
+
+static inline
+int pld_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				size_t *size)
+{
+	return -EINVAL;
+}
+#endif
+
+#ifdef FEATURE_SMEM_MAILBOX
+/**
+ * pld_oem_event_smem_write()- Write to smem DLKM
+ * @dev: pointer to device id
+ * @flags: flags for message
+ * @data: payload to send
+ * @len: length of payload
+ *
+ * Return: 0 on success else failure code
+ */
+int pld_oem_event_smem_write(struct device *dev, int flags, const __u8 *data,
+			     uint32_t len);
+
+#else
+
+static inline
+int pld_oem_event_smem_write(struct device *dev, int flags, const __u8 *data,
+			     uint32_t len)
+{
+	return 0;
+}
+
+#endif
+
+#ifdef CONFIG_DT_CPU_MASK_DP_INTR
+void pld_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask);
+void pld_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask);
+#else
+static inline void
+pld_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+				       unsigned int *cpumask)
+{
+}
+
+static inline void
+pld_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+					    unsigned int *cpumask)
 {
 }
 #endif

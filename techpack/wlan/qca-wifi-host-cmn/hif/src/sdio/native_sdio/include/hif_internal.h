@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -326,7 +327,7 @@ struct _HIF_SCATTER_REQ {
 	enum HIF_SCATTER_METHOD   scatter_method;
 	void                 *hif_private[4]; /* HIF private area */
 	u_int8_t             *scatter_bounce_buffer; /* bounce buffers */
-	struct _HIF_SCATTER_ITEM    scatter_list[1]; /* start of scatter list */
+	QDF_FLEX_ARRAY(struct _HIF_SCATTER_ITEM, scatter_list); /* start of scatter list */
 };
 
 typedef struct _HIF_SCATTER_REQ * (*HIF_ALLOCATE_SCATTER_REQUEST)(
@@ -415,12 +416,16 @@ static inline QDF_STATUS do_hif_read_write_scatter(struct hif_sdio_dev *device,
 
 void hif_sdio_quirk_force_drive_strength(struct hif_softc *ol_sc,
 					 struct sdio_func *func);
-void hif_sdio_quirk_write_cccr(struct hif_softc *ol_sc, struct sdio_func *func);
+void hif_sdio_quirk_write_cccr(struct hif_softc *ol_sc,
+			       struct sdio_func *func);
 int hif_sdio_quirk_mod_strength(struct hif_softc *ol_sc,
 				struct sdio_func *func);
-int hif_sdio_quirk_async_intr(struct hif_softc *ol_sc, struct sdio_func *func);
-int hif_sdio_set_bus_speed(struct hif_softc *ol_sc, struct sdio_func *func);
-int hif_sdio_set_bus_width(struct hif_softc *ol_sc, struct sdio_func *func);
+int hif_sdio_quirk_async_intr(struct hif_softc *ol_sc,
+			      struct sdio_func *func);
+QDF_STATUS hif_sdio_set_bus_speed(struct hif_softc *ol_sc,
+				  struct sdio_func *func);
+QDF_STATUS hif_sdio_set_bus_width(struct hif_softc *ol_sc,
+				  struct sdio_func *func);
 QDF_STATUS hif_sdio_func_disable(struct hif_sdio_dev *device,
 				 struct sdio_func *func,
 				 bool reset);

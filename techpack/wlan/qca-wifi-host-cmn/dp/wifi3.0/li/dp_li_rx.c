@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -249,9 +249,12 @@ uint32_t dp_rx_process_li(struct dp_intr *int_ctx,
 
 	DP_HIST_INIT();
 
-	qdf_assert_always(soc && hal_ring_hdl);
+	if (!soc || !hal_ring_hdl)
+		return 0;
+
 	hal_soc = soc->hal_soc;
-	qdf_assert_always(hal_soc);
+	if (!hal_soc)
+		return 0;
 
 	buf_size = wlan_cfg_rx_buffer_size(soc->wlan_cfg_ctx);
 
@@ -1061,7 +1064,7 @@ bool dp_rx_chain_msdus_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 		dp_pdev->invalid_peer_head_msdu = NULL;
 		dp_pdev->invalid_peer_tail_msdu = NULL;
 
-		dp_monitor_get_mpdu_status(dp_pdev, soc, rx_tlv_hdr);
+		dp_monitor_get_mpdu_status(dp_pdev, soc, rx_tlv_hdr, mac_id);
 	}
 
 	if (dp_pdev->ppdu_id == hal_rx_attn_phy_ppdu_id_get(soc->hal_soc,
@@ -1214,10 +1217,10 @@ dp_rx_wbm_err_reap_desc_li(struct dp_intr *int_ctx, struct dp_soc *soc,
 			qdf_nbuf_set_tid_val(rx_desc->nbuf, mpdu_desc_info.tid);
 
 		rx_desc_pool = &soc->rx_desc_buf[rx_desc->pool_id];
-		dp_ipa_rx_buf_smmu_mapping_lock(soc);
+		dp_rx_buf_smmu_mapping_lock(soc);
 		dp_rx_nbuf_unmap_pool(soc, rx_desc_pool, nbuf);
 		rx_desc->unmapped = 1;
-		dp_ipa_rx_buf_smmu_mapping_unlock(soc);
+		dp_rx_buf_smmu_mapping_unlock(soc);
 
 		if (qdf_unlikely(
 		    soc->wbm_release_desc_rx_sg_support &&
@@ -1461,8 +1464,7 @@ dp_rx_null_q_desc_handle_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 	if (hal_rx_msdu_end_sa_is_valid_get(soc->hal_soc, rx_tlv_hdr)) {
 		sa_idx = hal_rx_msdu_end_sa_idx_get(soc->hal_soc, rx_tlv_hdr);
 
-		if ((sa_idx < 0) ||
-		    (sa_idx >= wlan_cfg_get_max_ast_idx(soc->wlan_cfg_ctx))) {
+		if (sa_idx >= wlan_cfg_get_max_ast_idx(soc->wlan_cfg_ctx)) {
 			DP_STATS_INC(soc, rx.err.invalid_sa_da_idx, 1);
 			goto drop_nbuf;
 		}
@@ -1489,7 +1491,9 @@ dp_rx_null_q_desc_handle_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 
 	if (qdf_unlikely(txrx_peer->nawds_enabled &&
 			 hal_rx_msdu_end_da_is_mcbc_get(soc->hal_soc,
-							rx_tlv_hdr))) {
+			 rx_tlv_hdr) &&
+			 (hal_rx_get_mpdu_mac_ad4_valid(soc->hal_soc,
+			 rx_tlv_hdr) == false))) {
 		dp_err_rl("free buffer for multicast packet");
 		DP_PEER_PER_PKT_STATS_INC(txrx_peer, rx.nawds_mcast_drop, 1,
 					  0);
@@ -1528,11 +1532,11 @@ dp_rx_null_q_desc_handle_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 				if (qdf_unlikely(vdev->mesh_vdev) ||
 				    qdf_unlikely(txrx_peer->nawds_enabled))
 					dp_rx_tid_setup_wifi3(
-						peer, tid,
+						peer, BIT(tid),
 						hal_get_rx_max_ba_window(soc->hal_soc,tid),
 						IEEE80211_SEQ_MAX);
 				else
-					dp_rx_tid_setup_wifi3(peer, tid, 1,
+					dp_rx_tid_setup_wifi3(peer, BIT(tid), 1,
 							      IEEE80211_SEQ_MAX);
 			}
 			qdf_spin_unlock_bh(&rx_tid->tid_lock);
@@ -1547,7 +1551,8 @@ dp_rx_null_q_desc_handle_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 		is_eapol = qdf_nbuf_is_ipv4_eapol_pkt(nbuf);
 
 		if (is_eapol || qdf_nbuf_is_ipv4_wapi_pkt(nbuf)) {
-			if (!dp_rx_err_match_dhost(eh, vdev))
+			if (!dp_rx_err_match_dhost(eh, vdev,
+						   txrx_peer->is_mld_peer))
 				goto drop_nbuf;
 		} else {
 			goto drop_nbuf;
@@ -1566,7 +1571,8 @@ dp_rx_null_q_desc_handle_li(struct dp_soc *soc, qdf_nbuf_t nbuf,
 	 *    These packets need to be dropped and should not get delivered
 	 *    to stack.
 	 */
-	if (qdf_unlikely(dp_rx_err_cce_drop(soc, vdev, nbuf, rx_tlv_hdr)))
+	if (qdf_unlikely(dp_rx_err_cce_drop(soc, vdev, nbuf, rx_tlv_hdr,
+					    txrx_peer->is_mld_peer)))
 		goto drop_nbuf;
 
 	if (qdf_unlikely(vdev->rx_decap_type == htt_cmn_pkt_type_raw)) {

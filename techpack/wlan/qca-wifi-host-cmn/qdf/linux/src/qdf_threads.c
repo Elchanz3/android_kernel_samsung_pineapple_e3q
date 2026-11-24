@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -44,17 +44,15 @@
 #include <qdf_defer.h>
 #include <qdf_module.h>
 #include <linux/cpumask.h>
-/* Function declarations and documentation */
-
-typedef int (*qdf_thread_os_func)(void *data);
+#include <linux/sort.h>
 
 /**
- *  qdf_sleep() - sleep
+ *  qdf_sleep() - QDF wrapper for msleep_interruptible() Kernel API
  *  @ms_interval : Number of milliseconds to suspend the current thread.
  *  A value of 0 may or may not cause the current thread to yield.
  *
  *  This function suspends the execution of the current thread
- *  until the specified time out interval elapses.
+ *  until the specified time out interval elapses or interrupted by a signal.
  *
  *  Return: none
  */
@@ -69,6 +67,29 @@ void qdf_sleep(uint32_t ms_interval)
 	msleep_interruptible(ms_interval);
 }
 qdf_export_symbol(qdf_sleep);
+
+/**
+ *  qdf_sleep_uninterruptible() - QDF wrapper for msleep() Kernel API
+ *  @ms_interval : Number of milliseconds to suspend the current thread.
+ *  A value of 0 may or may not cause the current thread to yield.
+ *
+ *  This function suspends the execution of the current thread
+ *  until the specified time out interval elapses.
+ *
+ *  Return: none
+ */
+void qdf_sleep_uninterruptible(uint32_t ms_interval)
+{
+	if (in_interrupt()) {
+		QDF_TRACE(QDF_MODULE_ID_QDF, QDF_TRACE_LEVEL_ERROR,
+			  "%s cannot be called from interrupt context!!!",
+			  __func__);
+		return;
+	}
+	msleep(ms_interval);
+}
+
+qdf_export_symbol(qdf_sleep_uninterruptible);
 
 /**
  *  qdf_sleep_us() - sleep
@@ -147,11 +168,11 @@ qdf_export_symbol(qdf_create_thread);
 
 static uint16_t qdf_thread_id;
 
-qdf_thread_t *qdf_thread_run(qdf_thread_func callback, void *context)
+qdf_thread_t *qdf_thread_run(qdf_thread_os_func callback, void *context)
 {
 	struct task_struct *thread;
 
-	thread = kthread_create((qdf_thread_os_func)callback, context,
+	thread = kthread_create(callback, context,
 				"qdf %u", qdf_thread_id++);
 	if (IS_ERR(thread))
 		return NULL;
@@ -297,6 +318,27 @@ void qdf_cpumask_clear_cpu(unsigned int cpu, qdf_cpu_mask *dstp)
 
 qdf_export_symbol(qdf_cpumask_clear_cpu);
 
+int qdf_cpumask_test_cpu(unsigned int cpu, qdf_cpu_mask *cpu_mask)
+{
+	return cpumask_test_cpu(cpu, cpu_mask);
+}
+
+qdf_export_symbol(qdf_cpumask_test_cpu);
+
+uint32_t qdf_cpumask_first(qdf_cpu_mask *cpu_mask)
+{
+	return cpumask_first(cpu_mask);
+}
+
+qdf_export_symbol(qdf_cpumask_first);
+
+uint32_t qdf_cpumask_weight(qdf_cpu_mask *cpu_mask)
+{
+	return cpumask_weight(cpu_mask);
+}
+
+qdf_export_symbol(qdf_cpumask_weight);
+
 void qdf_cpumask_setall(qdf_cpu_mask *dstp)
 {
 	cpumask_setall(dstp);
@@ -362,11 +404,19 @@ qdf_cpumask_equal(const qdf_cpu_mask *src1p, const qdf_cpu_mask *src2p)
 
 qdf_export_symbol(qdf_cpumask_equal);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0))
+void
+qdf_cpumask_complement(qdf_cpu_mask *dstp, const qdf_cpu_mask *srcp)
+{
+	cpumask_andnot(dstp, cpu_possible_mask, srcp);
+}
+#else
 void
 qdf_cpumask_complement(qdf_cpu_mask *dstp, const qdf_cpu_mask *srcp)
 {
 	cpumask_complement(dstp, srcp);
 }
+#endif
 
 qdf_export_symbol(qdf_cpumask_complement);
 
@@ -378,3 +428,9 @@ qdf_cpu_mask qdf_walt_get_cpus_taken(void)
 
 qdf_export_symbol(qdf_walt_get_cpus_taken);
 #endif
+
+void qdf_sort(void *base, qdf_size_t num, qdf_size_t size,
+	      qdf_cmp_func_t cmp_func, qdf_swap_func_t swap_func)
+{
+	sort(base, num, size, cmp_func, swap_func);
+}

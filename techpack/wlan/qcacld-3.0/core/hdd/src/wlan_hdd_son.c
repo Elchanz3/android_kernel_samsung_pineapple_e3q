@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -282,6 +282,7 @@ static int hdd_son_set_chan_ext_offset(
 	QDF_STATUS status;
 	int retval = -EINVAL;
 	struct hdd_adapter *adapter;
+	struct wlan_hdd_link_info *link_info;
 
 	if (!vdev) {
 		hdd_err("null vdev");
@@ -290,7 +291,7 @@ static int hdd_son_set_chan_ext_offset(
 
 	link_info = wlan_hdd_get_link_info_from_objmgr(vdev);
 	if (!link_info) {
-		hdd_err("null adapter");
+		hdd_err("null link_info");
 		return retval;
 	}
 
@@ -301,7 +302,7 @@ static int hdd_son_set_chan_ext_offset(
 
 	retval = 0;
 	chan_type = hdd_son_chan_ext_offset_to_chan_type(son_chan_ext_offset);
-	status = hdd_set_sap_ht2040_mode(link_info->adapter, chan_type);
+	status = hdd_set_sap_ht2040_mode(link_info, chan_type);
 	if (status != QDF_STATUS_SUCCESS) {
 		hdd_err("Cannot set SAP HT20/40 mode!");
 		retval = -EINVAL;
@@ -499,7 +500,7 @@ static int hdd_son_set_bandwidth(struct wlan_objmgr_vdev *vdev,
  */
 static uint32_t hdd_phymode_chwidth_to_son_bandwidth(
 					eCsrPhyMode phymode,
-					enum eSirMacHTChannelWidth chwidth)
+					enum phy_ch_width chwidth)
 {
 	uint32_t son_bandwidth = NONHT;
 
@@ -515,32 +516,32 @@ static uint32_t hdd_phymode_chwidth_to_son_bandwidth(
 	case eCSR_DOT11_MODE_11n:
 	case eCSR_DOT11_MODE_11n_ONLY:
 		son_bandwidth = HT20;
-		if (chwidth == eHT_CHANNEL_WIDTH_40MHZ)
+		if (chwidth == CH_WIDTH_40MHZ)
 			son_bandwidth = HT40;
 		break;
 	case eCSR_DOT11_MODE_11ac:
 	case eCSR_DOT11_MODE_11ac_ONLY:
 		son_bandwidth = VHT20;
-		if (chwidth == eHT_CHANNEL_WIDTH_40MHZ)
+		if (chwidth == CH_WIDTH_40MHZ)
 			son_bandwidth = VHT40;
-		else if (chwidth == eHT_CHANNEL_WIDTH_80MHZ)
+		else if (chwidth == CH_WIDTH_80MHZ)
 			son_bandwidth = VHT80;
-		else if (chwidth == eHT_CHANNEL_WIDTH_160MHZ)
+		else if (chwidth == CH_WIDTH_160MHZ)
 			son_bandwidth = VHT160;
-		else if (chwidth == eHT_CHANNEL_WIDTH_80P80MHZ)
+		else if (chwidth == CH_WIDTH_80P80MHZ)
 			son_bandwidth = VHT80_80;
 		break;
 	case eCSR_DOT11_MODE_11ax:
 	case eCSR_DOT11_MODE_11ax_ONLY:
 	case eCSR_DOT11_MODE_AUTO:
 		son_bandwidth = HE20;
-		if (chwidth == eHT_CHANNEL_WIDTH_40MHZ)
+		if (chwidth == CH_WIDTH_40MHZ)
 			son_bandwidth = HE40;
-		else if (chwidth == eHT_CHANNEL_WIDTH_80MHZ)
+		else if (chwidth == CH_WIDTH_80MHZ)
 			son_bandwidth = HE80;
-		else if (chwidth == eHT_CHANNEL_WIDTH_160MHZ)
+		else if (chwidth == CH_WIDTH_160MHZ)
 			son_bandwidth = HE160;
-		else if (chwidth == eHT_CHANNEL_WIDTH_80P80MHZ)
+		else if (chwidth == CH_WIDTH_80P80MHZ)
 			son_bandwidth = HE80_80;
 		break;
 	default:
@@ -558,7 +559,7 @@ static uint32_t hdd_phymode_chwidth_to_son_bandwidth(
  */
 static uint32_t hdd_son_get_bandwidth(struct wlan_objmgr_vdev *vdev)
 {
-	enum eSirMacHTChannelWidth chwidth;
+	struct wlan_channel *des_chan;
 	eCsrPhyMode phymode;
 	struct hdd_context *hdd_ctx;
 	struct wlan_hdd_link_info *link_info;
@@ -574,10 +575,9 @@ static uint32_t hdd_son_get_bandwidth(struct wlan_objmgr_vdev *vdev)
 		return NONHT;
 	}
 
-	chwidth = wma_cli_get_command(link_info->vdev_id,
-				      wmi_vdev_param_chwidth, VDEV_CMD);
+	des_chan = wlan_vdev_mlme_get_des_chan(vdev);
 
-	if (chwidth < 0) {
+	if (!des_chan) {
 		hdd_err("Failed to get chwidth");
 		return NONHT;
 	}
@@ -590,7 +590,8 @@ static uint32_t hdd_son_get_bandwidth(struct wlan_objmgr_vdev *vdev)
 
 	phymode = sme_get_phy_mode(hdd_ctx->mac_handle);
 
-	return hdd_phymode_chwidth_to_son_bandwidth(phymode, chwidth);
+	return hdd_phymode_chwidth_to_son_bandwidth(phymode,
+						    des_chan->ch_width);
 }
 
 /**
@@ -676,8 +677,8 @@ static int hdd_son_set_chan(struct wlan_objmgr_vdev *vdev, int chan,
 	wlan_hdd_set_sap_csa_reason(psoc, link_info->vdev_id,
 				    CSA_REASON_USER_INITIATED);
 
-	return hdd_softap_set_channel_change(link_info->adapter->dev, freq,
-					     CH_WIDTH_MAX, false);
+	return hdd_softap_set_channel_change(link_info, freq, 0, CH_WIDTH_MAX,
+					     NO_SCHANS_PUNC, false, false);
 }
 
 /**
@@ -1488,7 +1489,7 @@ static void hdd_son_deauth_sta(struct wlan_objmgr_vdev *vdev,
 	hdd_debug("Peer - "QDF_MAC_ADDR_FMT" Ignore Frame - %u",
 		  QDF_MAC_ADDR_REF(peer_mac), ignore_frame);
 
-	status = hdd_softap_sta_deauth(link_info->adapter, &param);
+	status = hdd_softap_sta_deauth(link_info, &param);
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_err("Error in deauthenticating peer");
 }
@@ -2009,7 +2010,7 @@ static int hdd_son_set_acs_channels(struct wlan_objmgr_vdev *vdev,
 	/* Append the new channels with existing channel list */
 	bool append;
 	/* Duplicate */
-	bool dup;
+	bool dup = false;
 	uint32_t freq_list[ACS_MAX_CHANNEL_COUNT];
 	uint32_t num_channels;
 	uint32_t chan_idx = 0;
@@ -2018,8 +2019,8 @@ static int hdd_son_set_acs_channels(struct wlan_objmgr_vdev *vdev,
 	uint16_t i, j;
 	uint16_t acs_chan_count = 0;
 	uint32_t *prev_acs_list;
-	struct ieee80211_chan_def *chans = req->data.user_chanlist.chans;
-	uint16_t nchans = req->data.user_chanlist.n_chan;
+	struct ieee80211_chan_def *chans;
+	uint16_t nchans;
 	struct wlan_objmgr_pdev *pdev = wlan_vdev_get_pdev(vdev);
 	struct hdd_adapter *adapter;
 	struct wlan_hdd_link_info *link_info;
@@ -2030,6 +2031,9 @@ static int hdd_son_set_acs_channels(struct wlan_objmgr_vdev *vdev,
 		hdd_err("null adapter or req");
 		return -EINVAL;
 	}
+
+	chans = req->data.user_chanlist.chans;
+	nchans = req->data.user_chanlist.n_chan;
 
 	adapter = link_info->adapter;
 	if (adapter->device_mode != QDF_SAP_MODE) {
@@ -2149,6 +2153,10 @@ static void get_son_acs_report_values(struct wlan_objmgr_vdev *vdev,
 	filter->num_of_channels = 1;
 	filter->chan_freq_list[0] = chan_freq;
 	scan_list = ucfg_scan_get_result(pdev, filter);
+
+	if (!scan_list)
+		return;
+
 	acs_r->chan_nbss = qdf_list_size(scan_list);
 
 	acs_r->chan_maxrssi = 0;
@@ -2456,7 +2464,8 @@ static QDF_STATUS hdd_son_get_node_info_sap(struct wlan_objmgr_vdev *vdev,
 
 	adapter = link_info->adapter;
 	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list, mac_addr,
-					   STA_INFO_SON_GET_DATRATE_INFO);
+					   STA_INFO_SON_GET_DATRATE_INFO,
+					   STA_INFO_MATCH_STA_OR_MLD_MAC);
 	if (!sta_info) {
 		hdd_err("Sta info is null");
 		return QDF_STATUS_E_FAILURE;
@@ -2535,7 +2544,8 @@ static QDF_STATUS hdd_son_get_peer_capability(struct wlan_objmgr_vdev *vdev,
 	adapter = link_info->adapter;
 	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list,
 					   peer->macaddr,
-					   STA_INFO_SOFTAP_GET_STA_INFO);
+					   STA_INFO_SOFTAP_GET_STA_INFO,
+					   STA_INFO_MATCH_STA_OR_MLD_MAC);
 	if (!sta_info) {
 		hdd_err("sta_info NULL");
 		return QDF_STATUS_E_FAILURE;
@@ -2590,7 +2600,8 @@ uint32_t hdd_son_get_peer_max_mcs_idx(struct wlan_objmgr_vdev *vdev,
 	adapter = link_info->adapter;
 	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list,
 					   peer->macaddr,
-					   STA_INFO_SOFTAP_GET_STA_INFO);
+					   STA_INFO_SOFTAP_GET_STA_INFO,
+					   STA_INFO_MATCH_STA_OR_MLD_MAC);
 	if (!sta_info) {
 		hdd_err("sta_info NULL");
 		return ret;
@@ -2838,4 +2849,35 @@ int hdd_son_send_get_wifi_generic_command(struct wiphy *wiphy,
 {
 	return os_if_son_parse_generic_nl_cmd(wiphy, wdev, tb,
 					      OS_IF_SON_VENDOR_GET_CMD);
+}
+
+void hdd_son_send_module_status_event(
+	       enum hdd_wlan_module_status_evt_type event_type)
+{
+	enum osif_son_status_evt_type os_if_event;
+
+	switch (event_type) {
+	case HDD_WLAN_STATUS_EVT_UP:
+		os_if_event = OSIF_SON_STATUS_EVT_UP;
+		break;
+	case HDD_WLAN_STATUS_EVT_DOWN:
+		os_if_event = OSIF_SON_STATUS_EVT_DOWN;
+		break;
+	case HDD_WLAN_STATUS_EVT_REINIT_DONE:
+		os_if_event = OSIF_SON_STATUS_EVT_REINIT_DONE;
+		break;
+	case HDD_WLAN_STATUS_EVT_DUMP_READY:
+		os_if_event = OSIF_SON_STATUS_EVT_DUMP_READY;
+		break;
+	case HDD_WLAN_STATUS_EVT_TARGET_ASSERT:
+		os_if_event = OSIF_SON_STATUS_EVT_TARGET_ASSERT;
+		break;
+	default:
+		hdd_err("invalid event type");
+		return;
+	}
+
+	os_if_son_send_status_nlink_msg(OSIF_SON_STATUS_EVENT_ID,
+					os_if_event,
+					OSIF_SON_WLAN_MODULE_NAME);
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -119,6 +119,7 @@ do {                                            \
 #define HAL_MAX_HW_DSCP_TID_V2_MAPS 48
 #define HAL_MAX_HW_DSCP_TID_V2_MAPS_5332 24
 #define HAL_MAX_HW_DSCP_TID_V2_MAPS_6432 24
+#define HAL_MAX_HW_DSCP_TID_V2_MAPS_5424 24
 #define HTT_META_HEADER_LEN_BYTES 64
 #define HAL_TX_EXT_DESC_WITH_META_DATA \
 	(HTT_META_HEADER_LEN_BYTES + HAL_TX_EXTENSION_DESC_LEN_BYTES)
@@ -128,9 +129,21 @@ do {                                            \
 /* Length of WBM release ring without the status words */
 #define HAL_TX_COMPLETION_DESC_BASE_LEN 12
 
-#define HAL_TX_COMP_RELEASE_SOURCE_TQM 0
-#define HAL_TX_COMP_RELEASE_SOURCE_REO 2
-#define HAL_TX_COMP_RELEASE_SOURCE_FW 3
+/**
+ * enum hal_tx_comp_rel_src - Indicates the release source module
+ * @HAL_TX_COMP_RELEASE_SOURCE_TQM    : TQM released this buffer or descriptor
+ * @HAL_TX_COMP_RELEASE_SOURCE_RXDMA  : RXDMA released this buffer or descriptor
+ * @HAL_TX_COMP_RELEASE_SOURCE_REO    : REO released this buffer or descriptor
+ * @HAL_TX_COMP_RELEASE_SOURCE_FW     : FW released this buffer or descriptor
+ * @HAL_TX_COMP_RELEASE_SOURCE_MAX    : count of number of enumerator
+ */
+enum hal_tx_comp_rel_src {
+	HAL_TX_COMP_RELEASE_SOURCE_TQM,
+	HAL_TX_COMP_RELEASE_SOURCE_RXDMA,
+	HAL_TX_COMP_RELEASE_SOURCE_REO,
+	HAL_TX_COMP_RELEASE_SOURCE_FW,
+	HAL_TX_COMP_RELEASE_SOURCE_MAX
+};
 
 /* Define a place-holder release reason for FW */
 #define HAL_TX_COMP_RELEASE_REASON_FW 99
@@ -191,12 +204,26 @@ do {                                            \
   ---------------------------------------------------------------------------*/
 /**
  * struct hal_tx_completion_status - HAL Tx completion descriptor contents
- * @status: frame acked/failed
+ * The fields of this struct are aligned to WBM2SW TX comp Desc to populate
+ * them efficiently. Do not add/removed the fields of the struct.
+ * @reserved_va1: reserved for VA
+ * @reserved_va2: reserved for VA
  * @release_src: release source = TQM/FW
+ * @reserved1: reserved
+ * @status: frame acked/failed
+ * @reserved2: reserved
+ * @ppdu_id: TSF, snapshot of this value when transmission of the
+ *           PPDU containing the frame finished.
+ * @transmit_cnt: Number of times this frame has been transmitted
+ * @reserved3: reserved
  * @ack_frame_rssi: RSSI of the received ACK or BA frame
  * @first_msdu: Indicates this MSDU is the first MSDU in AMSDU
  * @last_msdu: Indicates this MSDU is the last MSDU in AMSDU
  * @msdu_part_of_amsdu : Indicates this MSDU was part of an A-MSDU in MPDU
+ * @reserved4: reserved
+ * @buffer_timestamp: Frame system entrance timestamp in units of 1024
+ *		      microseconds
+ * @valid:
  * @bw: Indicates the BW of the upcoming transmission -
  *       <enum 0 transmit_bw_20_MHz>
  *       <enum 1 transmit_bw_40_MHz>
@@ -214,24 +241,30 @@ do {                                            \
  * @mcs: Transmit MCS Rate
  * @ofdma: Set when the transmission was an OFDMA transmission
  * @tones_in_ru: The number of tones in the RU used.
- * @valid:
+ * @reserved5: reserved
  * @tsf: Lower 32 bits of the TSF
- * @ppdu_id: TSF, snapshot of this value when transmission of the
- *           PPDU containing the frame finished.
- * @transmit_cnt: Number of times this frame has been transmitted
- * @tid: TID of the flow or MPDU queue
  * @peer_id: Peer ID of the flow or MPDU queue
- * @buffer_timestamp: Frame system entrance timestamp in units of 1024
- *		      microseconds
+ * @tid: TID of the flow or MPDU queue
+ * @reserved6: reserved
  */
 struct hal_tx_completion_status {
-	uint8_t status;
-	uint8_t release_src;
-	uint8_t ack_frame_rssi;
-	uint8_t first_msdu:1,
-		last_msdu:1,
-		msdu_part_of_amsdu:1;
-	uint32_t bw:3,
+	uint32_t reserved_va1;
+	uint32_t reserved_va2;
+	uint32_t release_src:3,
+		 reserved1:10,
+		 status:4,
+		 reserved2:15;
+	uint32_t ppdu_id:24,
+		 transmit_cnt:7,
+		 reserved3:1;
+	uint32_t ack_frame_rssi:8,
+		 first_msdu:1,
+		 last_msdu:1,
+		 msdu_part_of_amsdu:1,
+		 reserved4:2,
+		 buffer_timestamp:19;
+	uint32_t valid:1,
+		 bw:3,
 		 pkt_type:4,
 		 stbc:1,
 		 ldpc:1,
@@ -239,15 +272,15 @@ struct hal_tx_completion_status {
 		 mcs:4,
 		 ofdma:1,
 		 tones_in_ru:12,
-		 valid:1;
+	#ifdef TX_NSS_STATS_SUPPORT
+		 tx_nss:3;
+	#else
+		 reserved5:3;
+	#endif
 	uint32_t tsf;
-	uint32_t ppdu_id;
-	uint8_t transmit_cnt;
-	uint8_t tid;
-	uint16_t peer_id;
-#if defined(WLAN_FEATURE_TSF_AUTO_REPORT) || defined(WLAN_CONFIG_TX_DELAY)
-	uint32_t buffer_timestamp:19;
-#endif
+	uint32_t peer_id:16,
+		 tid:8,
+		 reserved6:8;
 };
 
 /**
@@ -330,7 +363,7 @@ enum hal_tx_encap_type {
  * @HAL_TX_TQM_RR_MULTICAST_DROP: Dropped due mcast drop set for VDEV
  * @HAL_TX_TQM_RR_VDEV_MISMATCH_DROP: Dropped due to being set with
  *				'TCL_drop_reason'
- *
+ * @HAL_TX_TQM_RR_MAX: Max value TQM release reason code
  */
 enum hal_tx_tqm_release_reason {
 	HAL_TX_TQM_RR_FRAME_ACKED,
@@ -348,6 +381,7 @@ enum hal_tx_tqm_release_reason {
 	HAL_TX_TQM_RR_DROP_OR_INVALID_MSDU,
 	HAL_TX_TQM_RR_MULTICAST_DROP,
 	HAL_TX_TQM_RR_VDEV_MISMATCH_DROP,
+	HAL_TX_TQM_RR_MAX,
 };
 
 /* enum - Table IDs for 2 DSCP-TID mapping Tables that TCL H/W supports
@@ -735,10 +769,11 @@ static inline void hal_tx_comp_desc_sync(void *hw_desc,
 					 struct hal_tx_desc_comp_s *comp,
 					 bool read_status)
 {
-	if (!read_status)
+	if (!read_status) {
 		qdf_mem_copy(comp, hw_desc, HAL_TX_COMPLETION_DESC_BASE_LEN);
-	else
+	} else {
 		qdf_mem_copy(comp, hw_desc, HAL_TX_COMPLETION_DESC_LEN_BYTES);
+	}
 }
 
 /**

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -67,7 +67,7 @@ struct wifi_pos_field {
  */
 struct wifi_pos_field_info {
 	uint32_t count;
-	struct wifi_pos_field fields[1];
+	QDF_FLEX_ARRAY(struct wifi_pos_field, fields);
 };
 
 /* Length of interface name */
@@ -688,13 +688,19 @@ bool wifi_pos_get_rsta_sec_ltf_cap(void);
  * wifi_pos_set_rsta_11az_ranging_cap() - Enable/Disable R-STA 11az ranging
  * @val: Value to set
  */
-void wifi_pos_set_rsta_11az_ranging_cap(bool val);
+void wifi_pos_set_rsta_11az_ranging_cap(uint32_t val);
 
 /**
  * wifi_pos_get_rsta_11az_ranging_cap() - Get if RSTA 11az ranging is enabled
  *
- * Return: True if 11az ranging is enabled
+ * Return: value if 11az TB/NTB ranging is enabled
  */
-bool wifi_pos_get_rsta_11az_ranging_cap(void);
+uint32_t wifi_pos_get_rsta_11az_ranging_cap(void);
+#else
+static inline
+uint32_t wifi_pos_get_rsta_11az_ranging_cap(void)
+{
+	return 0;
+}
 #endif
 #endif /* _WIFI_POS_API_H_ */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -37,46 +37,15 @@
 #define CAPABILITY_INFO_IMMEDIATE_BA_BIT 15
 
 /* / 11h MAC defaults */
-#define SIR_11A_CHANNEL_BEGIN           34
 #define SIR_11A_CHANNEL_END             165
 #define SIR_11B_CHANNEL_BEGIN           1
 #define SIR_11B_CHANNEL_END             14
 #define SIR_11A_FREQUENCY_OFFSET        4
 #define SIR_11B_FREQUENCY_OFFSET        1
 #define SIR_11P_CHANNEL_BEGIN           170
-#define SIR_11P_CHANNEL_END             184
 
 /* / Current version of 802.11 */
 #define SIR_MAC_PROTOCOL_VERSION 0
-
-/* Frame Type definitions */
-
-#define SIR_MAC_MGMT_FRAME    0x0
-#define SIR_MAC_CTRL_FRAME    0x1
-#define SIR_MAC_DATA_FRAME    0x2
-
-/* Data frame subtype definitions */
-#define SIR_MAC_DATA_DATA                 0
-#define SIR_MAC_DATA_DATA_ACK             1
-#define SIR_MAC_DATA_DATA_POLL            2
-#define SIR_MAC_DATA_DATA_ACK_POLL        3
-#define SIR_MAC_DATA_NULL                 4
-#define SIR_MAC_DATA_NULL_ACK             5
-#define SIR_MAC_DATA_NULL_POLL            6
-#define SIR_MAC_DATA_NULL_ACK_POLL        7
-#define SIR_MAC_DATA_QOS_DATA             8
-#define SIR_MAC_DATA_QOS_DATA_ACK         9
-#define SIR_MAC_DATA_QOS_DATA_POLL        10
-#define SIR_MAC_DATA_QOS_DATA_ACK_POLL    11
-#define SIR_MAC_DATA_QOS_NULL             12
-#define SIR_MAC_DATA_QOS_NULL_ACK         13
-#define SIR_MAC_DATA_QOS_NULL_POLL        14
-#define SIR_MAC_DATA_QOS_NULL_ACK_POLL    15
-
-#define SIR_MAC_DATA_QOS_MASK             8
-#define SIR_MAC_DATA_NULL_MASK            4
-#define SIR_MAC_DATA_POLL_MASK            2
-#define SIR_MAC_DATA_ACK_MASK             1
 
 /* Management frame subtype definitions */
 
@@ -170,7 +139,11 @@
 #define SIR_MAC_QCOM_VENDOR_SIZE     3
 #endif /* FEATURE_AP_MCC_CH_AVOIDANCE */
 
-#define SIR_MAC_MAX_ADD_IE_LENGTH       2048
+#ifdef WLAN_LARGE_MGMT_FRAMES_SUPPORT
+#define SIR_MAC_MAX_ADD_IE_LENGTH    1024
+#else
+#define SIR_MAC_MAX_ADD_IE_LENGTH    2048
+#endif
 
 /* / Minimum length of each IE */
 #define SIR_MAC_RSN_IE_MIN_LENGTH   2
@@ -187,11 +160,6 @@
 #endif
 
 #define SIR_MAC_OUI_VERSION_1         1
-
-/* OWE DH Parameter element https://tools.ietf.org/html/rfc8110 */
-#define SIR_DH_PARAMETER_ELEMENT_EXT_EID 32
-
-#define SIR_MSCS_ELEMENT_EXT_EID 88
 
 /* OUI and type definition for WPA IE in network byte order */
 #define SIR_MAC_WPA_OUI             0x01F25000
@@ -216,6 +184,19 @@
 
 /* min size of wme oui header: oui(3) + type + subtype + version */
 #define SIR_MAC_OUI_WME_HDR_MIN       6
+
+/* Multi-AP OUI definitions */
+#define SIR_MAC_MULTI_AP_OUI "\x50\x6f\x9a\x1b"
+#define SIR_MAC_MULTI_AP_OUI_SIZE 4
+#define SIR_MULTI_AP_ELEM_OFFSET  (2 + SIR_MAC_MULTI_AP_OUI_SIZE)
+
+#define SIR_MULTI_AP_EXT_SUB_TYPE   0x06
+#define SIR_MULTI_AP_FRONTHAUL_BSS  0x20
+#define SIR_MULTI_AP_BACKHAUL_STA   0x80
+#define SIR_MULTI_AP_OUI_R1_LEN     7
+#define SIR_MULTI_AP_EXT_SUB_LEN    1
+
+#define SIR_MAP_CAPABILITY_VAP_TYPE 2
 
 /* ----------------------------------------------------------------------------- */
 
@@ -256,50 +237,14 @@
 /* / MAX key length when ULA is used */
 #define SIR_MAC_MAX_KEY_LENGTH               32
 
-/* / Macro definitions for get/set on FC fields */
-#define SIR_MAC_GET_PROT_VERSION(x)      ((((uint16_t) x) & 0x0300) >> 8)
-#define SIR_MAC_GET_FRAME_TYPE(x)        ((((uint16_t) x) & 0x0C00) >> 8)
-#define SIR_MAC_GET_FRAME_SUB_TYPE(x)    ((((uint16_t) x) & 0xF000) >> 12)
-#define SIR_MAC_GET_WEP_BIT_IN_FC(x)     (((uint16_t) x) & 0x0040)
-#define SIR_MAC_SET_PROT_VERSION(x)      ((uint16_t) x)
-#define SIR_MAC_SET_FRAME_TYPE(x)        (((uint16_t) x) << 2)
-#define SIR_MAC_SET_FRAME_SUB_TYPE(x)    (((uint16_t) x) << 4)
-#define SIR_MAC_SET_WEP_BIT_IN_FC(x)     (((uint16_t) x) << 14)
-
 /* / Macro definitions for get/set on capabilityInfo bits */
 #define SIR_MAC_GET_ESS(x)               (((uint16_t) x) & 0x0001)
-#define SIR_MAC_GET_IBSS(x)              ((((uint16_t) x) & 0x0002) >> 1)
-#define SIR_MAC_GET_CF_POLLABLE(x)       ((((uint16_t) x) & 0x0004) >> 2)
-#define SIR_MAC_GET_CF_POLL_REQ(x)       ((((uint16_t) x) & 0x0008) >> 3)
 #define SIR_MAC_GET_PRIVACY(x)           ((((uint16_t) x) & 0x0010) >> 4)
-#define SIR_MAC_GET_SHORT_PREAMBLE(x)    ((((uint16_t) x) & 0x0020) >> 5)
-#define SIR_MAC_GET_SPECTRUM_MGMT(x)     ((((uint16_t) x) & 0x0100) >> 8)
 #define SIR_MAC_GET_QOS(x)               ((((uint16_t) x) & 0x0200) >> 9)
 #define SIR_MAC_GET_SHORT_SLOT_TIME(x)   ((((uint16_t) x) & 0x0400) >> 10)
-#define SIR_MAC_GET_APSD(x)              ((((uint16_t) x) & 0x0800) >> 11)
 #define SIR_MAC_GET_RRM(x)               ((((uint16_t) x) & 0x1000) >> 12)
-#define SIR_MAC_GET_BLOCK_ACK(x)         ((((uint16_t) x) & 0xc000) >> CAPABILITY_INFO_DELAYED_BA_BIT)
-#define SIR_MAC_SET_ESS(x)               (((uint16_t) x) | 0x0001)
-#define SIR_MAC_SET_IBSS(x)              (((uint16_t) x) | 0x0002)
-#define SIR_MAC_SET_CF_POLLABLE(x)       (((uint16_t) x) | 0x0004)
-#define SIR_MAC_SET_CF_POLL_REQ(x)       (((uint16_t) x) | 0x0008)
-#define SIR_MAC_SET_PRIVACY(x)           (((uint16_t) x) | 0x0010)
-#define SIR_MAC_SET_SHORT_PREAMBLE(x)    (((uint16_t) x) | 0x0020)
-#define SIR_MAC_SET_SPECTRUM_MGMT(x)     (((uint16_t) x) | 0x0100)
-#define SIR_MAC_SET_QOS(x)               (((uint16_t) x) | 0x0200)
-#define SIR_MAC_SET_SHORT_SLOT_TIME(x)   (((uint16_t) x) | 0x0400)
-#define SIR_MAC_SET_APSD(x)              (((uint16_t) x) | 0x0800)
-#define SIR_MAC_SET_RRM(x)               (((uint16_t) x) | 0x1000)
-#define SIR_MAC_SET_GROUP_ACK(x)         (((uint16_t) x) | 0x4000)
 
 #define SIR_MAC_GET_VHT_MAX_AMPDU_EXPO(x) ((((uint32_t) x) & 0x03800000) >> 23)
-
-/* bitname must be one of the above, eg ESS, CF_POLLABLE, etc. */
-#define SIR_MAC_CLEAR_CAPABILITY(u16value, bitname) \
-	((u16value) &= (~(SIR_MAC_SET_ ## bitname(0))))
-
-#define IS_WES_MODE_ENABLED(x) \
-	((x)->mlme_cfg->lfr.wes_mode_enabled)
 
 #define SIR_MAC_VENDOR_AP_1_OUI             "\x00\x0C\x43"
 #define SIR_MAC_VENDOR_AP_1_OUI_LEN         3
@@ -318,8 +263,13 @@
 #define SIR_MAC_BAD_HTC_HE_VENDOR_OUI_LEN         4
 
 /* Maximum allowable size of a beacon,probe rsp and fils discovery frame */
+#ifdef WLAN_LARGE_MGMT_FRAMES_SUPPORT
+#define SIR_MAX_BEACON_SIZE     1280
+#define SIR_MAX_PROBE_RESP_SIZE 1280
+#else
 #define SIR_MAX_BEACON_SIZE     512
 #define SIR_MAX_PROBE_RESP_SIZE 512
+#endif
 #define SIR_MAX_FD_TMPL_SIZE    512
 
 
@@ -407,13 +357,6 @@ typedef struct sSirMacQosCtl {
 #define SIR_MAC_HDR_LEN_3A    24
 
 typedef uint8_t tSirMacAddr[ETH_ALEN];
-
-/* / 3 address MAC data header format (24/26 bytes) */
-typedef struct sSirMacDot3Hdr {
-	tSirMacAddr da;
-	tSirMacAddr sa;
-	uint16_t length;
-} qdf_packed tSirMacDot3Hdr, *tpSirMacDot3Hdr;
 
 /* / 3 address MAC data header format (24/26 bytes) */
 typedef struct sSirMacDataHdr3a {
@@ -514,15 +457,6 @@ typedef struct sSirMacRateSet {
 	uint8_t numRates;
 	uint8_t rate[SIR_MAC_MAX_NUMBER_OF_RATES];
 } qdf_packed tSirMacRateSet;
-
-/** struct merged_mac_rate_set - merged mac rate set
- * @num_rates: num of rates
- * @rate: rate list
- */
-struct merged_mac_rate_set {
-	uint8_t num_rates;
-	uint8_t rate[2 * WLAN_SUPPORTED_RATES_IE_MAX_LEN];
-};
 
 /* Reserve 1 byte for NULL character in the SSID name field to print in %s */
 typedef struct sSirMacSSid {
@@ -960,22 +894,8 @@ typedef struct sSirVhtMcsInfo {
 } tSirVhtMcsInfo;
 
 /**
- * struct sSirVHtCap - VHT capabilities
- *
- * This structure is the "VHT capabilities element" as
- * described in 802.11ac D3.0 8.4.2.160
- * @vht_cap_info: VHT capability info
- * @supp_mcs: VHT MCS supported rates
+ * Determines the current operating mode of the 802.11n STA
  */
-typedef struct sSirVHtCap {
-	uint32_t vhtCapInfo;
-	tSirVhtMcsInfo suppMcs;
-} tSirVHTCap;
-
-/* */
-/* Determines the current operating mode of the 802.11n STA */
-/* */
-
 typedef enum eSirMacHTOperatingMode {
 	eSIR_HT_OP_MODE_PURE,   /* No Protection */
 	eSIR_HT_OP_MODE_OVERLAP_LEGACY, /* Overlap Legacy device present, protection is optional */
@@ -1865,20 +1785,16 @@ struct he_6ghz_capability_info {
 #define HE_CAP_80P80_MCS_MAP_LEN     4
 #define HE_CAP_OUI_LEN               3
 
-/* QOS action frame definitions */
-
 /* max number of possible tclas elements in any frame */
 #define SIR_MAC_TCLASIE_MAXNUM  2
 
 /* 11b rate encoding in MAC format */
-
 #define SIR_MAC_RATE_1   0x02
 #define SIR_MAC_RATE_2   0x04
 #define SIR_MAC_RATE_5_5 0x0B
 #define SIR_MAC_RATE_11  0x16
 
 /* 11a/g rate encoding in MAC format */
-
 #define SIR_MAC_RATE_6   0x0C
 #define SIR_MAC_RATE_9   0x12
 #define SIR_MAC_RATE_12  0x18
@@ -1983,9 +1899,6 @@ struct he_6ghz_capability_info {
 #define SIR_MAC_HT_CAP_PSMP_S                     13
 #define SIR_MAC_HT_CAP_INTOLERANT40_S             14
 #define SIR_MAC_HT_CAP_LSIGTXOPPROT_S             15
-
-#define SIR_MAC_TXSTBC                             1
-#define SIR_MAC_RXSTBC                             1
 
 #define SIR_MAC_RSNX_CAP_MIN_LEN                   1
 #define SIR_MAC_RSNX_CAP_MAX_LEN                  16

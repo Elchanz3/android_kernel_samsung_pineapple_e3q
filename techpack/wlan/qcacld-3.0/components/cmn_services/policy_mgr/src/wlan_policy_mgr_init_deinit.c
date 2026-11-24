@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,6 +38,10 @@
 #include "qdf_trace.h"
 #include "wlan_objmgr_global_obj.h"
 #include "target_if.h"
+#ifdef WLAN_FEATURE_11BE_MLO
+#include "target_if_mlo_mgr.h"
+#include "wlan_mlo_link_force.h"
+#endif
 
 static QDF_STATUS policy_mgr_psoc_obj_create_cb(struct wlan_objmgr_psoc *psoc,
 		void *data)
@@ -141,6 +145,105 @@ static void policy_mgr_vdev_obj_status_cb(struct wlan_objmgr_vdev *vdev,
 }
 
 #ifdef WLAN_FEATURE_11BE_MLO
+#define MAX_TRACE_NUM_OF_SET_LINK 8
+
+struct trace_set_link_cmd {
+	uint64_t time;
+	struct mlo_link_set_active_param cmd;
+};
+
+static qdf_atomic_t g_trace_set_link_cmd_index;
+static struct trace_set_link_cmd *g_trace_set_link_cmd;
+
+struct trace_set_link_evt {
+	uint64_t time;
+	struct mlo_link_set_active_resp evt;
+};
+
+static qdf_atomic_t g_trace_set_link_evt_index;
+static struct trace_set_link_evt *g_trace_set_link_evt;
+
+static void pm_init_trace_set_link_mem(void)
+{
+	if (!g_trace_set_link_cmd)
+		g_trace_set_link_cmd = qdf_mem_malloc(
+			MAX_TRACE_NUM_OF_SET_LINK *
+			sizeof(struct trace_set_link_cmd));
+	qdf_atomic_init(&g_trace_set_link_cmd_index);
+	if (!g_trace_set_link_evt)
+		g_trace_set_link_evt = qdf_mem_malloc(
+			MAX_TRACE_NUM_OF_SET_LINK *
+			sizeof(struct trace_set_link_evt));
+	qdf_atomic_init(&g_trace_set_link_evt_index);
+}
+
+static void pm_deinit_trace_set_link_mem(void)
+{
+	if (g_trace_set_link_cmd) {
+		qdf_mem_free(g_trace_set_link_cmd);
+		g_trace_set_link_cmd = NULL;
+	}
+	if (g_trace_set_link_evt) {
+		qdf_mem_free(g_trace_set_link_evt);
+		g_trace_set_link_evt = NULL;
+	}
+}
+
+static void pm_emlsr_opportunistic_timer_handler(void *ctx)
+{
+	struct wlan_objmgr_psoc *psoc = (struct wlan_objmgr_psoc *)ctx;
+	uint8_t vdev_id = WLAN_INVALID_VDEV_ID;
+
+	if (!psoc) {
+		policy_mgr_err("Invalid Context");
+		return;
+	}
+	policy_mgr_get_mode_specific_conn_info(psoc, NULL, &vdev_id,
+					       PM_STA_MODE);
+	if (vdev_id == WLAN_INVALID_VDEV_ID) {
+		policymgr_nofl_debug("emlsr timeout, no sta active");
+		return;
+	}
+
+	ml_nlink_conn_change_notify(psoc, vdev_id,
+				    ml_nlink_emlsr_timeout_evt,
+				    NULL);
+}
+
+static QDF_STATUS
+policy_mgr_init_emlsr_timer(struct policy_mgr_psoc_priv_obj *pm_ctx)
+{
+	QDF_STATUS status;
+
+	status = qdf_mc_timer_init(&pm_ctx->emlsr_opportunistic_timer,
+				   QDF_TIMER_TYPE_SW,
+				   pm_emlsr_opportunistic_timer_handler,
+				   (void *)pm_ctx->psoc);
+	if (QDF_IS_STATUS_ERROR(status))
+		policy_mgr_err("Failed to init emlsr opportunistic timer");
+
+	return status;
+}
+
+static QDF_STATUS
+policy_mgr_deinit_emlsr_timer(struct policy_mgr_psoc_priv_obj *pm_ctx)
+{
+	QDF_STATUS status;
+
+	if (QDF_TIMER_STATE_RUNNING ==
+			qdf_mc_timer_get_current_state(
+				&pm_ctx->emlsr_opportunistic_timer)) {
+		qdf_mc_timer_stop(&pm_ctx->emlsr_opportunistic_timer);
+	}
+
+	status = qdf_mc_timer_destroy(
+			&pm_ctx->emlsr_opportunistic_timer);
+	if (QDF_IS_STATUS_ERROR(status))
+		policy_mgr_err("Cannot deallocate emlsr opportunistic timer");
+
+	return status;
+}
+
 static QDF_STATUS policy_mgr_register_link_switch_notifier(void)
 {
 	QDF_STATUS status;
@@ -172,6 +275,26 @@ static QDF_STATUS policy_mgr_unregister_link_switch_notifier(void)
 	return status;
 }
 #else
+static inline void pm_init_trace_set_link_mem(void)
+{
+}
+
+static inline void pm_deinit_trace_set_link_mem(void)
+{
+}
+
+static inline QDF_STATUS
+policy_mgr_init_emlsr_timer(struct policy_mgr_psoc_priv_obj *pm_ctx)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+policy_mgr_deinit_emlsr_timer(struct policy_mgr_psoc_priv_obj *pm_ctx)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
 static QDF_STATUS policy_mgr_register_link_switch_notifier(void)
 {
 	return QDF_STATUS_SUCCESS;
@@ -376,16 +499,21 @@ QDF_STATUS policy_mgr_deinit(void)
 QDF_STATUS policy_mgr_psoc_open(struct wlan_objmgr_psoc *psoc)
 {
 	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	QDF_STATUS status;
 
 	pm_ctx = policy_mgr_get_context(psoc);
 	if (!pm_ctx) {
 		policy_mgr_err("Invalid Context");
 		return QDF_STATUS_E_FAILURE;
 	}
+	status = policy_mgr_init_emlsr_timer(pm_ctx);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
 
 	if (!QDF_IS_STATUS_SUCCESS(qdf_mutex_create(
 		&pm_ctx->qdf_conc_list_lock))) {
 		policy_mgr_err("Failed to init qdf_conc_list_lock");
+		policy_mgr_deinit_emlsr_timer(pm_ctx);
 		QDF_ASSERT(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -394,6 +522,7 @@ QDF_STATUS policy_mgr_psoc_open(struct wlan_objmgr_psoc *psoc)
 		sizeof(struct sta_ap_intf_check_work_ctx));
 	if (!pm_ctx->sta_ap_intf_check_work_info) {
 		qdf_mutex_destroy(&pm_ctx->qdf_conc_list_lock);
+		policy_mgr_deinit_emlsr_timer(pm_ctx);
 		return QDF_STATUS_E_FAILURE;
 	}
 	pm_ctx->sta_ap_intf_check_work_info->psoc = psoc;
@@ -408,8 +537,10 @@ QDF_STATUS policy_mgr_psoc_open(struct wlan_objmgr_psoc *psoc)
 		policy_mgr_err("Failed to create dealyed work queue");
 		qdf_mutex_destroy(&pm_ctx->qdf_conc_list_lock);
 		qdf_mem_free(pm_ctx->sta_ap_intf_check_work_info);
+		policy_mgr_deinit_emlsr_timer(pm_ctx);
 		return QDF_STATUS_E_FAILURE;
 	}
+	pm_init_trace_set_link_mem();
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -418,12 +549,15 @@ QDF_STATUS policy_mgr_psoc_close(struct wlan_objmgr_psoc *psoc)
 {
 	struct policy_mgr_psoc_priv_obj *pm_ctx;
 
+	pm_deinit_trace_set_link_mem();
+
 	pm_ctx = policy_mgr_get_context(psoc);
 	if (!pm_ctx) {
 		policy_mgr_err("Invalid Context");
 		return QDF_STATUS_E_FAILURE;
 	}
 
+	policy_mgr_flush_deferred_csa(psoc,  WLAN_INVALID_VDEV_ID);
 	if (!QDF_IS_STATUS_SUCCESS(qdf_mutex_destroy(
 		&pm_ctx->qdf_conc_list_lock))) {
 		policy_mgr_err("Failed to destroy qdf_conc_list_lock");
@@ -442,6 +576,8 @@ QDF_STATUS policy_mgr_psoc_close(struct wlan_objmgr_psoc *psoc)
 		qdf_mem_free(pm_ctx->sta_ap_intf_check_work_info);
 		pm_ctx->sta_ap_intf_check_work_info = NULL;
 	}
+
+	policy_mgr_deinit_emlsr_timer(pm_ctx);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -487,6 +623,32 @@ static inline void policy_mgr_memzero_disabled_ml_list(void)
 	qdf_mem_zero(pm_disabled_ml_links, sizeof(pm_disabled_ml_links));
 }
 
+static void
+policy_mgr_trace_link_set_active_cb(
+			struct wlan_objmgr_psoc *psoc,
+			struct mlo_link_set_active_param *cmd,
+			struct mlo_link_set_active_resp *event)
+{
+	int32_t index;
+
+	if (cmd && g_trace_set_link_cmd) {
+		index = qdf_atomic_inc_return(&g_trace_set_link_cmd_index) &
+				(MAX_TRACE_NUM_OF_SET_LINK - 1);
+		qdf_mem_copy(&g_trace_set_link_cmd[index].cmd,
+			     cmd, sizeof(*cmd));
+		g_trace_set_link_cmd[index].time =
+				qdf_get_log_timestamp();
+	}
+	if (event && g_trace_set_link_evt) {
+		index = qdf_atomic_inc_return(&g_trace_set_link_evt_index) &
+				(MAX_TRACE_NUM_OF_SET_LINK - 1);
+		qdf_mem_copy(&g_trace_set_link_evt[index].evt,
+			     event, sizeof(*event));
+		g_trace_set_link_evt[index].time =
+				qdf_get_log_timestamp();
+	}
+}
+
 static QDF_STATUS
 policy_mgr_init_ml_link_update(struct policy_mgr_psoc_priv_obj *pm_ctx)
 {
@@ -499,6 +661,10 @@ policy_mgr_init_ml_link_update(struct policy_mgr_psoc_priv_obj *pm_ctx)
 		return QDF_STATUS_E_FAILURE;
 	}
 
+	target_if_mlo_register_trace_link_set_active_cb(
+			pm_ctx->psoc,
+			policy_mgr_trace_link_set_active_cb);
+
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -506,6 +672,9 @@ static QDF_STATUS
 policy_mgr_deinit_ml_link_update(struct policy_mgr_psoc_priv_obj *pm_ctx)
 {
 	QDF_STATUS qdf_status;
+
+	target_if_mlo_register_trace_link_set_active_cb(
+			pm_ctx->psoc, NULL);
 
 	qdf_atomic_set(&pm_ctx->link_in_progress, 0);
 	qdf_status = qdf_event_destroy(&pm_ctx->set_link_update_done_evt);
@@ -516,7 +685,6 @@ policy_mgr_deinit_ml_link_update(struct policy_mgr_psoc_priv_obj *pm_ctx)
 
 	return QDF_STATUS_SUCCESS;
 }
-
 #else
 static inline void policy_mgr_memzero_disabled_ml_list(void) {}
 
@@ -530,6 +698,23 @@ static inline QDF_STATUS
 policy_mgr_deinit_ml_link_update(struct policy_mgr_psoc_priv_obj *pm_ctx)
 {
 	return QDF_STATUS_SUCCESS;
+}
+#endif
+
+#ifdef FEATURE_FOURTH_CONNECTION
+static void
+policy_mgr_set_next_action_4th_conn_table(struct wlan_objmgr_psoc *psoc)
+{
+	if (policy_mgr_is_hw_dbs_2x2_capable(psoc))
+		next_action_four_connection_table =
+		&pm_next_action_four_connection_dbs_2x2_table;
+	else
+		next_action_four_connection_table = NULL;
+}
+#else
+static void
+policy_mgr_set_next_action_4th_conn_table(struct wlan_objmgr_psoc *psoc)
+{
 }
 #endif
 
@@ -551,6 +736,10 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 	qdf_mem_zero(pm_conc_connection_list, sizeof(pm_conc_connection_list));
 	policy_mgr_memzero_disabled_ml_list();
 	policy_mgr_clear_concurrent_session_count(psoc);
+
+	/* reset dynamic dfs master flag */
+	pm_ctx->dynamic_dfs_master_disabled = false;
+
 	/* init dbs_opportunistic_timer */
 	status = qdf_mc_timer_init(&pm_ctx->dbs_opportunistic_timer,
 				QDF_TIMER_TYPE_SW,
@@ -560,7 +749,6 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 		policy_mgr_err("Failed to init DBS opportunistic timer");
 		return status;
 	}
-
 	status = policy_mgr_init_ml_link_update(pm_ctx);
 	if (QDF_IS_STATUS_ERROR(status))
 		return status;
@@ -671,6 +859,9 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 		next_action_three_connection_table =
 		&pm_next_action_three_connection_dbs_1x1_table;
 	}
+
+	policy_mgr_set_next_action_4th_conn_table(psoc);
+
 	policy_mgr_debug("is DBS Capable %d, is SBS Capable %d",
 			 policy_mgr_is_hw_dbs_capable(psoc),
 			 policy_mgr_is_hw_sbs_capable(psoc));
@@ -681,6 +872,9 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 			 policy_mgr_is_2x2_1x1_dbs_capable(psoc),
 			 policy_mgr_is_2x2_5G_1x1_2G_dbs_capable(psoc),
 			 policy_mgr_is_2x2_2G_1x1_5G_dbs_capable(psoc));
+	policy_mgr_init_5g_low_high_cut_freq(psoc);
+	policy_mgr_init_rd_type(psoc);
+	policy_mgr_update_dfs_master_dynamic_enabled(psoc, true, NULL);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -766,6 +960,8 @@ QDF_STATUS policy_mgr_register_conc_cb(struct wlan_objmgr_psoc *psoc,
 
 	pm_ctx->conc_cbacks.connection_info_update =
 					conc_cbacks->connection_info_update;
+	pm_ctx->conc_cbacks.ap_assist_dfs_group_notify =
+					conc_cbacks->ap_assist_dfs_group_notify;
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -849,6 +1045,8 @@ QDF_STATUS policy_mgr_register_hdd_cb(struct wlan_objmgr_psoc *psoc,
 		hdd_cbacks->wlan_check_cc_intf_cb;
 	pm_ctx->hdd_cbacks.wlan_set_tx_rx_nss_cb =
 		hdd_cbacks->wlan_set_tx_rx_nss_cb;
+	pm_ctx->hdd_cbacks.wlan_hdd_set_sap_csa_reason =
+		hdd_cbacks->wlan_hdd_set_sap_csa_reason;
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -873,23 +1071,6 @@ QDF_STATUS policy_mgr_deregister_hdd_cb(struct wlan_objmgr_psoc *psoc)
 	pm_ctx->hdd_cbacks.wlan_get_ap_prefer_conc_ch_params = NULL;
 	pm_ctx->hdd_cbacks.wlan_get_sap_acs_band = NULL;
 	pm_ctx->hdd_cbacks.wlan_set_tx_rx_nss_cb = NULL;
-
-	return QDF_STATUS_SUCCESS;
-}
-
-QDF_STATUS policy_mgr_register_wma_cb(struct wlan_objmgr_psoc *psoc,
-		struct policy_mgr_wma_cbacks *wma_cbacks)
-{
-	struct policy_mgr_psoc_priv_obj *pm_ctx;
-
-	pm_ctx = policy_mgr_get_context(psoc);
-	if (!pm_ctx) {
-		policy_mgr_err("Invalid Context");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	pm_ctx->wma_cbacks.wma_get_connection_info =
-		wma_cbacks->wma_get_connection_info;
 
 	return QDF_STATUS_SUCCESS;
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -33,6 +33,7 @@
 #include "os_if_nan.h"
 #include "nan_public_structs.h"
 #include "nan_ucfg_api.h"
+#include "wlan_nan_api_i.h"
 
 /**
  * lim_add_ndi_peer() - Function to add ndi peer
@@ -79,8 +80,6 @@ static QDF_STATUS lim_add_ndi_peer(struct mac_context *mac_ctx,
 	}
 	pe_info("Need to create NDI Peer :" QDF_MAC_ADDR_FMT,
 		QDF_MAC_ADDR_REF(peer_mac_addr.bytes));
-
-	ucfg_nan_set_peer_mc_list(session->vdev, peer_mac_addr);
 
 	peer_idx = lim_assign_peer_idx(mac_ctx, session);
 	if (!peer_idx) {
@@ -330,9 +329,17 @@ void lim_process_ndi_del_sta_rsp(struct mac_context *mac_ctx,
 		pe_err("Failed to get vdev from id");
 		goto skip_event;
 	}
+
 	ucfg_nan_datapath_event_handler(psoc, vdev, NDP_PEER_DEPARTED,
 					&peer_ind);
+
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_NAN_ID);
+
+	/*
+	 * Check if this peer was migrated from NAN to NDI.
+	 * If yes, then move the peer back to NAN.
+	 */
+	wlan_ndi_add_pasn_peer_to_nan(psoc, &peer_ind.peer_mac_addr);
 
 skip_event:
 	qdf_mem_free(del_sta_params);

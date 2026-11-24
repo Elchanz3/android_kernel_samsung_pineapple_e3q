@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -59,6 +59,16 @@
 	QDF_TRACE_INFO_NO_FL(QDF_MODULE_ID_MGMT_TXRX, params)
 #define mgmttxrx_nofl_debug(params...) \
 	QDF_TRACE_DEBUG_NO_FL(QDF_MODULE_ID_MGMT_TXRX, params)
+
+/**
+ * mgmt_txrx_frame_hex_dump() - Print the type and dump the rx tx frame
+ * @frame_data: The base address of the mgmt frame data to be logged.
+ * @frame_len: The size of the frame to be logged.
+ * @is_tx: is tx frame
+ *
+ * Return:  None
+ */
+void mgmt_txrx_frame_hex_dump(void *frame_data, int frame_len, bool is_tx);
 
 /**
  * enum mgmt_subtype - enum of mgmt. subtypes
@@ -317,16 +327,28 @@ enum sa_query_action {
 
 /**
  * enum protected_dual_actioncode - protected dual action frames
+ * @PDPA_ACTION_VENDOR_SPECIFIC: PDPA action vendor specific frame
  * @PDPA_GAS_INIT_REQ: pdpa gas init request frame
  * @PDPA_GAS_INIT_RSP: pdpa gas init response frame
  * @PDPA_GAS_COMEBACK_REQ: pdpa gas comeback request frame
  * @PDPA_GAS_COMEBACK_RSP: pdpa gas comeback response frame
  */
 enum protected_dual_actioncode {
+	PDPA_ACTION_VENDOR_SPECIFIC = 9,
 	PDPA_GAS_INIT_REQ = 10,
 	PDPA_GAS_INIT_RSP = 11,
 	PDPA_GAS_COMEBACK_REQ = 12,
 	PDPA_GAS_COMEBACK_RSP = 13,
+};
+
+/**
+ * enum chan_usage_mode - Channel usage mode types
+ * @CHAN_USAGE_AIDABLE_BSS_CSA_REQ: Channel usage aided BSS CSA request.
+ * @CHAN_USAGE_CAPABILITY_NOTIFY: Channel usage capability notification.
+ */
+enum chan_usage_mode {
+	CHAN_USAGE_AIDABLE_BSS_CSA_REQ = 4,
+	CHAN_USAGE_CAPABILITY_NOTIFY = 5,
 };
 
 /**
@@ -343,6 +365,8 @@ enum protected_dual_actioncode {
  * @WNM_SLEEP_RESP: wnm sleep response frame
  * @WNM_TIM_REQ: wnm Tim broadcast request frame
  * @WNM_TIM_RESP: wnm Tim broadcast response frame
+ * @WNM_CHAN_USAGE_REQ: wnm channel usage request frame
+ * @WNM_CHAN_USAGE_RESP: wnm channel usage response frame
  * @WNM_NOTIF_REQUEST: wnm notify request frame
  * @WNM_NOTIF_RESPONSE: wnm notify response frame
  */
@@ -359,6 +383,8 @@ enum wnm_actioncode {
 	WNM_SLEEP_RESP = 17,
 	WNM_TIM_REQ = 18,
 	WNM_TIM_RESP = 19,
+	WNM_CHAN_USAGE_REQ = 21,
+	WNM_CHAN_USAGE_RESP = 22,
 	WNM_NOTIF_REQUEST = 26,
 	WNM_NOTIF_RESPONSE = 27,
 };
@@ -617,6 +643,8 @@ struct action_frm_hdr {
  * @MGMT_ACTION_WNM_SLEEP_RESP: wnm sleep response frame
  * @MGMT_ACTION_WNM_TIM_REQ:    wnm Tim broadcast request frame
  * @MGMT_ACTION_WNM_TIM_RESP:   wnm Tim broadcast response frame
+ * @MGMT_ACTION_WNM_CHAN_USAGE_REQ: wnm channel usage request frame
+ * @MGMT_ACTION_WNM_CHAN_USAGE_RESP: wnm channel usage response frame
  * @MGMT_ACTION_TDLS_SETUP_REQ:     tdls setup request action frame
  * @MGMT_ACTION_TDLS_SETUP_RSP:     tdls setup response frame
  * @MGMT_ACTION_TDLS_SETUP_CNF:     tdls setup confirm frame
@@ -755,6 +783,8 @@ enum mgmt_frame_type {
 	MGMT_ACTION_WNM_SLEEP_RESP,
 	MGMT_ACTION_WNM_TIM_REQ,
 	MGMT_ACTION_WNM_TIM_RESP,
+	MGMT_ACTION_WNM_CHAN_USAGE_REQ,
+	MGMT_ACTION_WNM_CHAN_USAGE_RESP,
 	MGMT_ACTION_TDLS_SETUP_REQ,
 	MGMT_ACTION_TDLS_SETUP_RSP,
 	MGMT_ACTION_TDLS_SETUP_CNF,
@@ -988,6 +1018,22 @@ struct mgmt_rx_event_params {
 	struct frame_pn_params pn_params;
 	struct mgmt_rx_event_ext_params *ext_params;
 	struct frm_conn_ap is_conn_ap;
+#ifdef WLAN_FEATURE_11BE_MLO
+	struct mlo_mgmt_ml_info cu_params;
+	struct mgmt_rx_mlo_link_removal_info *link_removal_info;
+	int num_link_removal_info;
+	struct mlo_bcast_t2lm_info t2lm_params;
+#endif
+};
+
+/**
+ * struct mgmt_mlo_link_info_sync_params - host mgmt mlo link info header params
+ * @cu_params: MLO MGMT Critical Update params
+ * @link_removal_info: MLO link removal information array
+ * @num_link_removal_info: Number of elements in @link_removal_info
+ * @t2lm_params: T2LM related info received from FW
+ */
+struct mgmt_mlo_link_info_sync_params {
 #ifdef WLAN_FEATURE_11BE_MLO
 	struct mlo_mgmt_ml_info cu_params;
 	struct mgmt_rx_mlo_link_removal_info *link_removal_info;

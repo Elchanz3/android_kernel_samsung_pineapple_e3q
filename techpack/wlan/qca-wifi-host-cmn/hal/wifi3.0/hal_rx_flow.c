@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -91,7 +91,8 @@ static inline void hal_rx_dump_fse(struct rx_flow_search_entry *fse, int index)
 		fse->msdu_count,
 		fse->msdu_byte_count,
 		fse->timestamp,
-#ifdef QCA_WIFI_KIWI_V2
+#if defined(QCA_WIFI_KIWI_V2) || defined(QCA_WIFI_WCN7750) || \
+	defined(QCA_WIFI_QCC2072)
 		fse->cumulative_ip_length_pmac1,
 #else
 		fse->cumulative_l4_checksum,
@@ -154,6 +155,26 @@ hal_rx_flow_setup_fse(hal_soc_handle_t hal_soc_hdl,
 }
 qdf_export_symbol(hal_rx_flow_setup_fse);
 
+void *
+hal_rx_flow_write_fse_metadata(hal_soc_handle_t hal_soc_hdl,
+			       struct hal_rx_fst *fst, uint32_t table_offset,
+			       struct hal_rx_flow *flow)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+	void *ret;
+
+	if (hal_soc->ops->hal_rx_flow_write_fse_metadata) {
+		ret =
+		hal_soc->ops->hal_rx_flow_write_fse_metadata((uint8_t *)fst,
+							     table_offset,
+							     (uint8_t *)flow);
+	}
+
+	return NULL;
+}
+
+qdf_export_symbol(hal_rx_flow_write_fse_metadata);
+
 uint32_t
 hal_rx_flow_setup_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t cmem_ba,
 			   uint32_t table_offset, struct hal_rx_flow *flow)
@@ -169,6 +190,22 @@ hal_rx_flow_setup_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t cmem_ba,
 	return 0;
 }
 qdf_export_symbol(hal_rx_flow_setup_cmem_fse);
+
+QDF_STATUS
+hal_rx_flow_delete_cmem_fse(hal_soc_handle_t hal_soc_hdl, uint32_t cmem_ba,
+			    uint32_t table_offset)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+
+	if (hal_soc->ops->hal_rx_flow_delete_cmem_fse) {
+		return hal_soc->ops->hal_rx_flow_delete_cmem_fse(hal_soc,
+								 cmem_ba,
+								 table_offset);
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+qdf_export_symbol(hal_rx_flow_delete_cmem_fse);
 
 uint32_t hal_rx_flow_get_cmem_fse_timestamp(hal_soc_handle_t hal_soc_hdl,
 					    uint32_t fse_offset)
@@ -284,6 +321,8 @@ hal_rx_flow_get_tuple_info(hal_soc_handle_t hal_soc_hdl,
 
 	return NULL;
 }
+
+qdf_export_symbol(hal_rx_flow_get_tuple_info);
 
 #ifndef WLAN_SUPPORT_RX_FISA
 /**
@@ -528,8 +567,8 @@ hal_rx_insert_flow_entry(hal_soc_handle_t hal_soc,
 		if (!qdf_mem_cmp(&hal_tuple_info,
 				 flow_tuple_info,
 				 sizeof(struct hal_flow_tuple_info))) {
-			dp_err("Duplicate flow entry in FST %u at skid %u ",
-			       hal_hash, i);
+			*flow_idx = hal_hash;
+
 			return QDF_STATUS_E_EXISTS;
 		}
 	}
@@ -583,3 +622,20 @@ hal_rx_find_flow_from_tuple(hal_soc_handle_t hal_soc_hdl,
 	return QDF_STATUS_SUCCESS;
 }
 qdf_export_symbol(hal_rx_find_flow_from_tuple);
+
+void
+hal_rx_flow_cmem_update_reo_dst_ind(hal_soc_handle_t hal_soc_hdl,
+				    uint32_t cmem_ba,
+				    uint32_t flow_idx, uint8_t reo_dest_ind)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+
+	if (hal_soc->ops->hal_rx_flow_cmem_update_reo_dst_ind) {
+		hal_soc->ops->hal_rx_flow_cmem_update_reo_dst_ind(hal_soc,
+								  cmem_ba,
+								  flow_idx,
+								  reo_dest_ind);
+	}
+}
+
+qdf_export_symbol(hal_rx_flow_cmem_update_reo_dst_ind);

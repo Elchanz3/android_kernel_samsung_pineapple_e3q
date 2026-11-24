@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -37,6 +37,7 @@
 #include "wlan_mlo_mgr_sta.h"
 #include "cfg_ucfg_api.h"
 #include "wlan_tdls_api.h"
+#include <wlan_mlme_ucfg_api.h>
 
 QDF_STATUS ucfg_tdls_init(void)
 {
@@ -154,6 +155,27 @@ tdls_update_feature_flag(struct tdls_soc_priv_obj *tdls_soc_obj)
 }
 
 /**
+ * wlan_tdls_get_mlme_cfg_he_cap() - Get mlme cfg he caps
+ * @psoc: pointer to psoc
+ * @he_cap_cfg: HE cap
+ *
+ * Return: QDF_STATUS
+ */
+#ifdef WLAN_FEATURE_11AX
+static QDF_STATUS wlan_tdls_get_mlme_cfg_he_cap(struct wlan_objmgr_psoc *psoc,
+						tDot11fIEhe_cap *he_cap_cfg)
+{
+	return ucfg_mlme_cfg_get_he_caps(psoc, he_cap_cfg);
+}
+#else
+static QDF_STATUS wlan_tdls_get_mlme_cfg_he_cap(struct wlan_objmgr_psoc *psoc,
+						tDot11fIEhe_cap *he_cap_cfg)
+{
+	return QDF_STATUS_E_INVAL;
+}
+#endif /*WLAN_FEATURE_11AX*/
+
+/**
  * tdls_object_init_params() - init parameters for tdls object
  * @tdls_soc_obj: pointer to tdls psoc object
  *
@@ -163,6 +185,8 @@ static QDF_STATUS tdls_object_init_params(
 	struct tdls_soc_priv_obj *tdls_soc_obj)
 {
 	struct wlan_objmgr_psoc *psoc;
+	tDot11fIEhe_cap he_cap_cfg;
+	QDF_STATUS status;
 
 	if (!tdls_soc_obj) {
 		tdls_err("invalid param");
@@ -207,6 +231,21 @@ static QDF_STATUS tdls_object_init_params(
 			cfg_get(psoc, CFG_TDLS_PREFERRED_OFF_CHANNEL_FREQ_6G);
 	tdls_soc_obj->tdls_configs.tdls_pre_off_chan_bw =
 			cfg_get(psoc, CFG_TDLS_PREFERRED_OFF_CHANNEL_BW);
+
+	tdls_debug("tdls_pre_off_chan_bw: %d",
+		   tdls_soc_obj->tdls_configs.tdls_pre_off_chan_bw);
+
+	status = wlan_tdls_get_mlme_cfg_he_cap(psoc, &he_cap_cfg);
+
+	/* If HW does not support 160 MHz*/
+	if (QDF_IS_STATUS_SUCCESS(status) && !he_cap_cfg.chan_width_3) {
+		tdls_soc_obj->tdls_configs.tdls_pre_off_chan_bw =
+			tdls_soc_obj->tdls_configs.tdls_pre_off_chan_bw &
+					~(1 << BW_160_OFFSET_BIT);
+		tdls_debug("updated tdls_pre_off_chan_bw: %d",
+			   tdls_soc_obj->tdls_configs.tdls_pre_off_chan_bw);
+	}
+
 	tdls_soc_obj->tdls_configs.tdls_peer_kickout_threshold =
 			cfg_get(psoc, CFG_TDLS_PEER_KICKOUT_THRESHOLD);
 	tdls_soc_obj->tdls_configs.tdls_discovery_wake_timeout =
@@ -433,6 +472,26 @@ bool  ucfg_tdls_is_fw_6g_capable(struct wlan_objmgr_psoc *psoc)
 	return soc_obj->fw_tdls_6g_capability;
 }
 #endif
+
+enum tdls_feature_mode
+ucfg_tdls_get_current_mode(struct wlan_objmgr_psoc *psoc)
+{
+	struct tdls_soc_priv_obj *soc_obj;
+
+	if (!psoc) {
+		tdls_nofl_err("psoc invalid");
+		return TDLS_SUPPORT_DISABLED;
+	}
+
+	soc_obj = wlan_objmgr_psoc_get_comp_private_obj(psoc,
+							WLAN_UMAC_COMP_TDLS);
+	if (!soc_obj) {
+		tdls_nofl_err("Failed to get tdls psoc component");
+		return TDLS_SUPPORT_DISABLED;
+	}
+
+	return soc_obj->tdls_current_mode;
+}
 
 QDF_STATUS ucfg_tdls_update_config(struct wlan_objmgr_psoc *psoc,
 				   struct tdls_start_params *req)
@@ -1064,20 +1123,6 @@ QDF_STATUS ucfg_tdls_set_operating_mode(
 	return QDF_STATUS_SUCCESS;
 }
 
-void ucfg_tdls_update_rx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr,
-				 struct qdf_mac_addr *dest_mac_addr)
-{
-	tdls_update_rx_pkt_cnt(vdev, mac_addr, dest_mac_addr);
-
-}
-
-void ucfg_tdls_update_tx_pkt_cnt(struct wlan_objmgr_vdev *vdev,
-				 struct qdf_mac_addr *mac_addr)
-{
-	tdls_update_tx_pkt_cnt(vdev, mac_addr);
-}
-
 QDF_STATUS ucfg_tdls_antenna_switch(struct wlan_objmgr_vdev *vdev,
 				    uint32_t mode)
 {
@@ -1299,4 +1344,15 @@ void ucfg_tdls_set_user_tdls_enable(struct wlan_objmgr_vdev *vdev,
 				    bool is_user_tdls_enable)
 {
 	return tdls_set_user_tdls_enable(vdev, is_user_tdls_enable);
+}
+
+bool ucfg_tdls_is_vdev_allowed_to_tx(struct wlan_objmgr_vdev *vdev)
+{
+	return tdls_is_vdev_allowed_to_tx(vdev);
+}
+
+bool ucfg_tdls_is_key_install_allowed(struct wlan_objmgr_vdev *vdev,
+				      struct qdf_mac_addr *mac_addr)
+{
+	return wlan_tdls_is_key_install_allowed(vdev, mac_addr);
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +28,7 @@
 #include <target_if_mlo_mgr.h>
 #include <cdp_txrx_cmn.h>
 #include <wlan_cfg.h>
+#include "wlan_utility.h"
 
 void mlo_get_link_information(struct qdf_mac_addr *mld_addr,
 			      struct mlo_link_info *info)
@@ -334,6 +335,33 @@ void mlo_mlme_peer_reassoc(struct wlan_objmgr_vdev *vdev,
 						     frm_buf);
 }
 
+#ifdef ENABLE_CFG80211_BACKPORTS_MLO
+QDF_STATUS
+mlo_mlme_connect_get_partner_info(struct wlan_objmgr_vdev *vdev,
+				  const struct cfg80211_connect_params *req,
+				  struct mlo_partner_info *par_info)
+{
+	struct mlo_mgr_context *mlo_ctx = wlan_objmgr_get_mlo_ctx();
+	struct vdev_mlme_obj *vdev_mlme;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct mlo_mlme_ext_ops *ops = mlo_ctx->mlme_ops;
+
+	if (!mlo_ctx || !mlo_ctx->mlme_ops ||
+	    !mlo_ctx->mlme_ops->mlo_mlme_ext_validate_conn_req)
+		return QDF_STATUS_E_FAILURE;
+
+	vdev_mlme = wlan_vdev_mlme_get_cmpt_obj(vdev);
+	if (!vdev_mlme)
+		return QDF_STATUS_E_FAILURE;
+
+	if (mlo_ctx->mlme_ops->mlo_mlme_ext_connect_get_partner_info)
+		status = ops->mlo_mlme_ext_connect_get_partner_info(vdev, req,
+								    par_info);
+
+	return status;
+}
+#endif
+
 uint8_t mlo_get_link_vdev_ix(struct wlan_mlo_dev_context *ml_dev,
 			     struct wlan_objmgr_vdev *vdev)
 {
@@ -431,7 +459,7 @@ uint8_t wlan_mlo_get_psoc_group_id(struct wlan_objmgr_psoc *psoc)
 
 	if (!psoc) {
 		qdf_err("PSOC is NULL");
-		return -EINVAL;
+		return WLAN_MLO_GROUP_INVALID;
 	}
 
 	tx_ops = wlan_psoc_get_lmac_if_txops(psoc);
@@ -538,6 +566,28 @@ wlan_mlo_get_pdev_by_hw_link_id(uint16_t hw_link_id, uint8_t ml_grp_id,
 }
 
 qdf_export_symbol(wlan_mlo_get_pdev_by_hw_link_id);
+
+bool wlan_mlo_is_wsi_remap_in_progress(uint8_t grp_id)
+{
+	struct mlo_mgr_context *mlo_ctx;
+
+	mlo_ctx = wlan_objmgr_get_mlo_ctx();
+	if (!mlo_ctx)
+		return false;
+
+	if (!mlo_ctx->total_grp)
+		return false;
+
+	if (grp_id >= mlo_ctx->total_grp) {
+		mlo_debug("Invalid grp id %d, total no of groups %d",
+			  grp_id, mlo_ctx->total_grp);
+		return false;
+	}
+
+	return mlo_ctx->setup_info[grp_id].wsi_remap_in_progress;
+}
+
+qdf_export_symbol(wlan_mlo_is_wsi_remap_in_progress);
 #endif /*WLAN_MLO_MULTI_CHIP*/
 
 void mlo_get_ml_vdev_list(struct wlan_objmgr_vdev *vdev,
@@ -567,6 +617,39 @@ void mlo_get_ml_vdev_list(struct wlan_objmgr_vdev *vdev,
 						WLAN_MLO_MGR_ID);
 			if (QDF_IS_STATUS_ERROR(status))
 				break;
+			wlan_vdev_list[*vdev_count] =
+				dev_ctx->wlan_vdev_list[i];
+			(*vdev_count) += 1;
+		}
+	}
+	mlo_dev_lock_release(dev_ctx);
+}
+
+void mlo_get_partner_vdev_list(struct wlan_objmgr_vdev *vdev,
+			       uint16_t *vdev_count,
+			       struct wlan_objmgr_vdev **wlan_vdev_list)
+{
+	struct wlan_mlo_dev_context *dev_ctx;
+	int i;
+	QDF_STATUS status;
+
+	*vdev_count = 0;
+
+	if (!vdev || !vdev->mlo_dev_ctx) {
+		mlo_err("Invalid input");
+		return;
+	}
+
+	dev_ctx = vdev->mlo_dev_ctx;
+
+	mlo_dev_lock_acquire(dev_ctx);
+	for (i = 0; i < QDF_ARRAY_SIZE(dev_ctx->wlan_vdev_list); i++) {
+		if (dev_ctx->wlan_vdev_list[i]) {
+			status = wlan_objmgr_vdev_try_get_ref(
+						dev_ctx->wlan_vdev_list[i],
+						WLAN_MLO_MGR_ID);
+			if (QDF_IS_STATUS_ERROR(status))
+				continue;
 			wlan_vdev_list[*vdev_count] =
 				dev_ctx->wlan_vdev_list[i];
 			(*vdev_count) += 1;
@@ -748,7 +831,7 @@ mlo_ser_set_link_cb(struct wlan_serialization_command *cmd,
 	return status;
 }
 
-#define MLO_SER_CMD_TIMEOUT_MS 5000
+#define MLO_SER_CMD_TIMEOUT_MS ((STOP_RESPONSE_TIMER) + 6000)
 QDF_STATUS mlo_ser_set_link_req(struct mlo_link_set_active_req *req)
 {
 	struct wlan_serialization_command cmd = {0, };
@@ -977,3 +1060,75 @@ QDF_STATUS ml_post_get_link_state_msg(struct wlan_objmgr_vdev *vdev)
 	return qdf_status;
 }
 
+bool
+wlan_mlo_is_csa_allow(struct wlan_objmgr_vdev *vdev, uint16_t csa_freq)
+{
+	struct wlan_channel *chan;
+	struct wlan_objmgr_vdev *ml_vdev_list[WLAN_UMAC_MLO_MAX_VDEVS] = {0};
+	uint16_t ml_vdev_cnt = 0;
+	struct wlan_objmgr_vdev *t_vdev;
+	int i;
+	bool is_allow = true;
+
+	if (!vdev) {
+		mlo_err("vdev is NULL");
+		return false;
+	}
+
+	if (!wlan_vdev_mlme_is_mlo_vdev(vdev))
+		return true;
+
+	mlo_get_ml_vdev_list(vdev, &ml_vdev_cnt, ml_vdev_list);
+	for (i = 0; i < ml_vdev_cnt; i++) {
+		t_vdev = ml_vdev_list[i];
+		if (t_vdev == vdev)
+			goto next;
+		chan = wlan_vdev_get_active_channel(t_vdev);
+		if (!chan)
+			goto next;
+
+		if (csa_freq == chan->ch_freq) {
+			mlo_err("vdev %d will SCC with vdev %d on freq %d",
+				wlan_vdev_get_id(vdev),
+				wlan_vdev_get_id(t_vdev), csa_freq);
+			is_allow = false;
+		}
+next:
+		mlo_release_vdev_ref(t_vdev);
+	}
+
+	return is_allow;
+}
+
+#ifdef WLAN_FEATURE_11BE_MLO_TTLM
+QDF_STATUS
+mlo_ttlm_send_cmd_register_resp_cb(struct wlan_objmgr_vdev *vdev,
+				   struct ttlm_send_cmd_info *req)
+{
+	struct wlan_mlo_dev_context *mlo_ctx;
+	struct wlan_mlo_sta *sta_ctx = NULL;
+
+	if (!vdev || !wlan_vdev_mlme_is_mlo_vdev(vdev))
+		return QDF_STATUS_E_NULL_VALUE;
+	mlo_ctx = vdev->mlo_dev_ctx;
+
+	if (!mlo_ctx) {
+		mlo_err("null mlo_dev_ctx");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	sta_ctx = mlo_ctx->sta_ctx;
+
+	if (!sta_ctx)
+		return QDF_STATUS_E_INVAL;
+
+	mlo_dev_lock_acquire(mlo_ctx);
+
+	sta_ctx->ttlm_send_info.ttlm_send_cmd_resp_cb =
+		req->ttlm_send_cmd_resp_cb;
+	sta_ctx->ttlm_send_info.context = req->cookie;
+	mlo_dev_lock_release(mlo_ctx);
+
+	return QDF_STATUS_SUCCESS;
+}
+#endif

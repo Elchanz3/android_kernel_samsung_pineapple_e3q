@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -308,7 +308,6 @@ static inline void hdd_wlan_ssr_shutdown_event(void) { }
 static void hdd_psoc_shutdown_notify(struct hdd_context *hdd_ctx)
 {
 	hdd_enter();
-	wlan_cfg80211_cleanup_scan_queue(hdd_ctx->pdev, NULL);
 
 	cds_shutdown_notifier_call();
 	cds_shutdown_notifier_purge();
@@ -365,8 +364,15 @@ static void hdd_set_recovery_in_progress(void *data, uint8_t val)
 {
 	cds_set_recovery_in_progress(val);
 	/* SSR can be triggred late cleanup existing queue for kernel handshake */
-	if (!qdf_in_interrupt())
-		hdd_soc_recovery_cleanup();
+	if (!qdf_in_interrupt()) {
+		struct hdd_context *hdd_ctx;
+
+		hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+		if (!hdd_ctx)
+			return;
+
+		wlan_cfg80211_cleanup_scan_queue(hdd_ctx->pdev, NULL);
+	}
 }
 
 /**
@@ -823,8 +829,8 @@ static int __hdd_soc_probe(struct device *dev,
 	probe_fail_cnt = 0;
 	cds_set_driver_loaded(true);
 	cds_set_load_in_progress(false);
-	hdd_start_complete(0);
 	hdd_thermal_mitigation_register(hdd_ctx, dev);
+	hdd_ddr_bw_mitigation_register(hdd_ctx, dev);
 
 	hdd_set_sar_init_index(hdd_ctx);
 	hdd_soc_load_unlock(dev);
@@ -885,9 +891,12 @@ static int hdd_soc_probe(struct device *dev,
 
 	osif_psoc_sync_trans_stop(psoc_sync);
 
+	hdd_start_complete(0);
+
 	return 0;
 
 destroy_sync:
+	hdd_start_complete(errno);
 	osif_psoc_sync_unregister(dev);
 	osif_psoc_sync_wait_for_ops(psoc_sync);
 
@@ -1030,6 +1039,7 @@ static void __hdd_soc_remove(struct device *dev)
 		qdf_nbuf_deinit_replenish_timer();
 	} else {
 		hdd_thermal_mitigation_unregister(hdd_ctx, dev);
+		hdd_ddr_bw_mitigation_unregister(hdd_ctx, dev);
 		hdd_wlan_exit(hdd_ctx);
 	}
 
@@ -2269,16 +2279,14 @@ wlan_hdd_pld_uevent(struct device *dev, struct pld_uevent_data *event_data)
 	case PLD_BUS_EVENT:
 		hdd_debug("Bus event received");
 
-		/* Currently only link_down taken care.
+		/* Currently only link_down and link_resume_fail taken care.
 		 * Need to extend event buffer to define more bus info,
 		 * if need later.
 		 */
 		if (event_data->bus_data.etype == PLD_BUS_EVENT_PCIE_LINK_DOWN)
 			host_log_device_status(WLAN_STATUS_BUS_EXCEPTION);
-		break;
-	case PLD_SYS_REBOOT:
-		hdd_info("Received system reboot");
-		cds_set_sys_rebooting();
+		if (event_data->bus_data.etype == PLD_BUS_EVENT_PCIE_LINK_RESUME_FAIL)
+			cds_set_driver_state(CDS_DRIVER_STATE_PCIE_LINK_RESUME_FAIL);
 		break;
 	default:
 		/* other events intentionally not handled */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -31,6 +31,28 @@
 #define HAL_TX_NUM_DSCP_REGISTER_SIZE 32
 #define HAL_PPE_VP_ENTRIES_MAX 32
 #define HAL_PPE_VP_SEARCH_IDX_REG_MAX 8
+
+/**
+ * hal_tx_ppe2tcl_ring_halt_get_6432() - Get ring halt for the ppe2tcl ring
+ * @hal_soc: HAL SoC context
+ *
+ * Return: Ring halt status.
+ */
+static uint32_t hal_tx_ppe2tcl_ring_halt_get_6432(hal_soc_handle_t hal_soc)
+{
+	uint32_t cmn_reg_addr;
+	uint32_t regval;
+	struct hal_soc *soc = (struct hal_soc *)hal_soc;
+
+	cmn_reg_addr =
+		HWIO_TCL_R0_CONS_RING_CMN_CTRL_REG_ADDR(MAC_TCL_REG_REG_BASE);
+
+	/* Get RING_HALT status */
+	regval = HAL_REG_READ(soc, cmn_reg_addr);
+	return (regval &
+		(1 <<
+		 HWIO_TCL_R0_CONS_RING_CMN_CTRL_REG_PPE2TCL1_RNG_HALT_SHFT));
+}
 
 /**
  * hal_tx_get_num_ppe_vp_search_idx_reg_entries_6432() - get number of PPE VP
@@ -311,7 +333,12 @@ struct tx_peer_entry_compact_6432 {
 	/* DWORD - 2 */
 	uint32_t mac_addr_b_47_16               : 32;
 	/* DWORD - 3 */
-	uint32_t reserved_3                     : 32;
+	uint32_t use_ad_b			:  1,
+		 strip_insert_vlan_inner	:  1,
+		 strip_insert_vlan_outer	:  1,
+		 vlan_llc_mode			:  1,
+		 key_type			:  4,
+		 reserved_3			: 24;
 	/* DWORD - 16 */
 	uint32_t reserved_16                    : 32;
 	/* DWORD - 17 */
@@ -428,9 +455,14 @@ struct response_end_status_compact_6432 {
 	uint32_t reserved_7                     : 32;
 };
 
-#define TX_FES_STATUS_PROT_MASK	0x2
+#define TX_FES_STATUS_PROT_MASK	0x3
 typedef struct tx_fes_status_prot_compact_6432 hal_tx_fes_status_prot_t;
 struct tx_fes_status_prot_compact_6432 {
+	/* DWORD - 0 */
+	uint32_t success                        :  1,
+		 reserved_0                     : 31;
+	/* DWORD - 1 */
+	uint32_t reserved_1                     : 32;
 	/* DWORD - 2 */
 	uint32_t start_of_frame_timestamp_15_0  : 16,
 		 start_of_frame_timestamp_31_16 : 16;

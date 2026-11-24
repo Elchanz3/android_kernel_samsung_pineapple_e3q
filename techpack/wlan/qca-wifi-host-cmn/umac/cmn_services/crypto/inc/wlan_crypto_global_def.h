@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -55,7 +55,9 @@
 #define WLAN_CRYPTO_MAX_VLANKEYIX    WLAN_CRYPTO_MAXKEYIDX
 #endif
 #define WLAN_CRYPTO_MAX_PMKID        (16)
-
+#define WLAN_CRYPTO_TOTAL_KEYIDX     (WLAN_CRYPTO_MAXKEYIDX + \
+					WLAN_CRYPTO_MAXIGTKKEYIDX + \
+					WLAN_CRYPTO_MAXBIGTKKEYIDX)
 /* 40 bit wep key len */
 #define WLAN_CRYPTO_KEY_WEP40_LEN    (5)
 /* 104 bit wep key len */
@@ -242,11 +244,15 @@ enum wlan_crypto_vdev_11az_security_capab {
  * @WLAN_CRYPTO_URNM_MFPR: URNM MFP required in RSNXE
  * @WLAN_CRYPTO_MFPC: MFP capable bit from RSN IE
  * @WLAN_CRYPTO_MFPR: MFP required from RSNIE
+ * @WLAN_CRYPTO_URNM_MFPR_X20: URNM_MFPR_X20 in RSNXE
+ * @WLAN_CRYPTO_I2R_LMR_FB: I2R LMR feedback policy in extended capabilities
  */
 enum wlan_crypto_vdev_pasn_caps {
 	WLAN_CRYPTO_URNM_MFPR = BIT(0),
 	WLAN_CRYPTO_MFPC = BIT(1),
 	WLAN_CRYPTO_MFPR = BIT(2),
+	WLAN_CRYPTO_URNM_MFPR_X20 = BIT(3),
+	WLAN_CRYPTO_I2R_LMR_FB = BIT(4),
 };
 
 typedef enum wlan_crypto_key_mgmt {
@@ -310,6 +316,62 @@ enum fils_erp_cryptosuite {
 	HMAC_SHA256_128,
 	HMAC_SHA256_256,
 };
+
+/*
+ * enum wlan_crypto_oem_eht_mlo_config - ENUM for different OEM configurable
+ * crypto params to allow EHT/MLO in WPA2/WPA3 security.
+ *
+ * @WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT: Allows connecting to WPA2 with PMF
+ * capability set to false in EHT only mode. If the AP is MLO, the connection
+ * will still be in EHT without MLO.
+ *
+ * @WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO: Allows connecting to WPA2 with PMF
+ * capability set to false in MLO mode.
+ *    -If set along with WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT,
+ *     this mode supersedes.
+ *
+ * @WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT_MFPC_SET: Allows connecting to WPA2
+ * with PMF capability set to true in EHT only mode. If the AP is MLO,
+ * the connection will still be in EHT without MLO.
+ *
+ * @WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO_MFPC_SET: Allows connecting to WPA2 with PMF
+ * capability set to true in MLO mode.
+ *    -If set along with WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT_MFPC_SET,
+ *     this mode supersedes.
+ *
+ * @WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_NON_MLO_EHT_HnP: Connect to non-MLO/MLO
+ * WPA3-SAE without support for H2E (or no RSNXE IE in beacon) in non-MLO EHT.
+ * This bit results in connecting to both H2E and HnP APs in EHT only mode.
+ *
+ * @WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_MLO_HnP: Connect to MLO WPA3-SAE without
+ * support for H2E (or no RSNXE IE in beacon) in MLO.
+ * This bit result in connecting to both H2E and HnP APs in MLO mode.
+ *    -If set along with WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_NON_MLO_EHT_HnP,
+ *     this mode supersedes.
+ */
+enum wlan_crypto_oem_eht_mlo_config {
+	WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT           = BIT(0),
+	WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO                   = BIT(1),
+	WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT_MFPC_SET  = BIT(2),
+	WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO_MFPC_SET          = BIT(3),
+	/* Bits 4-15 are reserved for future WPA2 security configs */
+
+	WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_NON_MLO_EHT_HnP   = BIT(16),
+	WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_MLO_HnP           = BIT(17),
+	/* Bits 18-31 are reserved for future WPA3 security configs */
+};
+
+#define WLAN_CRYPTO_WPA2_OEM_EHT_CFG_NO_PMF_ALLOWED(_cfg) \
+	((_cfg) & WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT || \
+	 (_cfg) & WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO)
+
+#define WLAN_CRYPTO_WPA2_OEM_EHT_CFG_PMF_ALLOWED(_cfg) \
+	 ((_cfg) & WLAN_HOST_CRYPTO_WPA2_ALLOW_NON_MLO_EHT_MFPC_SET || \
+	  (_cfg) & WLAN_HOST_CRYPTO_WPA2_ALLOW_MLO_MFPC_SET)
+
+#define WLAN_CRYPTO_WPA3_SAE_OEM_EHT_CFG_IS_STRICT_H2E(_cfg) \
+	(((_cfg) & WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_NON_MLO_EHT_HnP || \
+	  (_cfg) & WLAN_HOST_CRYPTO_WPA3_SAE_ALLOW_MLO_HnP) == 0)
 
 /**
  * struct mobility_domain_params - structure containing
@@ -378,6 +440,7 @@ struct key_mgmt_list {
  * @rsn_caps:           rsn_capability
  * @rsnx_caps:          rsnx capability
  * @akm_list:           order of AKM present in RSN IE of Beacon/Probe response
+ * @random_pmkid_cnt:   count of random PMKIDs to be added in assoc request
  *
  * This structure holds crypto params for peer or vdev
  */
@@ -394,6 +457,7 @@ struct wlan_crypto_params {
 #ifdef WLAN_ADAPTIVE_11R
 	struct key_mgmt_list akm_list[WLAN_CRYPTO_KEY_MGMT_MAX];
 #endif
+	uint8_t random_pmkid_cnt;
 };
 
 /**
@@ -424,6 +488,7 @@ typedef enum wlan_crypto_param_type {
 	WLAN_CRYPTO_PARAM_RSNX_CAP,
 	WLAN_CRYPTO_PARAM_KEY_MGMT,
 	WLAN_CRYPTO_PARAM_PMKSA,
+	WLAN_CRYPTO_PARAM_RANDOM_PMKID,
 } wlan_crypto_param_type;
 
 /**
@@ -668,6 +733,13 @@ struct wlan_lmac_if_crypto_rx_ops {
 	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FILS_SHA384) || \
 	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_FILS_SHA256) || \
 	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_FILS_SHA384) || \
+	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_PSK_SHA384) || \
+	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_PSK_SHA384))
+
+#define WLAN_CRYPTO_IS_WPA2(akm) \
+	(QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_PSK) || \
+	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_PSK) || \
+	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_PSK_SHA256) || \
 	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_PSK_SHA384) || \
 	 QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_PSK_SHA384))
 

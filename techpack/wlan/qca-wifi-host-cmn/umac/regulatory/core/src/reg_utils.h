@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -279,14 +279,6 @@ bool reg_is_us_alpha2(uint8_t *alpha2);
 bool reg_is_etsi_alpha2(uint8_t *alpha2);
 
 /**
- * reg_ctry_support_vlp - Does country code supports VLP
- * @alpha2: country code pointer
- *
- * Return: true or false
- */
-bool reg_ctry_support_vlp(uint8_t *alpha2);
-
-/**
  * reg_set_country() - Set the current regulatory country
  * @pdev: pdev device for country information
  * @country: country value
@@ -323,6 +315,7 @@ QDF_STATUS reg_get_domain_from_country_code(v_REGDOMAIN_t *reg_domain_ptr,
  * @pwr_type_6g: pointer to 6G power type
  * @ap_pwr_type: AP's power type as advertised in HE ops IE
  * @chan_freq: Connection channel frequency
+ * @rf_mode_force_pwr_type: RF mode force power type
  *
  * This function computes best power type for 6 GHz connection.
  * SP power type is selected only if AP advertises SP and client supports SP.
@@ -339,7 +332,8 @@ reg_get_best_6g_power_type(struct wlan_objmgr_psoc *psoc,
 			   struct wlan_objmgr_pdev *pdev,
 			   enum reg_6g_ap_type *pwr_type_6g,
 			   enum reg_6g_ap_type ap_pwr_type,
-			   uint32_t chan_freq);
+			   uint32_t chan_freq,
+			   int8_t rf_mode_force_pwr_type);
 #endif
 
 /**
@@ -413,22 +407,6 @@ QDF_STATUS reg_set_curr_country(
 bool reg_ignore_default_country(struct wlan_regulatory_psoc_priv_obj *soc_reg,
 				struct cur_regulatory_info *regulat_info);
 
-#ifdef CONFIG_BAND_6GHZ
-/**
- * reg_decide_6g_ap_pwr_type() - Decide which power mode AP should operate in
- *
- * @pdev: pdev ptr
- *
- * Return: AP power type
- */
-enum reg_6g_ap_type reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev);
-#else
-static inline enum reg_6g_ap_type
-reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev)
-{
-	return REG_CURRENT_MAX_AP_TYPE;
-}
-#endif /* CONFIG_BAND_6GHZ */
 #else
 static inline QDF_STATUS reg_read_current_country(struct wlan_objmgr_psoc *psoc,
 						  uint8_t *country_code)
@@ -437,11 +415,6 @@ static inline QDF_STATUS reg_read_current_country(struct wlan_objmgr_psoc *psoc,
 }
 
 static inline bool reg_is_world_alpha2(uint8_t *alpha2)
-{
-	return false;
-}
-
-static inline bool reg_ctry_support_vlp(uint8_t *alpha2)
 {
 	return false;
 }
@@ -538,10 +511,10 @@ bool reg_is_user_country_set_allowed(struct wlan_objmgr_psoc *psoc)
 	return true;
 }
 
-static inline enum reg_6g_ap_type
-reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev)
+static inline
+uint32_t reg_get_country_max_allowed_bw(struct wlan_objmgr_pdev *pdev)
 {
-	return REG_CURRENT_MAX_AP_TYPE;
+	return 0;
 }
 
 static inline
@@ -663,5 +636,39 @@ reg_get_6ghz_cli_pwr_type_per_ap_pwr_type(
 				struct wlan_objmgr_pdev *pdev,
 				enum reg_6g_ap_type ap_pwr_type,
 				enum supported_6g_pwr_types *cli_pwr_type);
-#endif
+
+/**
+ * reg_update_max_bw_6ghz_chan() - Update maximum bandwidth for each 6 GHz
+ * channel amongst all supported power types.
+ * @pdev: pointer to pdev
+ * @chan_list: current channel list
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+reg_update_max_bw_6ghz_chan(struct wlan_objmgr_pdev *pdev,
+			    struct regulatory_channel *chan_list);
+
+/**
+ * reg_check_if_6g_pwr_type_supp_for_chan() - Check if 6 GHz power type is
+ *                                            supported for the channel
+ * @pdev: Pointer to pdev
+ * @pwr_type: 6 GHz power type
+ * @chan_idx: Connection channel index
+ *
+ * Return: Return QDF_STATUS_SUCCESS if 6 GHz power type supported for
+ *         the given channel, else return QDF_STATUS_E_FAILURE.
+ */
+QDF_STATUS
+reg_check_if_6g_pwr_type_supp_for_chan(struct wlan_objmgr_pdev *pdev,
+				       enum reg_6g_ap_type pwr_type,
+				       enum channel_enum chan_idx);
+#else
+static inline QDF_STATUS
+reg_update_max_bw_6ghz_chan(struct wlan_objmgr_pdev *pdev,
+			    struct regulatory_channel *chan_list)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif /* defined(CONFIG_REG_CLIENT) && defined(CONFIG_BAND_6GHZ) */
 #endif

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CNSS_PCI_H
@@ -76,6 +76,7 @@ enum cnss_pci_reg_dev_mask {
 	REG_MASK_KIWI,
 	REG_MASK_MANGO,
 	REG_MASK_PEACH,
+	REG_MASK_COLOGNE,
 };
 
 enum cnss_smmu_fault_time {
@@ -171,6 +172,7 @@ struct cnss_pci_data {
 	u32 remap_window;
 	struct completion wake_event_complete;
 	struct timer_list dev_rddm_timer;
+	atomic_t rddm_timeout_cnt;
 	struct timer_list boot_debug_timer;
 	struct delayed_work time_sync_work;
 	u8 disable_pc;
@@ -185,6 +187,7 @@ struct cnss_pci_data {
 	bool drv_supported;
 	bool is_smmu_fault;
 	unsigned long long smmu_fault_timestamp[SMMU_CB_MAX];
+	atomic_t id_mismatch_cnt;
 };
 
 static inline void cnss_set_pci_priv(struct pci_dev *pci_dev, void *data)
@@ -248,6 +251,7 @@ static inline int cnss_pci_get_drv_connected(void *bus_priv)
 
 void cnss_mhi_controller_set_base(struct cnss_pci_data *pci_priv,
 				  phys_addr_t base);
+int cnss_pci_recover_link_post_sol(struct cnss_pci_data *pci_priv);
 int cnss_pci_check_link_status(struct cnss_pci_data *pci_priv);
 int cnss_suspend_pci_link(struct cnss_pci_data *pci_priv);
 int cnss_resume_pci_link(struct cnss_pci_data *pci_priv);
@@ -259,13 +263,16 @@ void cnss_pci_add_fw_prefix_name(struct cnss_pci_data *pci_priv,
 int cnss_pci_alloc_fw_mem(struct cnss_pci_data *pci_priv);
 int cnss_pci_alloc_qdss_mem(struct cnss_pci_data *pci_priv);
 void cnss_pci_free_qdss_mem(struct cnss_pci_data *pci_priv);
+int cnss_pci_load_sku_license(struct cnss_pci_data *pci_priv);
 int cnss_pci_load_tme_patch(struct cnss_pci_data *pci_priv);
+int cnss_pci_load_tme_opt_file(struct cnss_pci_data *pci_priv,
+				enum wlfw_tme_lite_file_type_v01 file);
 int cnss_pci_load_m3(struct cnss_pci_data *pci_priv);
 void cnss_pci_free_blob_mem(struct cnss_pci_data *pci_priv);
 int cnss_pci_load_aux(struct cnss_pci_data *pci_priv);
 int cnss_pci_handle_dev_sol_irq(struct cnss_pci_data *pci_priv);
 int cnss_pci_start_mhi(struct cnss_pci_data *pci_priv);
-void cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic);
+int cnss_pci_collect_dump_info(struct cnss_pci_data *pci_priv, bool in_panic);
 #ifdef CONFIG_CNSS2_SSR_DRIVER_DUMP
 void cnss_pci_collect_host_dump_info(struct cnss_pci_data *pci_priv);
 #else
@@ -305,23 +312,27 @@ int cnss_pci_pm_runtime_put_autosuspend(struct cnss_pci_data *pci_priv,
 void cnss_pci_pm_runtime_put_noidle(struct cnss_pci_data *pci_priv,
 				    enum cnss_rtpm_id id);
 void cnss_pci_pm_runtime_mark_last_busy(struct cnss_pci_data *pci_priv);
+int cnss_pci_fmd_status(struct cnss_pci_data *pci_priv,
+			int fmd_status);
 int cnss_pci_update_status(struct cnss_pci_data *pci_priv,
 			   enum cnss_driver_status status);
 int cnss_pci_call_driver_uevent(struct cnss_pci_data *pci_priv,
 				enum cnss_driver_status status, void *data);
 int cnss_pcie_is_device_down(struct cnss_pci_data *pci_priv);
+int cnss_pci_shutdown_cleanup(struct cnss_pci_data *pci_priv);
 int cnss_pci_suspend_bus(struct cnss_pci_data *pci_priv);
 int cnss_pci_resume_bus(struct cnss_pci_data *pci_priv);
 int cnss_pci_debug_reg_read(struct cnss_pci_data *pci_priv, u32 offset,
 			    u32 *val, bool raw_access);
 int cnss_pci_debug_reg_write(struct cnss_pci_data *pci_priv, u32 offset,
 			     u32 val, bool raw_access);
+void cnss_pci_soc_reset_cause_reg_dump(struct cnss_pci_data *pci_priv);
 int cnss_pci_get_iova(struct cnss_pci_data *pci_priv, u64 *addr, u64 *size);
 int cnss_pci_get_iova_ipa(struct cnss_pci_data *pci_priv, u64 *addr,
 			  u64 *size);
 bool cnss_pci_is_smmu_s1_enabled(struct cnss_pci_data *pci_priv);
 void cnss_pci_handle_linkdown(struct cnss_pci_data *pci_priv);
-
+void cnss_pci_controller_set_base(struct cnss_pci_data *pci_priv);
 int cnss_pci_update_time_sync_period(struct cnss_pci_data *pci_priv,
 				     unsigned int time_sync_period);
 int cnss_pci_set_therm_cdev_state(struct cnss_pci_data *pci_priv,
@@ -333,4 +344,5 @@ int cnss_pci_get_user_msi_assignment(struct cnss_pci_data *pci_priv,
 				     u32 *user_base_data,
 				     u32 *base_vector);
 void cnss_register_iommu_fault_handler_irq(struct cnss_pci_data *pci_priv);
+void cnss_pci_start_xdump_timer(struct cnss_pci_data *pci_priv);
 #endif /* _CNSS_PCI_H */

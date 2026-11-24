@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -69,7 +69,7 @@
  * @CDS_DRIVER_STATE_FW_READY: Driver Firmware ready
  * @CDS_DRIVER_STATE_MODULE_STOP: Module stop in progress or done.
  * @CDS_DRIVER_STATE_ASSERTING_TARGET: Driver assert target in progress.
- * @CDS_DRIVER_STATE_SYS_REBOOTING: System reboot in progress.
+ * @CDS_DRIVER_STATE_PCIE_LINK_RESUME_FAIL: system in PCIe resume failed state.
  */
 enum cds_driver_state {
 	CDS_DRIVER_STATE_UNINITIALIZED          = 0,
@@ -81,7 +81,7 @@ enum cds_driver_state {
 	CDS_DRIVER_STATE_FW_READY               = BIT(5),
 	CDS_DRIVER_STATE_MODULE_STOP            = BIT(6),
 	CDS_DRIVER_STATE_ASSERTING_TARGET       = BIT(7),
-	CDS_DRIVER_STATE_SYS_REBOOTING          = BIT(8),
+	CDS_DRIVER_STATE_PCIE_LINK_RESUME_FAIL  = BIT(9),
 };
 
 /**
@@ -188,6 +188,19 @@ static inline bool cds_is_driver_state_module_stop(void)
 	enum cds_driver_state state = cds_get_driver_state();
 
 	return __CDS_IS_DRIVER_STATE(state, CDS_DRIVER_STATE_MODULE_STOP);
+}
+
+/**
+ * cds_is_pcie_link_resume_fail() - Is PCIe link in resume fail state
+ *
+ * Return: true if PCIe link is in resume fail state and false otherwise.
+ */
+static inline bool cds_is_pcie_link_resume_fail(void)
+{
+	enum cds_driver_state state = cds_get_driver_state();
+
+	return __CDS_IS_DRIVER_STATE(state,
+				     CDS_DRIVER_STATE_PCIE_LINK_RESUME_FAIL);
 }
 
 /**
@@ -327,31 +340,6 @@ static inline bool cds_is_target_asserting(void)
 
 	return __CDS_IS_DRIVER_STATE(state, CDS_DRIVER_STATE_ASSERTING_TARGET);
 }
-
-/**
- * cds_set_sys_rebooting() - Set system reboot in progress
- *
- * Return: none
- */
-void cds_set_sys_rebooting(void);
-
-/**
- * cds_sys_reboot_protect() - Require the lock for system reboot and get
- * system rebooting state
- *
- * cds_sys_reboot_protect() and cds_sys_reboot_unprotect() MUST be used
- * in pair.
- *
- * Return: true if system is rebooting, false otherwise
- */
-bool cds_sys_reboot_protect(void);
-
-/**
- * cds_sys_reboot_unprotect() - Release the lock for system reboot
- *
- * Return: none
- */
-void cds_sys_reboot_unprotect(void);
 
 /**
  * cds_init() - Initialize CDS
@@ -539,6 +527,10 @@ struct cds_config_info *cds_get_ini_config(void);
 bool cds_is_5_mhz_enabled(void);
 bool cds_is_10_mhz_enabled(void);
 bool cds_is_sub_20_mhz_enabled(void);
+QDF_STATUS cds_set_sub_20_support(bool enable);
+QDF_STATUS
+cds_set_sub_20_channel_width(enum cfg_sub_20_channel_width sub_20_ch_width);
+
 bool cds_is_self_recovery_enabled(void);
 bool cds_is_fw_down(void);
 enum QDF_GLOBAL_MODE cds_get_conparam(void);
@@ -650,4 +642,37 @@ static inline bool cds_is_driver_transitioning(void)
 		__CDS_IS_DRIVER_STATE(state, CDS_DRIVER_STATE_BAD);
 }
 
+/**
+ * cds_is_pm_fw_debug_enable() - This API provides PMO FW debug enable check.
+ *
+ * Return: true if PMO FW debug is enable and otherwise  false
+ */
+bool cds_is_pm_fw_debug_enable(void);
+
+typedef void (*scan_flush_recovery_callback)(void);
+
+/**
+ * cds_register_scan_flush_recovery_callback() - This API to register scan
+ * flush callback to cds
+ * @cb: scan flush callback
+ *
+ * Return: void
+ */
+void
+cds_register_scan_flush_recovery_callback(scan_flush_recovery_callback cb);
+
+/**
+ * cds_unregister_scan_flush_recovery_callback() - This API to unregister scan
+ * flush callback from cds
+ * Return: void
+ */
+void cds_unregister_scan_flush_recovery_callback(void);
+
+/**
+ * cds_scan_flush_on_recovery() - This API flush scan request when recovery
+ * start
+ *
+ * Return: void
+ */
+void cds_scan_flush_on_recovery(void);
 #endif /* if !defined __CDS_API_H */

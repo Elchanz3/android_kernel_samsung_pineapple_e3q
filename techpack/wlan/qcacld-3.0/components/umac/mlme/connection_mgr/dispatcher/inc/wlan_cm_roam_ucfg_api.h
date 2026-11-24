@@ -43,6 +43,39 @@ ucfg_user_space_enable_disable_rso(struct wlan_objmgr_pdev *pdev,
 				   const bool is_fast_roam_enabled);
 
 /**
+ * ucfg_clear_user_disabled_roaming() - clear user/wpa_supplicant
+ * disabled_roaming flag in driver
+ * @psoc: Pointer to pdev
+ * @vdev_id: vdev id
+ *
+ * Return: void
+ */
+void
+ucfg_clear_user_disabled_roaming(struct wlan_objmgr_psoc *psoc,
+				 uint8_t vdev_id);
+
+/**
+ * ucfg_set_roam_policy() - Set roam policy
+ * @psoc:  Pointer to psoc
+ * @vdev_id: vdev id
+ * @roam_policy: Roam policy. refer enum wlan_roam_policy
+ *
+ * Return: void
+ */
+void ucfg_set_roam_policy(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+			  enum wlan_roam_policy roam_policy);
+
+/**
+ * ucfg_get_roam_policy() - Get roam policy
+ * @psoc: psoc object
+ * @vdev_id: vdev id
+ *
+ * Return: current roam policy
+ */
+enum wlan_roam_policy ucfg_get_roam_policy(struct wlan_objmgr_psoc *psoc,
+					   uint8_t vdev_id);
+
+/**
  * ucfg_is_rso_enabled() - Check if rso is enabled
  * @pdev: Pointer to pdev
  * @vdev_id: vdev id
@@ -289,6 +322,39 @@ ucfg_wlan_cm_roam_invoke(struct wlan_objmgr_pdev *pdev, uint8_t vdev_id,
 			 struct qdf_mac_addr *bssid, qdf_freq_t ch_freq,
 			 enum wlan_cm_source source);
 
+/**
+ * ucfg_cm_roam_get_roam_score_algo() - get value of INI
+ * vendor_roam_score_algorithm
+ * @pdev: Pointer to pdev
+ *
+ * Return: value of vendor_roam_score_algorithm
+ */
+uint32_t ucfg_cm_roam_get_roam_score_algo(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * ucfg_cm_is_bssid_present_on_any_assoc_link() : Check if bssid belongs to any
+ * assoc link
+ * @vdev: Pointer to vdev
+ * @target_bssid: target bssid
+ *
+ * Return: True if bssid belongs to any assoc else return false
+ */
+bool ucfg_cm_is_bssid_present_on_any_assoc_link(struct wlan_objmgr_vdev *vdev,
+				       struct qdf_mac_addr *target_bssid);
+
+/**
+ * ucfg_cm_roam_reject_reassoc_event() - send reassoc reject log event
+ * vendor_roam_score_algorithm
+ * @pdev: Pointer to pdev
+ * @vdev: Pointer to vdev
+ * @connected_bssid: connected BSSID
+ *
+ * Return: none
+ */
+void ucfg_cm_roam_reject_reassoc_event(struct wlan_objmgr_pdev *pdev,
+				       struct wlan_objmgr_vdev *vdev,
+				       struct qdf_mac_addr *connected_bssid);
+
 #ifdef WLAN_FEATURE_FILS_SK
 QDF_STATUS
 ucfg_cm_update_fils_config(struct wlan_objmgr_psoc *psoc,
@@ -427,6 +493,24 @@ ucfg_cm_exclude_rm_partial_scan_freq(struct wlan_objmgr_pdev *pdev,
 QDF_STATUS ucfg_cm_roam_full_scan_6ghz_on_disc(struct wlan_objmgr_pdev *pdev,
 					       uint8_t vdev_id,
 					       uint8_t param_value);
+
+/**
+ * ucfg_cm_set_roam_scan_high_rssi_offset() - Set the delta change in high RSSI
+ * at which roam scan is triggered in 2.4/5 GHz.
+ * @psoc: Pointer to psoc object
+ * @vdev_id: vdev id
+ * @param_value: Set the High RSSI delta for roam scan trigger
+ * 0    - Disable
+ * 1-16 - Set an offset value in this range
+ *
+ * Return: QDF_STATUS
+ */
+static inline QDF_STATUS
+ucfg_cm_set_roam_scan_high_rssi_offset(struct wlan_objmgr_psoc *psoc,
+				       uint8_t vdev_id, uint8_t param_value)
+{
+	return cm_set_roam_scan_high_rssi_offset(psoc, vdev_id, param_value);
+}
 #else
 static inline void
 ucfg_cm_reset_key(struct wlan_objmgr_pdev *pdev, uint8_t vdev_id) {}
@@ -458,6 +542,13 @@ ucfg_cm_roam_full_scan_6ghz_on_disc(struct wlan_objmgr_pdev *pdev,
 {
 	return QDF_STATUS_SUCCESS;
 }
+
+static inline QDF_STATUS
+ucfg_cm_set_roam_scan_high_rssi_offset(struct wlan_objmgr_psoc *psoc,
+				       uint8_t vdev_id, uint8_t param_value)
+{
+	return QDF_STATUS_SUCCESS;
+}
 #endif /* WLAN_FEATURE_ROAM_OFFLOAD */
 
 #ifdef WLAN_VENDOR_HANDOFF_CONTROL
@@ -476,6 +567,17 @@ QDF_STATUS
 ucfg_cm_roam_send_vendor_handoff_param_req(struct wlan_objmgr_psoc *psoc,
 					   uint8_t vdev_id, uint32_t param_id,
 					   void *vendor_handoff_context);
+
+/**
+ * ucfg_cm_roam_reset_vendor_handoff_req() - reset vendor handoff params
+ * command request
+ * @psoc: Pointer to psoc
+ * @vdev_id: vdev id
+ *
+ * Return: none
+ */
+void ucfg_cm_roam_reset_vendor_handoff_req(struct wlan_objmgr_psoc *psoc,
+					   uint8_t vdev_id);
 
 /**
  * ucfg_cm_roam_is_vendor_handoff_control_enable() - check whether vendor
@@ -535,7 +637,7 @@ ucfg_cm_get_roam_rescan_rssi_diff(struct wlan_objmgr_psoc *psoc, uint8_t *val);
  * get neighbor lookup rssi threshold
  * @psoc: pointer to psoc object
  * @vdev_id: vdev identifier
- * @lookup_threshold: Buffer to fill the neighbor lookup threshold.
+ * @next_rssi_threshold: Buffer to fill the next rssi threshold.
  *			Valid only if the return status is success.
  *
  * Return: QDF_STATUS
@@ -543,7 +645,7 @@ ucfg_cm_get_roam_rescan_rssi_diff(struct wlan_objmgr_psoc *psoc, uint8_t *val);
 QDF_STATUS
 ucfg_cm_get_neighbor_lookup_rssi_threshold(struct wlan_objmgr_psoc *psoc,
 					   uint8_t vdev_id,
-					   uint8_t *lookup_threshold);
+					   uint8_t *next_rssi_threshold);
 
 /**
  * ucfg_cm_get_empty_scan_refresh_period() - get empty scan refresh period
@@ -740,6 +842,24 @@ ucfg_cm_roam_stats_info_put(struct enhance_roam_info *roam_info)
 {
 	qdf_mem_free(roam_info);
 }
+
+/**
+ * ucfg_cm_roam_info_get() - get vdev roam info
+ *
+ * @vdev: pointer to vdev
+ * @roam_info: pointer to buffer to copy roam stats info
+ * @idx: index of roam stats cache buffer
+ *
+ * Return: QDF_STATUS
+ */
+static inline QDF_STATUS
+ucfg_cm_roam_info_get(struct wlan_objmgr_vdev *vdev,
+		      struct enhance_roam_info **roam_info,
+		      uint8_t idx)
+{
+	return wlan_cm_roam_info_get(vdev, roam_info, idx);
+}
+
 #else
 static inline QDF_STATUS
 ucfg_cm_roam_stats_info_get(struct wlan_objmgr_vdev *vdev,
@@ -796,4 +916,20 @@ ucfg_cm_roaming_get_peer_mld_addr(struct wlan_objmgr_vdev *vdev)
 	return NULL;
 }
 #endif
+
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * ucfg_cm_delete_crypto_keys_for_all_links() - This API is wrapper for
+ * "cm_delete_crypto_keys_for_all_links" function
+ * @vdev: pointer to VDEV
+ *
+ * Return: none
+ */
+void ucfg_cm_delete_crypto_keys_for_all_links(struct wlan_objmgr_vdev *vdev);
+#else
+static inline
+void ucfg_cm_delete_crypto_keys_for_all_links(struct wlan_objmgr_vdev *vdev)
+{
+}
+#endif /* WLAN_FEATURE_11BE_MLO */
 #endif /* _WLAN_CM_ROAM_UCFG_API_H_ */

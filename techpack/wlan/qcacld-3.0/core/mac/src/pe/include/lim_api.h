@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -119,6 +119,7 @@ lim_post_msg_to_process_deferred_queue(struct mac_context *mac)
 
 #define SET_LIM_PROCESS_DEFD_MESGS(mac, val) \
 	mac->lim.gLimProcessDefdMsgs = val; \
+	mac->lim.defer_caller = __func__; \
 	pe_debug("Defer LIM msg %d", val); \
 	lim_post_msg_to_process_deferred_queue(mac);
 
@@ -151,6 +152,8 @@ typedef enum eMgmtFrmDropReason {
 	eMGMT_DROP_SPURIOUS_FRAME,
 	eMGMT_DROP_DUPLICATE_AUTH_FRAME,
 	eMGMT_DROP_EXCESSIVE_MGMT_FRAME,
+	eMGMT_DROP_DEAUTH_DURING_ROAM_STARTED,
+	eMGMT_DROP_CONNECT_DURING_ROAMING,
 } tMgmtFrmDropReason;
 
 /**
@@ -172,6 +175,27 @@ void pe_stop(struct mac_context *mac);
  * Return: True if RMF enabled and key is installed
  */
 bool is_mgmt_protected(uint32_t vdev_id, const uint8_t *peer_mac_addr);
+
+/**
+ * lim_check_ap_assist_dfs_p2p_group() - Evaluate AP assisted DFS P2P entities
+ *
+ * The API checks if any active AP assisted P2P entities are present and calls
+ * P2P module to re-evaulate the conditions for continued group operation when
+ * any concurrency changes on STA interface.
+ * @is_incr_session: Is callback due to session count increase
+ *
+ * Return: void
+ */
+void lim_check_ap_assist_dfs_p2p_group(bool is_incr_session);
+
+/**
+ * lim_fill_dfs_p2p_group_params() - Fill the params of P2P group operating
+ * in DFS channel.
+ * @pe_session: Session
+ *
+ * Return: void
+ */
+void lim_fill_dfs_p2p_group_params(struct pe_session *pe_session);
 
 /**
  * lim_stop_pmfcomeback_timer() - stop pmf comeback timer
@@ -370,6 +394,10 @@ pe_disconnect_callback(struct mac_context *mac, uint8_t vdev_id,
 		       uint16_t deauth_disassoc_frame_len,
 		       uint16_t reason_code);
 
+QDF_STATUS
+pe_set_ie_for_roam_invoke(struct mac_context *mac_ctx, uint8_t vdev_id,
+			  uint16_t dot11_mode, enum QDF_OPMODE opmode);
+
 #else
 static inline QDF_STATUS
 pe_roam_synch_callback(struct mac_context *mac_ctx,
@@ -386,6 +414,13 @@ pe_disconnect_callback(struct mac_context *mac, uint8_t vdev_id,
 		       uint8_t *deauth_disassoc_frame,
 		       uint16_t deauth_disassoc_frame_len,
 		       uint16_t reason_code)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline QDF_STATUS
+pe_set_ie_for_roam_invoke(struct mac_context *mac_ctx, uint8_t vdev_id,
+			  uint16_t dot11_mode, enum QDF_OPMODE opmode)
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }
@@ -603,11 +638,30 @@ void lim_set_twt_ext_capabilities(struct mac_context *mac_ctx,
  */
 void lim_get_basic_rates(tSirMacRateSet *b_rates, uint32_t chan_freq);
 
+#define FW_CTS2SELF_PROFILE 34
+
+/**
+ * lim_enable_cts_to_self_for_exempted_iot_ap() - enable cts to self for iot ap
+ * @mac_ctx: mac context
+ * @session: pe session
+ * @ie_ptr: ie pointer
+ * @ie_len: ie length
+ *
+ * Return: true on success else false
+ */
+bool lim_enable_cts_to_self_for_exempted_iot_ap(
+				       struct mac_context *mac_ctx,
+				       struct pe_session *session,
+				       uint8_t *ie_ptr,
+				       uint16_t ie_len);
+
 /**
  * lim_fill_pe_session() - Lim fill pe session
  * @mac_ctx: Pointer to mac context
  * @session: pe session
  * @bss_desc: Pointer to bss description
+ * @phy_mode: phy mode of scan entry
+ * @req_fail_status_code: Connect req fail status code pointer
  *
  * This api will fill lim pe session with info
  * from bss description
@@ -617,7 +671,9 @@ void lim_get_basic_rates(tSirMacRateSet *b_rates, uint32_t chan_freq);
 QDF_STATUS
 lim_fill_pe_session(struct mac_context *mac_ctx,
 		    struct pe_session *session,
-		    struct bss_description *bss_desc);
+		    struct bss_description *bss_desc,
+		    enum wlan_phymode phy_mode,
+		    enum wlan_status_code *req_fail_status_code);
 
 /**
  * lim_update_omn_ie_ch_width() - update omn_ie_ch_width in struct
@@ -630,23 +686,43 @@ lim_fill_pe_session(struct mac_context *mac_ctx,
 void lim_update_omn_ie_ch_width(struct wlan_objmgr_vdev *vdev,
 				enum phy_ch_width ch_width);
 
+/**
+ * lim_is_he_dynamic_smps_enabled() - Check if Dynamic SMPS enabled in HE caps
+ * @session: PE session
+ *
+ * Return: True if Dynamic SMPS is enabled, False otherwise
+ */
+#ifdef WLAN_FEATURE_11AX
+bool lim_is_he_dynamic_smps_enabled(struct pe_session *session);
+#else
+static inline
+bool lim_is_he_dynamic_smps_enabled(struct pe_session *session)
+{
+	return false;
+}
+#endif
+
 #ifdef WLAN_FEATURE_11BE_MLO
 /*
- * lim_add_bcn_probe() - Add the generated probe resp to scan DB
- * @vdev: VDEV object manager
+ * lim_add_bcn_probe() - Add the probe resp to scan DB
+ * @pdev: PDEV object manager
  * @bcn_probe: Pointer to bcn/probe
  * @len: Length of frame.
+ * @is_gen_entry: is locally generated scan entry
  * @freq: Freq on frame.
  * @rssi: RSSI of the frame.
+ * @snr: SNR of frame
+ * @tsf_delta: TSF delta of frame
  *
- * Prepares the meta data to add the generated bcn/probe frame to
+ * Prepares the meta data to add the bcn/probe frame to
  * scan DB.
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS
-lim_add_bcn_probe(struct wlan_objmgr_vdev *vdev, uint8_t *bcn_probe,
-		  uint32_t len, qdf_freq_t freq, int32_t rssi);
+lim_add_bcn_probe(struct wlan_objmgr_pdev *pdev, uint8_t *bcn_probe,
+		  uint32_t len, bool is_gen_entry, qdf_freq_t freq,
+		  int32_t rssi, uint8_t snr, uint32_t tsf_delta);
 
 /**
  * lim_update_mlo_mgr_info() - API to update mlo_mgr link info
@@ -698,24 +774,22 @@ QDF_STATUS lim_check_for_ml_probe_req(struct pe_session *session);
  * lim_process_cu_for_probe_rsp() - process critical update for probe response
  * @mac_ctx: Pointer to mac context
  * @session: pe session
- * @probe_rsp: ptr to probe response
- * @probe_rsp_len: length of probe response
+ * @rx_packet_info: Received Rx packet
  *
  * This api will generate link specific probe response and invoke function
  * to process critical update IEs
  *
  * Return: qdf status
  */
-QDF_STATUS
-lim_process_cu_for_probe_rsp(struct mac_context *mac_ctx,
-			     struct pe_session *session,
-			     uint8_t *probe_rsp,
-			     uint32_t probe_rsp_len);
+QDF_STATUS lim_process_cu_for_probe_rsp(struct mac_context *mac_ctx,
+					struct pe_session *session,
+					uint8_t *rx_packet_info);
 
 #else
 static inline QDF_STATUS
-lim_add_bcn_probe(struct wlan_objmgr_vdev *vdev, uint8_t *bcn_probe,
-		  uint32_t len, qdf_freq_t freq, int32_t rssi)
+lim_add_bcn_probe(struct wlan_objmgr_pdev *pdev, uint8_t *bcn_probe,
+		  uint32_t len, bool is_gen_entry, qdf_freq_t freq,
+		  int32_t rssi, uint8_t snr, uint32_t tsf_delta)
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }
@@ -749,8 +823,7 @@ lim_check_for_ml_probe_req(struct pe_session *session)
 static inline QDF_STATUS
 lim_process_cu_for_probe_rsp(struct mac_context *mac_ctx,
 			     struct pe_session *session,
-			     uint8_t *probe_rsp,
-			     uint32_t probe_rsp_len)
+			     uint8_t *rx_packet_info)
 {
 	return QDF_STATUS_SUCCESS;
 }
@@ -875,12 +948,11 @@ lim_cm_fill_link_session(struct mac_context *mac_ctx,
  *
  * This api will create mlo peer called during mlo roaming scenario
  *
- * Return: none
+ * Return: QDF_STATUS
  */
-void lim_roam_mlo_create_peer(struct mac_context *mac,
-			      struct roam_offload_synch_ind *sync_ind,
-			      uint8_t vdev_id,
-			      uint8_t *peer_mac);
+QDF_STATUS lim_roam_mlo_create_peer(struct mac_context *mac,
+				    struct roam_offload_synch_ind *sync_ind,
+				    uint8_t vdev_id, uint8_t *peer_mac);
 
 /**
  * lim_mlo_roam_delete_link_peer() - Delete mlo link peer
@@ -922,12 +994,12 @@ lim_cm_fill_link_session(struct mac_context *mac_ctx,
 	return QDF_STATUS_E_NOSUPPORT;
 }
 
-static inline void
+static inline QDF_STATUS
 lim_roam_mlo_create_peer(struct mac_context *mac,
 			 struct roam_offload_synch_ind *sync_ind,
-			 uint8_t vdev_id,
-			 uint8_t *peer_mac)
+			 uint8_t vdev_id, uint8_t *peer_mac)
 {
+	return QDF_STATUS_SUCCESS;
 }
 
 static inline void
@@ -936,6 +1008,18 @@ lim_mlo_roam_delete_link_peer(struct pe_session *pe_session,
 {
 }
 #endif /* WLAN_FEATURE_ROAM_OFFLOAD && WLAN_FEATURE_11BE_MLO */
+
+#if defined(WLAN_FEATURE_11BE_MLO)
+/**
+ * lim_update_cuflag_bpcc_each_link() - Update cu flag and bpcc from
+ * rx mlo link info sync event to pe session.
+ * @cu_params: parameter of mlo link info
+ *
+ * Return: None
+ */
+void
+lim_update_cuflag_bpcc_each_link(struct mlo_mgmt_ml_info *cu_params);
+#endif
 
 enum ani_akm_type
 lim_get_connected_akm(struct pe_session *session, int32_t ucast_cipher,
@@ -948,5 +1032,53 @@ lim_get_connected_akm(struct pe_session *session, int32_t ucast_cipher,
  * Return: Encryption type enum
  */
 tAniEdType lim_get_encrypt_ed_type(int32_t ucast_cipher);
+
+#ifdef WLAN_FEATURE_LL_LT_SAP
+/**
+ * lim_ll_sap_send_ecsa_action_frame() - Send ECSA action frame
+ * for LL_LT_SAP
+ * @vdev: vdev object
+ * @macaddr: peer mac addr
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS lim_ll_sap_send_ecsa_action_frame(struct wlan_objmgr_vdev *vdev,
+					     uint8_t *macaddr);
+
+/**
+ * lim_ll_sap_continue_vdev_restart() - Continue vdev restart for LL_SAP
+ * @vdev: pointer to vdev object
+ *
+ * Return: None
+ */
+QDF_STATUS lim_ll_sap_continue_vdev_restart(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * lim_ll_sap_notify_chan_switch_started() - Notify channel switch started for
+ * LL_LT_SAP
+ *
+ * Return
+ */
+QDF_STATUS lim_ll_sap_notify_chan_switch_started(struct wlan_objmgr_vdev *vdev);
+#else
+static inline
+QDF_STATUS lim_ll_sap_send_ecsa_action_frame(struct wlan_objmgr_vdev *vdev,
+					     uint8_t *macaddr)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline
+QDF_STATUS lim_ll_sap_continue_vdev_restart(struct wlan_objmgr_vdev *vdev)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline
+QDF_STATUS lim_ll_sap_notify_chan_switch_started(struct wlan_objmgr_vdev *vdev)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif
 /************************************************************/
 #endif /* __LIM_API_H */

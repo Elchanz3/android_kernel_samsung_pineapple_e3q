@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -109,30 +109,6 @@ uint32_t wlan_chan_to_freq(uint8_t chan)
 		return WLAN_CHAN_170_FREQ;
 	else
 		return WLAN_5_GHZ_BASE_FREQ + chan * WLAN_CHAN_SPACING_5MHZ;
-}
-
-uint8_t wlan_freq_to_chan(uint32_t freq)
-{
-	uint8_t chan;
-
-	if (freq == 0)
-		return 0;
-
-	if (freq > WLAN_24_GHZ_BASE_FREQ && freq < WLAN_CHAN_14_FREQ)
-		chan = ((freq - WLAN_24_GHZ_BASE_FREQ) /
-			WLAN_CHAN_SPACING_5MHZ);
-	else if (freq == WLAN_CHAN_14_FREQ)
-		chan = WLAN_24_GHZ_CHANNEL_14;
-	else if ((freq > WLAN_24_GHZ_BASE_FREQ) &&
-		(freq < WLAN_5_GHZ_BASE_FREQ))
-		chan = (((freq - WLAN_CHAN_15_FREQ) /
-			WLAN_CHAN_SPACING_20MHZ) +
-			WLAN_24_GHZ_CHANNEL_15);
-	else
-		chan = (freq - WLAN_5_GHZ_BASE_FREQ) /
-			WLAN_CHAN_SPACING_5MHZ;
-
-	return chan;
 }
 
 void
@@ -1598,6 +1574,32 @@ uint32_t wlan_get_pdev_id_from_vdev_id(struct wlan_objmgr_psoc *psoc,
 }
 qdf_export_symbol(wlan_get_pdev_id_from_vdev_id);
 
+QDF_STATUS
+wlan_get_self_macaddr_from_vdev_id(struct wlan_objmgr_psoc *psoc,
+				   uint8_t vdev_id,
+				   wlan_objmgr_ref_dbgid dbg_id,
+				   struct qdf_mac_addr *self_mac_addr)
+{
+	struct wlan_objmgr_vdev *vdev;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
+						    vdev_id, dbg_id);
+	if (vdev) {
+		wlan_vdev_obj_lock(vdev);
+		qdf_mem_copy(self_mac_addr->bytes,
+			     wlan_vdev_mlme_get_macaddr(vdev),
+			     QDF_MAC_ADDR_SIZE);
+		wlan_vdev_obj_unlock(vdev);
+		wlan_objmgr_vdev_release_ref(vdev, dbg_id);
+
+		return QDF_STATUS_SUCCESS;
+	}
+
+	return QDF_STATUS_E_FAILURE;
+}
+
+qdf_export_symbol(wlan_get_self_macaddr_from_vdev_id);
+
 static void wlan_vdev_active(struct wlan_objmgr_pdev *pdev, void *object,
 			     void *arg)
 {
@@ -2254,6 +2256,27 @@ static bool wlan_minidump_log_enabled(struct wlan_objmgr_psoc *psoc,
 		if (cfg_get(psoc, CFG_OL_MD_CP_EXT_PEER))
 			setval = true;
 		break;
+	case WLAN_MD_CP_MLO_DEV_CTX:
+	case WLAN_MD_CP_MLO_AP:
+	case WLAN_MD_CP_MLO_STA:
+	case WLAN_MD_CP_MLO_BRG_STA:
+	case WLAN_MD_CP_MLO_MGR_CTX:
+		if (cfg_get(psoc, CFG_OL_MD_CP_MLO))
+			setval = true;
+		break;
+	case WLAN_MD_CP_MLO_PEER_CTX:
+		if (cfg_get(psoc, CFG_OL_MD_CP_MLO_PEER))
+			setval = true;
+		break;
+	case WLAN_MD_CP_MGMT_TXRX_PDEV_CTX:
+	case WLAN_MD_CP_MGMT_TXRX_STATS:
+		if (cfg_get(psoc, CFG_OL_MD_CP_MGMT_TXRX))
+			setval = true;
+		break;
+	case WLAN_MD_CP_MGMT_RX_REO_PDEV:
+		if (cfg_get(psoc, CFG_OL_MD_CP_MGMT_RX))
+			setval = true;
+		break;
 	case WLAN_MD_DP_SOC:
 		if (cfg_get(psoc, CFG_OL_MD_DP_SOC))
 			setval = true;
@@ -2262,8 +2285,22 @@ static bool wlan_minidump_log_enabled(struct wlan_objmgr_psoc *psoc,
 		if (cfg_get(psoc, CFG_OL_MD_DP_PDEV))
 			setval = true;
 		break;
+	case WLAN_MD_DP_VDEV:
+		if (cfg_get(psoc, CFG_OL_MD_DP_VDEV))
+			setval = true;
+		break;
+	case WLAN_MD_DP_CFG_PDEV_CTXT:
+	case WLAN_MD_DP_CFG_SOC_CTXT:
+		if (cfg_get(psoc, CFG_OL_MD_DP_CFG))
+			setval = true;
+		break;
 	case WLAN_MD_DP_PEER:
 		if (cfg_get(psoc, CFG_OL_MD_DP_PEER))
+			setval = true;
+		break;
+	case WLAN_MD_DP_MLO_DEV_CTX:
+	case WLAN_MD_DP_MLO_CTX:
+		if (cfg_get(psoc, CFG_OL_MD_DP_MLO))
 			setval = true;
 		break;
 	case WLAN_MD_DP_SRNG_REO_DEST:
@@ -2303,20 +2340,52 @@ static bool wlan_minidump_log_enabled(struct wlan_objmgr_psoc *psoc,
 		if (cfg_get(psoc, CFG_OL_MD_DP_HAL_SOC))
 			setval = true;
 		break;
+	case WLAN_MD_DP_MON_SOC:
+	case WLAN_MD_DP_MON_PDEV:
+	case WLAN_MD_DP_MON_VDEV:
+		if (cfg_get(psoc, CFG_OL_MD_DP_MON))
+			setval = true;
+		break;
+	case WLAN_MD_DP_MON_PEER:
+		if (cfg_get(psoc, CFG_OL_MD_DP_MON_PEER))
+			setval = true;
+		break;
+	case WLAN_MD_DP_TXRX_PEER:
+		if (cfg_get(psoc, CFG_OL_MD_DP_TXRX_PEER))
+			setval = true;
+		break;
+	case WLAN_MD_OBJMGR_GLOBAL:
+		if (cfg_get(psoc, CFG_OL_MD_OBJMGR_GLOBAL))
+			setval = true;
+		break;
+	case WLAN_MD_DP_GLOBAL_CTX:
+		if (cfg_get(psoc, CFG_OL_MD_DP_GLOBAL_CTX))
+			setval = true;
+		break;
 	case WLAN_MD_OBJMGR_PSOC:
 	case WLAN_MD_OBJMGR_PSOC_TGT_INFO:
+	case WLAN_MD_OBJMGR_PSOC_MLME:
+	case WLAN_MD_OBJMGR_PSOC_SER:
 		if (cfg_get(psoc, CFG_OL_MD_OBJMGR_PSOC))
 			setval = true;
 		break;
 	case WLAN_MD_OBJMGR_PDEV:
 	case WLAN_MD_OBJMGR_PDEV_MLME:
+	case WLAN_MD_OBJMGR_PDEV_AFC_REG:
+	case WLAN_MD_OBJMGR_PDEV_TGT_INFO:
+	case WLAN_MD_OBJMGR_PDEV_SER:
 		if (cfg_get(psoc, CFG_OL_MD_OBJMGR_PDEV))
 			setval = true;
 		break;
 	case WLAN_MD_OBJMGR_VDEV_MLME:
 	case WLAN_MD_OBJMGR_VDEV_SM:
 	case WLAN_MD_OBJMGR_VDEV:
+	case WLAN_MD_OBJMGR_VDEV_SER:
 		if (cfg_get(psoc, CFG_OL_MD_OBJMGR_VDEV))
+			setval = true;
+		break;
+	case WLAN_MD_OBJMGR_PEER:
+		if (cfg_get(psoc, CFG_OL_MD_OBJMGR_PEER))
 			setval = true;
 		break;
 	default:
@@ -2398,3 +2467,79 @@ bool wlan_util_is_vdev_in_cac_wait(struct wlan_objmgr_pdev *pdev,
 }
 
 qdf_export_symbol(wlan_util_is_vdev_in_cac_wait);
+
+const uint8_t *wlan_get_rsn_data_from_ie_ptr(const uint8_t *ie_ptr,
+					     int ie_len)
+{
+	const uint8_t *rsn_ie;
+
+	/*
+	 * Order of precedence between RSN and MRSNO IEs:
+	 * Wifi7 MRSNO IE > Wifi6 MRSNO IE > Legacy RSN IE
+	 *
+	 * Note: Wifi-6 RSNO should not be used for ML connections.
+	 */
+
+	rsn_ie = wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_WIFI7_RSN,
+						 RSNO_OUI_SIZE,
+						 ie_ptr, ie_len);
+	if (rsn_ie && rsn_ie[1] > RSNO_OUI_SIZE)
+		return rsn_ie;
+
+	rsn_ie = wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_WIFI6_RSN,
+						 RSNO_OUI_SIZE,
+						 ie_ptr, ie_len);
+	if (rsn_ie && rsn_ie[1] > RSNO_OUI_SIZE)
+		return rsn_ie;
+
+	rsn_ie = wlan_get_ie_ptr_from_eid(WLAN_ELEMID_RSN, ie_ptr, ie_len);
+	if (rsn_ie)
+		return rsn_ie;
+
+	return NULL;
+}
+
+const uint8_t *wlan_get_rsnxe_data_from_ie_ptr(const uint8_t *ie_ptr,
+					       int ie_len)
+{
+	const uint8_t *rsnx_ie;
+	const uint8_t rsno_gen = wlan_is_rsn_override_present(ie_ptr, ie_len);
+
+	/* RSNX override IE is valid only if there is a RSN override IE */
+	rsnx_ie = wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_RSNXE, RSNO_OUI_SIZE,
+						  ie_ptr, ie_len);
+	if (rsnx_ie && rsno_gen)
+		return rsnx_ie;
+
+	rsnx_ie = wlan_get_ie_ptr_from_eid(WLAN_ELEMID_RSNXE, ie_ptr, ie_len);
+	if (rsnx_ie)
+		return rsnx_ie;
+
+	return NULL;
+}
+
+uint8_t wlan_is_rsn_override_present(const uint8_t *ie, int len)
+{
+	const uint8_t *rsno = NULL;
+
+	if (!ie || len <= RSNO_OUI_SIZE)
+		return 0;
+
+	rsno = wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_WIFI7_RSN,
+					       RSNO_OUI_SIZE, ie, len);
+	if (rsno)
+		return RSNO_GEN_WIFI7;
+
+	rsno = wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_WIFI6_RSN,
+					       RSNO_OUI_SIZE, ie, len);
+	if (rsno)
+		return RSNO_GEN_WIFI6;
+
+	return 0;
+}
+
+const uint8_t *wlan_get_rsn_sel_ie_from_ie_ptr(const uint8_t *ie, int len)
+{
+	return wlan_get_vendor_ie_ptr_from_oui(RSNO_OUI_SELECTION,
+					       RSNO_OUI_SIZE, ie, len);
+}

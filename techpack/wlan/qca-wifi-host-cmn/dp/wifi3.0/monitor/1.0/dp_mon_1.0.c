@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -172,7 +172,36 @@ dp_soc_config_full_mon_mode(struct cdp_pdev *cdp_pdev,
 #endif
 
 #if !defined(DISABLE_MON_CONFIG)
-void dp_flush_monitor_rings(struct dp_soc *soc)
+#ifdef FEATURE_ML_MONITOR_MODE_SUPPORT
+/**
+ * dp_monitor_vdev_active() - Check if any monitor vdev is active
+ * @soc: dp soc handle
+ * @vdev: Current vdev
+ *
+ * Return: True if any other vdev than current is active, false otherwise
+ */
+static inline bool
+dp_monitor_vdev_active(struct dp_soc *soc, struct dp_vdev *vdev)
+{
+	struct dp_mon_pdev *mon_pdev = vdev->pdev->monitor_pdev;
+	uint8_t i;
+
+	for (i = 0; i < soc->wlan_cfg_ctx->num_rxdma_dst_rings_per_pdev; i++) {
+		if (mon_pdev->mon_mac[i].mvdev &&
+		    mon_pdev->mon_mac[i].mvdev != vdev)
+			return true;
+	}
+	return false;
+}
+#else
+static inline bool
+dp_monitor_vdev_active(struct dp_soc *soc, struct dp_vdev *vdev)
+{
+	return false;
+}
+#endif
+
+void dp_flush_monitor_rings(struct dp_soc *soc, struct dp_vdev *vdev)
 {
 	struct dp_pdev *pdev = soc->pdev_list[0];
 	hal_soc_handle_t hal_soc = soc->hal_soc;
@@ -180,23 +209,46 @@ void dp_flush_monitor_rings(struct dp_soc *soc)
 	uint32_t hp, tp;
 	int budget;
 	void *mon_dst_srng;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
 	struct dp_mon_soc *mon_soc = soc->monitor_soc;
+	struct dp_mon_mac *mon_mac;
+	uint8_t mac_id = 0;
+
+	/* Do not allow monitor rings flush in the event of firmware
+	 * assert. This is because monitor rings flush will result in
+	 * returning the wbm links to hardware and since HP updates are
+	 * not posted to hardware, this will result in host assert on the
+	 * ring full condition due to the software HP updates on the SRC
+	 * ring.
+	 */
+	if (qdf_unlikely(hif_target_recovery_in_progress(soc->hif_handle)))
+		return;
 
 	if (qdf_unlikely(mon_soc->full_mon_mode))
 		return;
 
+	if (vdev->monitor_vdev)
+		mac_id = vdev->monitor_vdev->mac_id;
+
+	mon_mac = dp_get_mon_mac(pdev, mac_id);
+
+	if (dp_monitor_vdev_active(soc, vdev)) {
+		dp_info("Skip mon filter reset, vdev: %u",
+			vdev->vdev_id);
+		goto flush_rings;
+	}
+
 	/* Reset monitor filters before reaping the ring*/
-	qdf_spin_lock_bh(&mon_pdev->mon_lock);
+	qdf_spin_lock_bh(&mon_mac->mon_lock);
 	dp_mon_filter_reset_mon_mode(pdev);
 	if (dp_mon_filter_update(pdev) != QDF_STATUS_SUCCESS)
 		dp_info("failed to reset monitor filters");
-	qdf_spin_unlock_bh(&mon_pdev->mon_lock);
+	qdf_spin_unlock_bh(&mon_mac->mon_lock);
 
-	if (qdf_unlikely(mon_pdev->mon_chan_band >= REG_BAND_UNKNOWN))
+flush_rings:
+	if (qdf_unlikely(mon_mac->mon_chan_band >= REG_BAND_UNKNOWN))
 		return;
 
-	lmac_id = pdev->ch_band_lmac_id_mapping[mon_pdev->mon_chan_band];
+	lmac_id = pdev->ch_band_lmac_id_mapping[mon_mac->mon_chan_band];
 	if (qdf_unlikely(lmac_id == DP_MON_INVALID_LMAC_ID))
 		return;
 
@@ -206,12 +258,12 @@ void dp_flush_monitor_rings(struct dp_soc *soc)
 	budget = wlan_cfg_get_dma_mon_stat_ring_size(pdev->wlan_cfg_ctx);
 
 	hal_get_sw_hptp(hal_soc, mon_dst_srng, &tp, &hp);
-	dp_info("Before flush: Monitor DST ring HP %u TP %u", hp, tp);
+	dp_info("Before flush: Mon DST ring %u HP %u TP %u", lmac_id, hp, tp);
 
 	dp_mon_drop_packets_for_mac(pdev, lmac_id, budget, true);
 
 	hal_get_sw_hptp(hal_soc, mon_dst_srng, &tp, &hp);
-	dp_info("After flush: Monitor DST ring HP %u TP %u", hp, tp);
+	dp_info("After flush: Mon DST ring %u HP %u TP %u", lmac_id, hp, tp);
 }
 
 void dp_mon_rings_deinit_1_0(struct dp_pdev *pdev)
@@ -299,7 +351,7 @@ QDF_STATUS dp_mon_rings_init_1_0(struct dp_pdev *pdev)
 							 pdev->pdev_id);
 
 		if (dp_srng_init(soc, &soc->rxdma_mon_status_ring[lmac_id],
-				 RXDMA_MONITOR_STATUS, 0, lmac_id)) {
+				 RXDMA_MONITOR_STATUS, mac_id, lmac_id)) {
 			dp_mon_err("%pK: " RNG_ERR "rxdma_mon_status_ring",
 				   soc);
 			goto fail1;
@@ -358,7 +410,7 @@ fail1:
 }
 #else
 inline
-void dp_flush_monitor_rings(struct dp_soc *soc)
+void dp_flush_monitor_rings(struct dp_soc *soc, struct dp_vdev *vdev)
 {
 }
 
@@ -385,8 +437,13 @@ QDF_STATUS dp_vdev_set_monitor_mode_buf_rings(struct dp_pdev *pdev)
 							   mac_id,
 							   pdev->pdev_id);
 
-			dp_rx_pdev_mon_buf_buffers_alloc(pdev, mac_for_pdev,
-							 FALSE);
+			/* Skip buffer allocation if dynamic resource manager
+			 * is enabled, these will be allocated from a different
+			 * context.
+			 */
+			if (!soc->features.dyn_resource_mgr_support)
+				dp_rx_pdev_mon_buf_buffers_alloc(
+					pdev, mac_for_pdev, FALSE);
 			mon_buf_ring =
 				&pdev->soc->rxdma_mon_buf_ring[mac_for_pdev];
 			/*
@@ -472,7 +529,7 @@ QDF_STATUS dp_vdev_set_monitor_mode_rings(struct dp_pdev *pdev,
 			       __func__);
 			goto fail0;
 		}
-		dp_link_desc_ring_replenish(soc, mac_for_pdev);
+		dp_link_desc_ring_replenish(soc, mac_for_pdev, true);
 
 		htt_srng_setup(soc->htt_handle, pdev->pdev_id,
 			       soc->rxdma_mon_desc_ring[mac_for_pdev].hal_srng,
@@ -510,19 +567,20 @@ static void dp_mon_vdev_timer(void *arg)
 	uint32_t lmac_iter;
 	int max_mac_rings = wlan_cfg_get_num_mac_rings(pdev->wlan_cfg_ctx);
 	struct dp_mon_soc *mon_soc = soc->monitor_soc;
-	struct dp_mon_pdev *mon_pdev = pdev->monitor_pdev;
+	struct dp_mon_mac *mon_mac;
 
 	if (!qdf_atomic_read(&soc->cmn_init_done))
 		return;
-
-	if (mon_pdev->mon_chan_band != REG_BAND_UNKNOWN)
-		lmac_id = pdev->ch_band_lmac_id_mapping[mon_pdev->mon_chan_band];
 
 	start_time = qdf_get_log_timestamp();
 	dp_update_num_mac_rings_for_dbs(soc, &max_mac_rings);
 
 	while (yield == DP_TIMER_NO_YIELD) {
 		for (lmac_iter = 0; lmac_iter < max_mac_rings; lmac_iter++) {
+			mon_mac = dp_get_mon_mac(pdev, lmac_iter);
+			if (mon_mac->mon_chan_band != REG_BAND_UNKNOWN)
+				lmac_id = mon_mac->mac_id;
+
 			if (lmac_iter == lmac_id)
 				work_done = dp_monitor_process(
 						    soc, NULL,
@@ -1436,6 +1494,7 @@ dp_mon_register_feature_ops_1_0(struct dp_soc *soc)
 	mon_ops->rx_pkt_tlv_offset = NULL;
 	mon_ops->rx_enable_mpdu_logging = NULL;
 	mon_ops->rx_enable_fpmo = NULL;
+	mon_ops->rx_config_packet_type_subtype = NULL;
 	mon_ops->mon_neighbour_peers_detach = dp_neighbour_peers_detach;
 	mon_ops->mon_vdev_set_monitor_mode_buf_rings =
 				dp_vdev_set_monitor_mode_buf_rings;
@@ -1456,6 +1515,7 @@ dp_mon_register_feature_ops_1_0(struct dp_soc *soc)
 #endif
 	mon_ops->mon_rx_print_advanced_stats = NULL;
 	mon_ops->mon_mac_filter_set = dp_mon_mac_filter_set;
+	mon_ops->mon_config_mon_fcs_cap = dp_rx_mon_config_fcs_cap;
 }
 
 struct dp_mon_ops monitor_ops_1_0 = {
@@ -1556,6 +1616,7 @@ struct cdp_mon_ops dp_ops_mon_1_0 = {
 	.stop_local_pkt_capture = dp_mon_stop_local_pkt_capture,
 	.is_local_pkt_capture_running = dp_mon_get_is_local_pkt_capture_running,
 #endif /* WLAN_FEATURE_LOCAL_PKT_CAPTURE */
+	.txrx_set_mu_sniffer = NULL,
 };
 
 #ifdef QCA_MONITOR_OPS_PER_SOC_SUPPORT

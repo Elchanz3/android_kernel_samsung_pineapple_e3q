@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,6 +26,8 @@
 #include "osif_vdev_sync.h"
 #include "wlan_hdd_sysfs_connect_info.h"
 #include "qwlan_version.h"
+#include "wlan_policy_mgr_ucfg.h"
+#include "wlan_hdd_object_manager.h"
 
 /**
  * wlan_hdd_version_info() - Populate driver, FW and HW version
@@ -196,6 +198,8 @@ uint8_t *hdd_auth_type_str(uint32_t auth_type)
 		return "OPEN SYSTEM";
 	case eCSR_AUTH_TYPE_SHARED_KEY:
 		return "SHARED KEY";
+	case eCSR_AUTH_TYPE_SAE_EXT_KEY:
+		return "SAE EXT";
 	case eCSR_AUTH_TYPE_SAE:
 		return "SAE";
 	case eCSR_AUTH_TYPE_AUTOSWITCH:
@@ -247,6 +251,8 @@ uint8_t *hdd_auth_type_str(uint32_t auth_type)
 		return "SUITEB EAP SHA384";
 	case eCSR_AUTH_TYPE_OSEN:
 		return "OSEN";
+	case eCSR_AUTH_TYPE_FT_SAE_EXT_KEY:
+		return "FT SAE EXT";
 	case eCSR_AUTH_TYPE_FT_SAE:
 		return "FT SAE";
 	case eCSR_AUTH_TYPE_FT_SUITEB_EAP_SHA384:
@@ -298,6 +304,39 @@ uint8_t *hdd_dot11_mode_str(uint32_t dot11mode)
 }
 
 #if defined(WLAN_FEATURE_11BE_MLO) && defined(CFG80211_11BE_BASIC)
+static
+uint8_t *hdd_curr_hw_mode_str(uint8_t curr_hw_mode)
+{
+	switch (curr_hw_mode) {
+	case POLICY_MGR_HW_MODE_SINGLE:
+		return "HW MODE SINGLE";
+	case POLICY_MGR_HW_MODE_DBS:
+		return "HW MODE DBS";
+	case POLICY_MGR_HW_MODE_SBS_PASSIVE:
+		return "HW MODE SBS PASSIVE";
+	case POLICY_MGR_HW_MODE_SBS:
+		return "HW MODE SBS";
+	case POLICY_MGR_HW_MODE_DBS_SBS:
+		return "HW MODE DBS SBS";
+	case POLICY_MGR_HW_MODE_DBS_OR_SBS:
+		return "HW MODE DBS OR SBS";
+	case POLICY_MGR_HW_MODE_DBS_2G_5G:
+		return "HW MODE DBS 2g/5g";
+	case POLICY_MGR_HW_MODE_2G_PHYB:
+		return "HW MODE 2g phyB";
+	case POLICY_MGR_HW_MODE_EMLSR:
+		return "HW MODE EMLSR";
+	case POLICY_MGR_HW_MODE_AUX_EMLSR_SINGLE:
+		return "HW MODE EMLSR AUX SINGLE";
+	case POLICY_MGR_HW_MODE_AUX_EMLSR_SPLIT:
+		return "HW MODE EMLSR AUX SPLIT";
+	case POLICY_MGR_HW_MODE_INVALID:
+		return "HW MODE INVALID";
+	}
+
+	return "UNKNOWN";
+}
+
 /**
  * wlan_hdd_connect_info() - Populate connect info
  * @adapter: pointer to sta adapter for which connect info is required
@@ -317,23 +356,14 @@ static ssize_t wlan_hdd_connect_info(struct hdd_adapter *adapter, uint8_t *buf,
 	uint32_t tx_bit_rate, rx_bit_rate;
 	bool is_legacy = false;
 	bool is_standby = false;
+	uint8_t curr_hw_mode;
+	struct wlan_objmgr_vdev *vdev;
 
 	if (!hdd_cm_is_vdev_associated(adapter->deflink)) {
 		len = scnprintf(buf, buf_avail_len,
 				"STA is not connected\n");
 		if (len >= 0)
 			return length;
-	}
-
-	len = scnprintf(buf, buf_avail_len,
-			"CONNECTION DETAILS\n");
-	if (len <= 0)
-		return length;
-
-	length += len;
-	if (length >= buf_avail_len) {
-		hdd_err("No sufficient buf_avail_len");
-		return buf_avail_len;
 	}
 
 	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter->deflink);
@@ -356,19 +386,29 @@ static ssize_t wlan_hdd_connect_info(struct hdd_adapter *adapter, uint8_t *buf,
 		return buf_avail_len;
 	}
 
+	vdev = hdd_objmgr_get_vdev_by_user(adapter->deflink, WLAN_OSIF_CM_ID);
+	if (!vdev)
+		return length;
+
+	curr_hw_mode = ucfg_policy_mgr_find_current_hw_mode(
+						wlan_vdev_get_psoc(vdev));
+	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_CM_ID);
+
 	len = scnprintf(buf + length, buf_avail_len - length,
 			"ssid: %s\n"
 			"bssid: " QDF_MAC_ADDR_FMT "\n"
 			"connect_time: %s\n"
 			"auth_time: %s\n"
 			"last_auth_type: %s\n"
-			"dot11mode: %s\n",
+			"dot11mode: %s\n"
+			"current HW mode: %s\n",
 			hdd_sta_ctx->conn_info.last_ssid.SSID.ssId,
 			QDF_MAC_ADDR_REF(hdd_sta_ctx->conn_info.bssid.bytes),
 			hdd_sta_ctx->conn_info.connect_time,
 			hdd_sta_ctx->conn_info.auth_time,
 			hdd_auth_type_str(hdd_sta_ctx->conn_info.last_auth_type),
-			hdd_dot11_mode_str(hdd_sta_ctx->conn_info.dot11mode));
+			hdd_dot11_mode_str(hdd_sta_ctx->conn_info.dot11mode),
+			hdd_curr_hw_mode_str(curr_hw_mode));
 	if (len <= 0)
 		return length;
 	length += len;
@@ -384,18 +424,6 @@ static ssize_t wlan_hdd_connect_info(struct hdd_adapter *adapter, uint8_t *buf,
 		if(!is_legacy && conn_info->ieee_link_id == WLAN_INVALID_LINK_ID)
 			continue;
 
-		if (hdd_cm_is_vdev_roaming(link_info)) {
-			len = scnprintf(buf + length, buf_avail_len - length,
-					"Roaming is in progress");
-			if (len <= 0)
-				return length;
-
-			length += len;
-		}
-
-		tx_bit_rate = cfg80211_calculate_bitrate(&conn_info->txrate);
-		rx_bit_rate = cfg80211_calculate_bitrate(&conn_info->rxrate);
-
 		if (!is_legacy) {
 			len = scnprintf(buf + length, buf_avail_len - length,
 					"\nlink_id: %d\n",
@@ -410,8 +438,11 @@ static ssize_t wlan_hdd_connect_info(struct hdd_adapter *adapter, uint8_t *buf,
 			}
 
 			if (link_info->vdev_id == WLAN_INVALID_VDEV_ID &&
-			    conn_info->ieee_link_id != WLAN_INVALID_LINK_ID)
+			    conn_info->ieee_link_id != WLAN_INVALID_LINK_ID) {
 				is_standby = true;
+			} else {
+				is_standby = false;
+			}
 
 			len = scnprintf(buf + length, buf_avail_len - length,
 					"stand-by link: %d\n",
@@ -425,6 +456,21 @@ static ssize_t wlan_hdd_connect_info(struct hdd_adapter *adapter, uint8_t *buf,
 				return buf_avail_len;
 			}
 		}
+
+		/* Avoid to check roaming in progress for standby. Standyby link
+		 * don't have valid vdev.
+		 */
+		if (!is_standby && hdd_cm_is_vdev_roaming(link_info)) {
+			len = scnprintf(buf + length, buf_avail_len - length,
+					"Roaming is in progress");
+			if (len <= 0)
+				return length;
+
+			length += len;
+		}
+
+		tx_bit_rate = cfg80211_calculate_bitrate(&conn_info->txrate);
+		rx_bit_rate = cfg80211_calculate_bitrate(&conn_info->rxrate);
 
 		len = scnprintf(buf + length, buf_avail_len - length,
 				"freq: %u\n"

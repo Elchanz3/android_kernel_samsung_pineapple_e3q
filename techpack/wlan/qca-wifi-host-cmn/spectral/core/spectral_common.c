@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011,2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -25,6 +25,8 @@
 #include <wlan_spectral_public_structs.h>
 #include <wlan_cfg80211_spectral.h>
 #include <cfg_ucfg_api.h>
+
+qdf_dentry_t spectral_dir;
 
 /**
  * spectral_get_vdev() - Get pointer to vdev to be used for Spectral
@@ -365,6 +367,15 @@ spectral_control_cmn(struct wlan_objmgr_pdev *pdev,
 				goto bad;
 		}
 
+		if (sp_in->ss_completion_timeout !=
+				SPECTRAL_PHYERR_PARAM_NOVAL) {
+			param.id = SPECTRAL_PARAM_COMPLETION_TIMEOUT;
+			param.value = sp_in->ss_completion_timeout;
+			ret = sc->sptrlc_set_spectral_config
+						(pdev, &param, smode, err);
+			if (QDF_IS_STATUS_ERROR(ret))
+				goto bad;
+		}
 		break;
 
 	case SPECTRAL_GET_CONFIG:
@@ -397,6 +408,8 @@ spectral_control_cmn(struct wlan_objmgr_pdev *pdev,
 		spectralparams->ss_chn_mask = sp_out.ss_chn_mask;
 		spectralparams->ss_frequency = sp_out.ss_frequency;
 		spectralparams->ss_bandwidth = sp_out.ss_bandwidth;
+		spectralparams->ss_completion_timeout =
+				sp_out.ss_completion_timeout;
 		break;
 
 	case SPECTRAL_IS_ACTIVE:
@@ -678,4 +691,9 @@ wlan_spectral_pdev_obj_destroy_handler(struct wlan_objmgr_pdev *pdev,
 	}
 
 	return QDF_STATUS_SUCCESS;
+}
+
+qdf_dentry_t wlan_get_spectral_directory(void)
+{
+	return spectral_dir;
 }

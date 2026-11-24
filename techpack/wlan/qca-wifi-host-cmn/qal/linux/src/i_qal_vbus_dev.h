@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -34,6 +34,9 @@
 #include <linux/platform_device.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
 #include <linux/reset.h>
+#endif
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0))
+#include <i_qdf_trace.h>
 #endif
 
 struct qdf_vbus_resource;
@@ -430,6 +433,7 @@ __qal_vbus_rcu_read_unlock(void)
 	return QDF_STATUS_SUCCESS;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
 /**
  * __qal_vbus_of_get_named_gpio_flags() - Get a GPIO descriptor and flags
  * for GPIO API
@@ -448,4 +452,15 @@ __qal_vbus_of_get_named_gpio_flags(struct qdf_device_node *np,
 	return of_get_named_gpio_flags((struct device_node *)np,
 				       list_name, index, flags);
 }
+#else
+static inline int
+__qal_vbus_of_get_named_gpio_flags(struct qdf_device_node *np,
+				   const char *list_name,
+				   int index, __qdf_of_gpio_flags *flags)
+{
+	QDF_ASSERT(0);
+	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif
+
 #endif /* __I_QAL_VBUS_DEV_H */

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2015,2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -158,6 +158,8 @@ cm_ser_disconnect_cb(struct wlan_serialization_command *cmd,
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct wlan_objmgr_vdev *vdev;
 	struct cnx_mgr *cm_ctx;
+	enum qdf_hang_reason hang_reason =
+				QDF_VDEV_ACTIVE_SER_DISCONNECT_TIMEOUT;
 
 	if (!cmd) {
 		mlme_err("cmd is NULL, reason: %d", reason);
@@ -192,7 +194,7 @@ cm_ser_disconnect_cb(struct wlan_serialization_command *cmd,
 	case WLAN_SER_CB_ACTIVE_CMD_TIMEOUT:
 		mlme_err(CM_PREFIX_FMT "Active command timeout",
 			 CM_PREFIX_REF(wlan_vdev_get_id(vdev), cmd->cmd_id));
-		cm_trigger_panic_on_cmd_timeout(cm_ctx->vdev);
+		cm_trigger_panic_on_cmd_timeout(cm_ctx->vdev, hang_reason);
 		cm_send_disconnect_resp(cm_ctx, cmd->cmd_id);
 		break;
 	case WLAN_SER_CB_RELEASE_MEM_CMD:
@@ -357,7 +359,7 @@ cm_update_scan_mlme_on_disconnect(struct wlan_objmgr_vdev *vdev,
 {
 	struct wlan_objmgr_pdev *pdev;
 	struct bss_info bss_info;
-	struct mlme_info mlme;
+	struct mlme_info mlme = {0};
 	struct wlan_channel *chan;
 	QDF_STATUS status;
 
@@ -406,9 +408,6 @@ QDF_STATUS cm_disconnect_active(struct cnx_mgr *cm_ctx, wlan_cm_id *cm_id)
 	struct wlan_cm_vdev_discon_req *req;
 	struct cm_req *cm_req;
 	QDF_STATUS status = QDF_STATUS_E_NOSUPPORT;
-	enum wlan_reason_code reason_code;
-	enum wlan_cm_source source;
-	enum QDF_OPMODE op_mode;
 
 	cm_ctx->active_cm_id = *cm_id;
 	cm_req = cm_get_req_by_cm_id(cm_ctx, *cm_id);
@@ -426,15 +425,8 @@ QDF_STATUS cm_disconnect_active(struct cnx_mgr *cm_ctx, wlan_cm_id *cm_id)
 		return QDF_STATUS_E_INVAL;
 	}
 
-	reason_code = cm_req->discon_req.req.reason_code;
-	source = cm_req->discon_req.req.source;
-	op_mode = wlan_vdev_mlme_get_opmode(cm_ctx->vdev);
-	mlme_debug("op_mode:%d, source:%d, reason_code:%d", op_mode, source,
-		   reason_code);
-
-	if (op_mode == QDF_STA_MODE &&
-	    (reason_code != REASON_FW_TRIGGERED_ROAM_FAILURE) &&
-	    (source != CM_MLO_ROAM_INTERNAL_DISCONNECT))
+	if (wlan_vdev_mlme_get_opmode(cm_ctx->vdev) == QDF_STA_MODE &&
+	    cm_req->discon_req.req.source != CM_MLO_ROAM_INTERNAL_DISCONNECT)
 		status = mlme_cm_rso_stop_req(cm_ctx->vdev);
 
 	if (status != QDF_STATUS_E_NOSUPPORT)
@@ -624,6 +616,18 @@ QDF_STATUS cm_disconnect_complete(struct cnx_mgr *cm_ctx,
 	if (resp->req.cm_id == cm_ctx->active_cm_id && !is_link_switch_cmd)
 		cm_flush_pending_request(cm_ctx, DISCONNECT_REQ_PREFIX, false);
 
+	if (cm_ctx->disconnect_count == 1 && !is_link_switch_cmd) {
+		/*
+		 * Clear MLO cap only when it is the last disconnect req
+		 * For 1x/owe roaming or MLO offload roam, link vdev mlo flags
+		 * are not cleared as connect req is queued on link vdev
+		 * after this.
+		 */
+		if (!wlan_cm_check_mlo_roam_auth_status(cm_ctx->vdev) &&
+		    !mlo_is_offload_roam_in_progress(cm_ctx->vdev))
+			cm_clear_vdev_mlo_cap(cm_ctx->vdev, resp);
+	}
+
 	cm_remove_cmd(cm_ctx, &resp->req.cm_id);
 	mlme_debug(CM_PREFIX_FMT "disconnect count %d connect count %d",
 		   CM_PREFIX_REF(wlan_vdev_get_id(cm_ctx->vdev),
@@ -636,16 +640,8 @@ QDF_STATUS cm_disconnect_complete(struct cnx_mgr *cm_ctx,
 	}
 
 	/* Set the disconnect wait event once all disconnect are completed */
-	if (!cm_ctx->disconnect_count && !is_link_switch_cmd) {
-		/*
-		 * Clear MLO cap only when it is the last disconnect req
-		 * For 1x/owe roaming, link vdev mlo flags are not cleared
-		 * as connect req is queued on link vdev after this.
-		 */
-		if (!wlan_cm_check_mlo_roam_auth_status(cm_ctx->vdev))
-			cm_clear_vdev_mlo_cap(cm_ctx->vdev, resp);
+	if (!cm_ctx->disconnect_count && !is_link_switch_cmd)
 		qdf_event_set(&cm_ctx->disconnect_complete);
-	}
 
 	if (is_link_switch_cmd) {
 		cm_reset_active_cm_id(cm_ctx->vdev, resp->req.cm_id);

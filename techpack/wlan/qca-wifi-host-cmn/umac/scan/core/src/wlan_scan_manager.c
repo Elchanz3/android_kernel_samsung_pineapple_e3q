@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -577,6 +577,7 @@ static void scm_req_update_concurrency_params(struct wlan_objmgr_vdev *vdev,
 	uint16_t sap_peer_count = 0;
 	uint16_t go_peer_count = 0;
 	struct wlan_objmgr_pdev *pdev;
+	uint32_t dwell_active_2g_frm_req;
 
 	psoc = wlan_vdev_get_psoc(vdev);
 	pdev = wlan_vdev_get_pdev(vdev);
@@ -604,10 +605,15 @@ static void scm_req_update_concurrency_params(struct wlan_objmgr_vdev *vdev,
 	if (!req->scan_req.scan_f_passive)
 		scm_update_passive_dwell_time(vdev, req);
 
+	dwell_active_2g_frm_req = req->scan_req.dwell_time_active_2g;
+
 	if (policy_mgr_get_connection_count(psoc)) {
-		if (!req->scan_req.scan_f_passive)
+		if (!req->scan_req.scan_f_passive) {
 			req->scan_req.dwell_time_active =
 				scan_obj->scan_def.conc_active_dwell;
+			req->scan_req.dwell_time_active_2g =
+				scan_obj->scan_def.conc_active_dwell;
+		}
 		/*
 		 * Irrespective of any concurrency, if a scan request is
 		 * triggered to get channel utilization for the current
@@ -796,8 +802,8 @@ static void scm_req_update_concurrency_params(struct wlan_objmgr_vdev *vdev,
 		req->scan_req.dwell_time_active =
 						SCM_ACTIVE_DWELL_TIME_NAN;
 		req->scan_req.dwell_time_active_2g =
-			QDF_MIN(req->scan_req.dwell_time_active_2g,
-			SCM_ACTIVE_DWELL_TIME_NAN);
+			QDF_MIN(dwell_active_2g_frm_req,
+				SCM_ACTIVE_DWELL_TIME_NAN);
 		scm_debug("NDP active modify dwell time 2ghz %d",
 			req->scan_req.dwell_time_active_2g);
 	}
@@ -1241,6 +1247,13 @@ scm_scan_req_update_params(struct wlan_objmgr_vdev *vdev,
 
 	if (req->scan_req.scan_type == SCAN_TYPE_RRM)
 		req->scan_req.scan_ctrl_flags_ext |= SCAN_FLAG_EXT_RRM_SCAN_IND;
+
+	if ((wlan_vdev_mlme_get_opmode(vdev) == QDF_P2P_DEVICE_MODE ||
+	     wlan_vdev_mlme_get_opmode(vdev) == QDF_P2P_CLIENT_MODE) &&
+	    !qdf_is_macaddr_zero(&req->scan_req.bssid_list[0]) &&
+	    !qdf_is_macaddr_broadcast(&req->scan_req.bssid_list[0]))
+		req->scan_req.scan_ctrl_flags_ext |=
+			SCAN_FLAG_EXT_STOP_IF_BSSID_FOUND;
 
 	scm_req_update_dwell_time_as_per_scan_mode(vdev, req);
 
@@ -1687,8 +1700,6 @@ void scm_update_last_scan_time_per_channel(struct wlan_objmgr_vdev *vdev,
 	for (i = 0; i < chan_info->num_chan ; i++) {
 		if (chan_info->ch_scan_info[i].freq == chan_freq) {
 			chan_info->ch_scan_info[i].last_scan_time = time;
-			scm_debug("chan freq %d scan time %u\n",
-				  chan_freq, time);
 			chan_found = true;
 			break;
 		}
@@ -1699,7 +1710,6 @@ void scm_update_last_scan_time_per_channel(struct wlan_objmgr_vdev *vdev,
 		chan_info->ch_scan_info[chan_info->num_chan].last_scan_time =
 									time;
 		chan_info->num_chan++;
-		scm_debug("chan freq %d scan time %u\n", chan_freq, time);
 	}
 }
 
@@ -1942,9 +1952,17 @@ void scm_disable_obss_pdev_scan(struct wlan_objmgr_psoc *psoc,
 				goto next;
 			}
 
+			if (!scan_vdev_obj->is_obbs_scan_enabled) {
+				scm_nofl_debug("OBSS scan is not enabled for vdev id: %d",
+					       vdev->vdev_objmgr.vdev_id);
+				goto next;
+			}
+
 			status = tgt_scan_obss_disable(vdev);
 			if (QDF_IS_STATUS_ERROR(status))
 				scm_err("disable obss scan failed");
+
+			scan_vdev_obj->is_obbs_scan_enabled = false;
 next:
 			index++;
 			/* get next vdev */
@@ -1953,4 +1971,17 @@ next:
 		}
 		wlan_pdev_obj_unlock(pdev);
 	}
+}
+
+void scm_set_obss_scan_enable(struct wlan_objmgr_vdev *vdev)
+{
+	struct scan_vdev_obj *scan_vdev_obj;
+
+	scan_vdev_obj = wlan_get_vdev_scan_obj(vdev);
+	if (!scan_vdev_obj) {
+		scm_err("null scan_vdev_obj");
+		return;
+	}
+
+	scan_vdev_obj->is_obbs_scan_enabled = true;
 }

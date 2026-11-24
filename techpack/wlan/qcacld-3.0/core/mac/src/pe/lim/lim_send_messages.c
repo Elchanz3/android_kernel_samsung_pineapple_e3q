@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -37,6 +37,7 @@
 #include "lim_utils.h"
 #include "wma.h"
 #include "../../core/src/vdev_mgr_ops.h"
+#include "wlan_scan_api.h"
 
 /* Max debug string size in bytes  */
 #define LIM_DEBUG_STRING_SIZE    512
@@ -116,11 +117,11 @@ QDF_STATUS lim_send_switch_chnl_params(struct mac_context *mac,
 		pe_err("vdev component object is NULL");
 		return QDF_STATUS_E_FAILURE;
 	}
+
+	session->ch_switch_in_progress = true;
 	status = lim_pre_vdev_start(mac, mlme_obj, session);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto send_resp;
-
-	session->ch_switch_in_progress = true;
 
 	/* we need to defer the message until we
 	 * get the response back from WMA
@@ -308,8 +309,8 @@ QDF_STATUS lim_send_mode_update(struct mac_context *mac,
 	msgQ.reserved = 0;
 	msgQ.bodyptr = pVhtOpMode;
 	msgQ.bodyval = 0;
-	pe_debug("Sending WMA_UPDATE_OP_MODE, op_mode %d",
-			pVhtOpMode->opMode);
+	pe_debug("Sending WMA_UPDATE_OP_MODE, op_mode chwidth %d",
+			pVhtOpMode->chwidth);
 	if (!pe_session)
 		MTRACE(mac_trace_msg_tx(mac, NO_SESSION, msgQ.type));
 	else
@@ -429,50 +430,6 @@ QDF_STATUS lim_set_user_pos(struct mac_context *mac,
 }
 
 /**
- * lim_send_exclude_unencrypt_ind() - sends WMA_EXCLUDE_UNENCRYPTED_IND to HAL
- * @mac:          mac global context
- * @excludeUnenc:  true: ignore, false: indicate
- * @pe_session: session context
- *
- * LIM sends a message to HAL to indicate whether to ignore or indicate the
- * unprotected packet error.
- *
- * Return: status of operation
- */
-QDF_STATUS lim_send_exclude_unencrypt_ind(struct mac_context *mac,
-					     bool excludeUnenc,
-					     struct pe_session *pe_session)
-{
-	QDF_STATUS retCode = QDF_STATUS_SUCCESS;
-	struct scheduler_msg msgQ = {0};
-	tSirWlanExcludeUnencryptParam *pExcludeUnencryptParam;
-
-	pExcludeUnencryptParam =
-		qdf_mem_malloc(sizeof(tSirWlanExcludeUnencryptParam));
-	if (!pExcludeUnencryptParam)
-		return QDF_STATUS_E_NOMEM;
-
-	pExcludeUnencryptParam->excludeUnencrypt = excludeUnenc;
-	qdf_mem_copy(pExcludeUnencryptParam->bssid.bytes, pe_session->bssId,
-			QDF_MAC_ADDR_SIZE);
-
-	msgQ.type = WMA_EXCLUDE_UNENCRYPTED_IND;
-	msgQ.reserved = 0;
-	msgQ.bodyptr = pExcludeUnencryptParam;
-	msgQ.bodyval = 0;
-	pe_debug("Sending WMA_EXCLUDE_UNENCRYPTED_IND");
-	MTRACE(mac_trace_msg_tx(mac, pe_session->peSessionId, msgQ.type));
-	retCode = wma_post_ctrl_msg(mac, &msgQ);
-	if (QDF_STATUS_SUCCESS != retCode) {
-		qdf_mem_free(pExcludeUnencryptParam);
-		pe_err("Posting WMA_EXCLUDE_UNENCRYPTED_IND failed, reason=%X",
-			retCode);
-	}
-
-	return retCode;
-}
-
-/**
  * lim_send_ht40_obss_scanind() - send ht40 obss start scan request
  * mac: mac context
  * session  PE session handle
@@ -482,7 +439,7 @@ QDF_STATUS lim_send_exclude_unencrypt_ind(struct mac_context *mac,
  * Return: status of operation
  */
 QDF_STATUS lim_send_ht40_obss_scanind(struct mac_context *mac_ctx,
-						struct pe_session *session)
+				      struct pe_session *session)
 {
 	QDF_STATUS ret = QDF_STATUS_SUCCESS;
 	struct obss_ht40_scanind *ht40_obss_scanind;
@@ -551,6 +508,8 @@ QDF_STATUS lim_send_ht40_obss_scanind(struct mac_context *mac_ctx,
 			ret);
 		qdf_mem_free(ht40_obss_scanind);
 	}
+
+	wlan_scan_set_obss_scan_enable(session->vdev);
 	return ret;
 }
 

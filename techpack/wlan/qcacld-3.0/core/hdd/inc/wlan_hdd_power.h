@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012, 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -362,6 +362,17 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 void hdd_disable_ns_offload(struct hdd_adapter *adapter,
 			    struct wlan_objmgr_vdev *vdev,
 			    enum pmo_offload_trigger trigger);
+
+/**
+ * hdd_send_ps_config_to_fw() - Check user pwr save config set/reset PS
+ * @adapter: pointer to hdd adapter
+ *
+ * This function checks the power save configuration saved in MAC context
+ * and sends power save config to FW.
+ *
+ * Return: None
+ */
+void hdd_send_ps_config_to_fw(struct hdd_adapter *adapter);
 #else /* WLAN_NS_OFFLOAD */
 static inline
 void hdd_enable_ns_offload(struct hdd_adapter *adapter,
@@ -376,6 +387,11 @@ void hdd_disable_ns_offload(struct hdd_adapter *adapter,
 			    enum pmo_offload_trigger trigger)
 {
 }
+
+static inline
+void hdd_send_ps_config_to_fw(struct hdd_adapter *adapter)
+{
+}
 #endif /* WLAN_NS_OFFLOAD */
 
 /**
@@ -386,6 +402,25 @@ void hdd_disable_ns_offload(struct hdd_adapter *adapter,
  */
 void hdd_ipv6_notifier_work_queue(struct work_struct *work);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
+/**
+ * wlan_hdd_cfg80211_get_txpower() - cfg80211 get power handler function
+ * @wiphy: Pointer to wiphy structure.
+ * @wdev: Pointer to wireless_dev structure.
+ * @link_id: Link index
+ * @dbm: dbm
+ *
+ * This is the cfg80211 get txpower handler function which invokes
+ * the internal function @__wlan_hdd_cfg80211_get_txpower with
+ * SSR protection.
+ *
+ * Return: 0 for success, error number on failure.
+ */
+int wlan_hdd_cfg80211_get_txpower(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  unsigned int link_id,
+				  int *dbm);
+#else
 /**
  * wlan_hdd_cfg80211_get_txpower() - cfg80211 get power handler function
  * @wiphy: Pointer to wiphy structure.
@@ -401,6 +436,7 @@ void hdd_ipv6_notifier_work_queue(struct work_struct *work);
 int wlan_hdd_cfg80211_get_txpower(struct wiphy *wiphy,
 				  struct wireless_dev *wdev,
 				  int *dbm);
+#endif
 
 /**
  * wlan_hdd_cfg80211_set_txpower() - set TX power
@@ -470,7 +506,9 @@ int wlan_hdd_pm_qos_notify(struct notifier_block *nb, unsigned long curr_val,
  * Return: true if there is PM QoS global vote,
  *	   or an false otherwise
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) && \
+	defined(__ANDROID_COMMON_KERNEL__) && \
+	!defined(CONFIG_X86))
 bool wlan_hdd_is_cpu_pm_qos_in_progress(struct hdd_context *hdd_ctx);
 #else
 static inline bool
@@ -544,6 +582,17 @@ void hdd_wlan_suspend_resume_event(uint8_t state) {}
  * Return: 0 on success, non-zero on any error
  */
 int wlan_hdd_set_powersave(struct wlan_hdd_link_info *link_info,
+			   bool allow_power_save, uint32_t timeout);
+
+/**
+ * wlan_hdd_lpc_set_bmps() - Set BMPS power save mode for LPC
+ * @adapter: HDD adapter
+ * @allow_power_save: is wlan allowed to go into power save mode
+ * @timeout: timeout period in ms
+ *
+ * Return: None
+ */
+void wlan_hdd_lpc_set_bmps(struct hdd_adapter *adapter,
 			   bool allow_power_save, uint32_t timeout);
 
 /**

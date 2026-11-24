@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -96,7 +96,7 @@ typedef uint32_t wlan_scan_id;
  * length + atleast 1 byte of datai
  * @BSS_INDEX_POS: Position of BSSID index field in Multiple BSSID index tag
  * @MIN_VENDOR_TAG_LEN: Minimum length of a vendor specific tag
- * @OUI_LEN: OUI + OUI Type + Min DATA
+ * @OUI_LEN: OUI + OUI Type
  * @ELEM_ID_EXTN_POS: Position of element ID extension in an extension element
  * @ELEM_ID_LIST_LEN_POS: Position of length field in list of element IDs
  * @ELEM_ID_LIST_POS: Position to the start of element ID list
@@ -118,7 +118,7 @@ typedef uint32_t wlan_scan_id;
 #define SPLIT_PROF_DATA_LEAST_LEN 3
 #define BSS_INDEX_POS 2
 #define MIN_VENDOR_TAG_LEN 7
-#define OUI_LEN 5
+#define OUI_LEN 4
 #define ELEM_ID_EXTN_POS 2
 #define ELEM_ID_LIST_LEN_POS 3
 #define ELEM_ID_LIST_POS 4
@@ -220,6 +220,9 @@ struct channel_info {
  * @muedca: pointer to muedca IE
  * @extender: pointer to extended IE
  * @qcn: pointer to QCN IE
+ * @wifi6_rsno: pointer to Wifi-6 vendor RSNO IE
+ * @rsnxo: pointer to vendor RSNX override IE
+ * @wifi7_rsno: pointer to Wifi-7 vendor RSNO IE
  */
 struct ie_list {
 	uint8_t *tim;
@@ -285,6 +288,9 @@ struct ie_list {
 	uint8_t *t2lm[WLAN_MAX_T2LM_IE];
 #endif
 	uint8_t *qcn;
+	uint8_t *wifi6_rsno;
+	uint8_t *rsnxo;
+	uint8_t *wifi7_rsno;
 
 /*
  * For any new IEs in this structure, add handling in
@@ -353,6 +359,7 @@ struct scan_cache_node {
  * @mcastcipherset: multicast cipher set
  * @mgmtcipherset: mgmt cipher set
  * @rsn_caps: rsn caps of scan entry
+ * @rsn_gen_selected: rsn gen for the security match
  */
 struct security_info {
 	uint32_t authmodeset;
@@ -361,6 +368,7 @@ struct security_info {
 	uint32_t mcastcipherset;
 	uint32_t mgmtcipherset;
 	uint16_t rsn_caps;
+	uint8_t rsn_gen_selected;
 };
 
 /**
@@ -423,7 +431,11 @@ struct non_inheritance_ie {
 	bool non_inh_ie_found;
 };
 
+#define TBTT_BSS_PARAM_MBSSID_BIT      0x04
 #define TBTT_BSS_PARAM_TRANS_BSSID_BIT 0x08
+#define TBTT_BSS_PARAM_MBSSID_TX_MASK  (TBTT_BSS_PARAM_MBSSID_BIT |\
+					TBTT_BSS_PARAM_TRANS_BSSID_BIT)
+#define TBTT_BSS_PARAM_MBSSID_NONTX_MASK TBTT_BSS_PARAM_MBSSID_BIT
 /**
  * struct rnr_bss_info - Reduced Neighbor Report BSS information
  * @neighbor_ap_tbtt_offset: Neighbor AP TBTT offset
@@ -453,12 +465,12 @@ struct rnr_bss_info {
 /**
  * struct neighbor_ap_info_field - Neighbor information field
  * @tbtt_header: TBTT information header
- * @operting_class: operating class
+ * @operating_class: operating class
  * @channel_number: channel number
  */
 struct neighbor_ap_info_field {
 	struct tbtt_information_header tbtt_header;
-	uint8_t operting_class;
+	uint8_t operating_class;
 	uint8_t channel_number;
 };
 
@@ -511,13 +523,15 @@ struct reduced_neighbor_report {
 	struct rnr_bss_info bss_info[MAX_RNR_BSS];
 };
 
-#define SCAN_SECURITY_TYPE_WEP 0x01
-#define SCAN_SECURITY_TYPE_WPA 0x02
-#define SCAN_SECURITY_TYPE_WAPI 0x04
-#define SCAN_SECURITY_TYPE_RSN 0x08
+#define SCAN_SECURITY_TYPE_WEP    0x01
+#define SCAN_SECURITY_TYPE_WPA    0x02
+#define SCAN_SECURITY_TYPE_WAPI   0x04
+#define SCAN_SECURITY_TYPE_RSN    0x08
+#define SCAN_SECURITY_TYPE_RSNO   0x10
 
 #ifdef WLAN_FEATURE_11BE_MLO
 #define MLD_MAX_LINKS 4
+#define UNKNOWN_MLD_ID 0xFF
 
 /**
  * struct partner_link_info: Partner link information of an ML
@@ -529,8 +543,6 @@ struct reduced_neighbor_report {
  * @ecsa_ie: Pointer to eCSA IE
  * @max_cst_ie: Pointer to Max Channel Switch Time IE
  * @is_valid_link: The partner link can be used if true
- * @is_scan_entry_not_found: If set to true, the partner link scan entry is
- * not present in scan DB (currently using for non-TxMBSSID MLO AP)
  * @op_class: Operating class
  */
 struct partner_link_info {
@@ -542,7 +554,6 @@ struct partner_link_info {
 	const uint8_t *ecsa_ie;
 	const uint8_t *max_cst_ie;
 	bool is_valid_link;
-	bool is_scan_entry_not_found;
 	uint8_t op_class;
 };
 
@@ -588,6 +599,8 @@ enum number_of_partner_link {
  * @is_hidden_ssid: is AP having hidden ssid.
  * @security_type: security supported
  * @seq_num: sequence number
+ * @is_gen_entry: is locally generated scan entry
+ * @reserved: reserved
  * @phy_mode: Phy mode of the AP
  * @avg_rssi: Average RSSI of the AP
  * @rssi_raw: The rssi of the last beacon/probe received
@@ -635,6 +648,8 @@ struct scan_cache_entry {
 	bool is_hidden_ssid;
 	uint8_t security_type;
 	uint16_t seq_num;
+	uint8_t is_gen_entry:1,
+		reserved:7;
 	enum wlan_phymode phy_mode;
 	int32_t avg_rssi;
 	int8_t rssi_raw;
@@ -739,6 +754,11 @@ enum dot11_mode_filter {
  *                        this is set (For WPS/OSEN connection)
  * @ignore_nol_chan: Ignore entry with channel in the NOL list
  * @ignore_6ghz_channel: ignore 6Ghz channels
+ * @match_mld_addr: Flag to match mld addr of scan entry
+ * @match_link_id: Flag to match self IEEE link id of scan entry
+ * @flush_all_except_conn_entry: FLag to flush all the scan entry except entry
+ *                               which are connected
+ * @reserved: Reserved
  * @age_threshold: If set return entry which are newer than the age_threshold
  * @num_of_bssid: number of bssid passed
  * @num_of_ssid: number of ssid
@@ -764,14 +784,21 @@ enum dot11_mode_filter {
  * @ccx_validate_bss: Function pointer to custom bssid filter
  * @ccx_validate_bss_arg: Function argument to custom bssid filter
  * @band_bitmap: Allowed band bit map, BIT0: 2G, BIT1: 5G, BIT2: 6G
+ * @link_id: IEEE link ID to match if @match_link_id is set to %true
+ * @mld_addr: MLD addr to match if @match_mld_addr is set to true.
+ * @mrsno_gen: MRSNO generation supported
  */
 struct scan_filter {
-	uint8_t enable_adaptive_11r:1,
+	uint16_t enable_adaptive_11r:1,
 		rrm_measurement_filter:1,
 		ignore_pmf_cap:1,
 		ignore_auth_enc_type:1,
 		ignore_nol_chan:1,
-		ignore_6ghz_channel:1;
+		ignore_6ghz_channel:1,
+		match_mld_addr:1,
+		match_link_id:1,
+		flush_all_except_conn_entry:1,
+		reserved:7;
 	qdf_time_t age_threshold;
 	uint8_t num_of_bssid;
 	uint8_t num_of_ssid;
@@ -800,7 +827,10 @@ struct scan_filter {
 	bss_filter_arg_t ccx_validate_bss_arg;
 #ifdef WLAN_FEATURE_11BE_MLO
 	uint32_t band_bitmap;
+	uint8_t link_id;
+	struct qdf_mac_addr mld_addr;
 #endif
+	uint8_t mrsno_gen;
 };
 
 /**
@@ -1377,6 +1407,8 @@ enum scan_completion_reason {
  * @scan_id: scan id
  * @timestamp: timestamp in microsec recorded by target for the scan event
  * @scan_start_req: scan request object used to start this scan
+ * @flag: Indicate scan type. BIT[0] indicate if scan type is for p2p or
+ * not when sta vdev gets use for p2p device operation
  */
 struct scan_event {
 	uint32_t vdev_id;
@@ -1387,6 +1419,7 @@ struct scan_event {
 	uint32_t scan_id;
 	uint32_t timestamp;
 	struct scan_start_request *scan_start_req;
+	uint32_t flag;
 };
 
 /**
@@ -1584,6 +1617,74 @@ struct scan_user_cfg {
 	uint32_t sta_miracast_mcc_rest_time;
 };
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+/**
+ * enum wlan_scan_cache_bss_flags - Flags to indicate presence of certain
+ * capabilities for the BSS entry in beacon or probe response.
+ * @WLAN_SCAN_CACHE_BSS_HT_OPS: The BSS has HT operation IE.
+ * @WLAN_SCAN_CACHE_BSS_VHT_OPS: The BSS has VHT operation IE.
+ * @WLAN_SCAN_CACHE_BSS_HE_OPS: The BSS has HE operation IE.
+ * @WLAN_SCAN_CACHE_BSS_EHT_OPS: The BSS has EHT operation IE.
+ * @WLAN_SCAN_CACHE_BSS_FTM_RESPONDER: The FTM responder capability is set to
+ * %true in extended capabilities.
+ * @WLAN_SCAN_CACHE_BSS_MAX_CAP: Max capability flag
+ */
+enum wlan_scan_cache_bss_flags {
+	WLAN_SCAN_CACHE_BSS_HT_OPS = 0,
+	WLAN_SCAN_CACHE_BSS_VHT_OPS = 1,
+	WLAN_SCAN_CACHE_BSS_HE_OPS = 2,
+	WLAN_SCAN_CACHE_BSS_EHT_OPS = 3,
+	WLAN_SCAN_CACHE_BSS_FTM_RESPONDER = 4,
+
+	WLAN_SCAN_CACHE_BSS_MAX_CAP, /* keep last */
+};
+
+/**
+ * struct wlan_scan_cache_bss - Cached scan entry BSS info
+ * @rssi: RSSI of the received bss frame
+ * @cap_info: Capability Information field in beacon or probe resp fixed fields.
+ * @age_ms: Time elapsed between the time this bss scan entry is received and
+ * the time since the cached scan report is request.
+ * @flags: Bitmap representing the presence of IEs/capabilities refer
+ * enum wlan_scan_cache_bss_flags
+ * @primary_freq: Value of primary operating freq in MHz
+ * @ccfs0_mhz: Value of CCFS0 segment in MHz
+ * @ccfs1_mhz: Value of CCFS1 segment in MHz
+ * @ch_width: Channel width of the bss.
+ * @bssid: BSSID of the bss
+ * @ssid: SSID of the bss
+ */
+struct wlan_scan_cache_bss {
+	int8_t rssi;
+	uint16_t cap_info;
+	uint32_t age_ms;
+	uint32_t flags;
+	uint32_t primary_freq;
+	uint32_t ccfs0_mhz;
+	uint32_t ccfs1_mhz;
+	enum phy_ch_width ch_width;
+	struct qdf_mac_addr bssid;
+	struct wlan_ssid ssid;
+};
+
+/**
+ * struct wlan_scan_cache_scan_report - Report of cached scan entry received
+ * in WOW mode.
+ * @num_freq: Count of frequencies scanned in current reg domain.
+ * @num_bss: Count of BSS entries in the report.
+ * @ts: Timestamp since the boottime at which report is generated.
+ * @freq_list: Array of frequency values.
+ * @bss_list: Array of BSS part of current report.
+ */
+struct wlan_scan_cache_scan_report {
+	uint16_t num_freq;
+	uint16_t num_bss;
+	uint64_t ts;
+	uint32_t *freq_list;
+	struct wlan_scan_cache_bss *bss_list;
+};
+#endif
+
 /**
  * typedef update_mbssid_bcn_prb_rsp() - cb to inform mbssid beacon or prob resp
  * @frame: the pointer of frame data
@@ -1687,10 +1788,12 @@ struct meta_rnr_channel {
  * struct channel_list_db - Database for channel information
  * @channel: channel meta information
  * @scan_count: scan count since the db was updated
+ * @rnr_db_lock: mutex lock
  */
 struct channel_list_db {
 	struct meta_rnr_channel channel[NUM_6GHZ_CHANNELS];
 	uint8_t scan_count;
+	qdf_mutex_t rnr_db_lock;
 };
 
 /**

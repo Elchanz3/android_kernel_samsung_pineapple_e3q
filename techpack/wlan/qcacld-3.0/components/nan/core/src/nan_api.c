@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -90,6 +90,16 @@ static QDF_STATUS nan_psoc_obj_destroyed_notification(
 	return status;
 }
 
+/**
+ * nan_vdev_obj_created_notification() - Handler for VDEV object creation
+ * notification event
+ * @vdev: Pointer to the VDEV Object
+ * @arg_list: Pointer to private argument - NULL
+ *
+ * This function gets called from object manager when VDEV is being created.
+ *
+ * Return: QDF_STATUS
+ */
 static QDF_STATUS nan_vdev_obj_created_notification(
 		struct wlan_objmgr_vdev *vdev, void *arg_list)
 {
@@ -107,7 +117,9 @@ static QDF_STATUS nan_vdev_obj_created_notification(
 		target_if_nan_set_vdev_feature_config(psoc,
 						      wlan_vdev_get_id(vdev));
 	}
-	if (wlan_vdev_mlme_get_opmode(vdev) != QDF_NDI_MODE) {
+
+	if (wlan_vdev_mlme_get_opmode(vdev) != QDF_NDI_MODE &&
+	    wlan_vdev_mlme_get_opmode(vdev) != QDF_NAN_DISC_MODE) {
 		nan_debug("not a ndi vdev. do nothing");
 		return QDF_STATUS_SUCCESS;
 	}
@@ -134,6 +146,16 @@ nan_vdev_notif_failed:
 	return status;
 }
 
+/**
+ * nan_vdev_obj_destroyed_notification() - Handler for VDEV object deletion
+ * notification event
+ * @vdev: Pointer to the VDEV Object
+ * @arg_list: Pointer to private argument - NULL
+ *
+ * This function gets called from object manager when VDEV is being destroyed.
+ *
+ * Return: QDF_STATUS
+ */
 static QDF_STATUS nan_vdev_obj_destroyed_notification(
 				struct wlan_objmgr_vdev *vdev, void *arg_list)
 {
@@ -141,7 +163,9 @@ static QDF_STATUS nan_vdev_obj_destroyed_notification(
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 
 	nan_debug("nan_vdev_delete_notif called");
-	if (wlan_vdev_mlme_get_opmode(vdev) != QDF_NDI_MODE) {
+
+	if (wlan_vdev_mlme_get_opmode(vdev) != QDF_NDI_MODE &&
+	    wlan_vdev_mlme_get_opmode(vdev) != QDF_NAN_DISC_MODE) {
 		nan_debug("not a ndi vdev. do nothing");
 		return QDF_STATUS_SUCCESS;
 	}
@@ -487,3 +511,103 @@ bool wlan_is_mlo_sta_nan_ndi_allowed(struct wlan_objmgr_psoc *psoc)
 	return psoc_nan_obj->nan_caps.mlo_sta_nan_ndi_allowed;
 }
 #endif
+
+#if defined(WLAN_FEATURE_NAN)
+bool wlan_nan_is_sta_sap_nan_allowed(struct wlan_objmgr_psoc *psoc)
+{
+	struct nan_psoc_priv_obj *psoc_priv;
+
+	psoc_priv = nan_get_psoc_priv_obj(psoc);
+	if (!psoc_priv) {
+		nan_err("nan psoc priv object is NULL");
+		return false;
+	}
+
+	return QDF_MIN(psoc_priv->cfg_param.support_sta_sap_ndp,
+		       psoc_priv->nan_caps.sta_sap_ndp_support);
+}
+
+qdf_freq_t wlan_nan_sap_override_freq(struct wlan_objmgr_psoc *psoc,
+				      uint32_t vdev_id,
+				      qdf_freq_t chan_freq)
+{
+	qdf_freq_t nan_freq_2g = 0, sta_freq = 0;
+
+	if (policy_mgr_is_vdev_ll_lt_sap(psoc, vdev_id))
+		return chan_freq;
+
+	nan_freq_2g = policy_mgr_mode_specific_get_channel(psoc,
+							   PM_NAN_DISC_MODE);
+
+	/*
+	 * Override nan freq if 2 GHz legacy STA is present.
+	 * In case of 2 GHz ML STA no need to override,
+	 * As it will get disabled if not SCC
+	 */
+	if (policy_mgr_is_non_ml_sta_present(psoc) &&
+	    !policy_mgr_is_mlo_sta_present(psoc)) {
+		sta_freq = policy_mgr_mode_specific_get_channel(psoc,
+								PM_STA_MODE);
+		if (WLAN_REG_IS_24GHZ_CH_FREQ(sta_freq))
+			nan_freq_2g = sta_freq;
+	}
+
+	if (!nan_freq_2g)
+		return chan_freq;
+	return nan_freq_2g;
+}
+#endif
+
+#if defined(WLAN_FEATURE_NAN) && defined(WLAN_CHIPSET_STATS)
+void nan_cstats_log_nan_enable_resp_evt(struct nan_event_params *nan_event)
+{
+	struct cstats_nan_disc_enable_resp stat = {0};
+	struct wlan_objmgr_vdev *vdev;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(nan_event->psoc,
+						    nan_event->vdev_id,
+						    WLAN_NAN_ID);
+	if (!vdev) {
+		nan_err("Invalid vdev!");
+		return;
+	}
+
+	stat.cmn.hdr.evt_id =
+		WLAN_CHIPSET_STATS_NAN_DISCOVERY_ENABLE_RESP_EVENT_ID;
+	stat.cmn.hdr.length = sizeof(struct cstats_nan_disc_enable_resp) -
+			      sizeof(struct cstats_hdr);
+	stat.cmn.opmode = wlan_vdev_mlme_get_opmode(vdev);
+	stat.cmn.vdev_id = wlan_vdev_get_id(vdev);
+	stat.cmn.timestamp_us = qdf_get_time_of_the_day_us();
+	stat.cmn.time_tick = qdf_get_log_timestamp();
+
+	stat.is_enable_success = nan_event->is_nan_enable_success;
+	stat.mac_id = nan_event->mac_id;
+	stat.disc_state = nan_get_discovery_state(nan_event->psoc);
+
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_NAN_ID);
+
+	wlan_cstats_host_stats(sizeof(struct cstats_nan_disc_enable_resp),
+			       &stat);
+}
+
+void nan_cstats_log_nan_disable_resp_evt(uint8_t vdev_id,
+					 struct wlan_objmgr_psoc *psoc)
+{
+	struct cstats_nan_disc_disable_resp stat = {0};
+
+	stat.cmn.hdr.evt_id =
+	   WLAN_CHIPSET_STATS_NAN_DISCOVERY_DISABLE_RESP_EVENT_ID;
+	stat.cmn.hdr.length =
+		sizeof(struct cstats_nan_disc_disable_resp) -
+		sizeof(struct cstats_hdr);
+	stat.cmn.opmode = QDF_NAN_DISC_MODE;
+	stat.cmn.vdev_id = vdev_id;
+	stat.cmn.timestamp_us = qdf_get_time_of_the_day_us();
+	stat.cmn.time_tick = qdf_get_log_timestamp();
+	stat.disc_state = nan_get_discovery_state(psoc);
+
+	wlan_cstats_host_stats(sizeof(struct cstats_nan_disc_disable_resp),
+			       &stat);
+}
+#endif /* WLAN_CHIPSET_STATS */

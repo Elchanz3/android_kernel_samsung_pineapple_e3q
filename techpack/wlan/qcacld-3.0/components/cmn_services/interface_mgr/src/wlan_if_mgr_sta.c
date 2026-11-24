@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -72,7 +72,8 @@ QDF_STATUS if_mgr_connect_start(struct wlan_objmgr_vdev *vdev,
 
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
 
-	if (op_mode == QDF_STA_MODE || op_mode == QDF_P2P_CLIENT_MODE)
+	if ((op_mode == QDF_STA_MODE || op_mode == QDF_P2P_CLIENT_MODE) &&
+	    !wlan_mlme_is_aux_emlsr_support(psoc))
 		wlan_handle_emlsr_sta_concurrency(psoc, true, false);
 
 	if (op_mode == QDF_P2P_CLIENT_MODE || sap_cnt || sta_cnt) {
@@ -87,7 +88,15 @@ QDF_STATUS if_mgr_connect_start(struct wlan_objmgr_vdev *vdev,
 			if (wlan_vdev_mlme_is_mlo_link_vdev(vdev) &&
 			    wlan_is_mlo_sta_nan_ndi_allowed(psoc))
 				disable_nan = false;
+			else if (op_mode == QDF_STA_MODE && sap_cnt == 1 &&
+				 ucfg_nan_is_sta_sap_ndp_supported(psoc) &&
+				 !wlan_vdev_mlme_is_mlo_link_vdev(vdev))
+				disable_nan = false;
 		}
+		if (op_mode == QDF_P2P_CLIENT_MODE &&
+		    ucfg_nan_is_sta_p2p_ndp_supported(psoc))
+			disable_nan = false;
+
 		if (disable_nan)
 			ucfg_nan_disable_concurrency(psoc);
 	}
@@ -117,6 +126,9 @@ QDF_STATUS if_mgr_connect_active(struct wlan_objmgr_vdev *vdev,
 		return QDF_STATUS_E_FAILURE;
 
 	if (!wlan_vdev_mlme_is_mlo_link_vdev(vdev)) {
+		/* Check STA+SAP+SAP support by PCL */
+		if (!policy_mgr_validate_sta_start(vdev))
+			return QDF_STATUS_E_INVAL;
 		/*
 		 * In case of STA+STA concurrency, firmware might try to roam
 		 * to same AP where host is trying to do association on the other
@@ -183,12 +195,16 @@ QDF_STATUS if_mgr_connect_complete(struct wlan_objmgr_vdev *vdev,
 
 	policy_mgr_check_n_start_opportunistic_timer(psoc);
 	if (wlan_vdev_mlme_get_opmode(vdev) == QDF_STA_MODE &&
-	    wlan_vdev_mlme_is_mlo_vdev(vdev))
+	    wlan_vdev_mlme_is_mlo_vdev(vdev) &&
+	    !wlan_mlme_is_aux_emlsr_support(psoc))
 		wlan_handle_emlsr_sta_concurrency(psoc, false, true);
 
 	if (!wlan_cm_is_vdev_roaming(vdev))
 		policy_mgr_check_concurrent_intf_and_restart_sap(psoc,
 				wlan_util_vdev_mgr_get_acs_mode_for_vdev(vdev));
+
+	if (QDF_IS_STATUS_SUCCESS(status))
+		policy_mgr_trigger_roam_for_sta_sap_mcc_non_dbs(psoc);
 
 	wlan_ll_sap_switch_bearer_on_sta_connect_complete(psoc, vdev_id);
 
@@ -216,6 +232,10 @@ QDF_STATUS if_mgr_disconnect_start(struct wlan_objmgr_vdev *vdev,
 
 	qdf_runtime_pm_prevent_suspend(&mlme_priv->disconnect_runtime_lock);
 
+	if (mlo_mgr_is_link_switch_in_progress(vdev))
+		wlan_tdls_delete_all_peers(vdev,
+					   TDLS_PEER_DEL_REASON_VDEV_REPURPOSE);
+
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -241,8 +261,9 @@ QDF_STATUS if_mgr_disconnect_complete(struct wlan_objmgr_vdev *vdev,
 
 	qdf_runtime_pm_allow_suspend(&mlme_priv->disconnect_runtime_lock);
 
-	if (wlan_vdev_mlme_get_opmode(vdev) == QDF_STA_MODE ||
-	    wlan_vdev_mlme_get_opmode(vdev) == QDF_P2P_CLIENT_MODE)
+	if ((wlan_vdev_mlme_get_opmode(vdev) == QDF_STA_MODE ||
+	     wlan_vdev_mlme_get_opmode(vdev) == QDF_P2P_CLIENT_MODE) &&
+	     !wlan_mlme_is_aux_emlsr_support(psoc))
 		wlan_handle_emlsr_sta_concurrency(psoc, false, true);
 
 	status = if_mgr_enable_roaming_after_p2p_disconnect(pdev, vdev,
@@ -260,6 +281,8 @@ QDF_STATUS if_mgr_disconnect_complete(struct wlan_objmgr_vdev *vdev,
 		ifmgr_err("Failed to enable roaming on connected sta");
 		return status;
 	}
+
+	policy_mgr_sta_post_disconnect_conc_check(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -280,6 +303,7 @@ if_mgr_sta_csa_complete(struct wlan_objmgr_vdev *vdev,
 		return QDF_STATUS_E_FAILURE;
 
 	wlan_tdls_notify_channel_switch_complete(psoc, wlan_vdev_get_id(vdev));
+	policy_mgr_trigger_roam_for_sta_sap_mcc_non_dbs(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -21,6 +21,18 @@
 #include "cfg_ucfg_api.h"
 #include "wlan_policy_mgr_api.h"
 #include "wlan_nan_api.h"
+#include "wlan_mlo_link_force.h"
+#include "wlan_mlme_api.h"
+
+/*
+ * Max allowed active vdevs as per firmware. MAX_CONC_CXNS should be
+ * same as this.
+ */
+#ifdef WLAN_FEATURE_SON
+#define MAX_CONC_CXNS    MAX_NUMBER_OF_CONC_CONNECTIONS
+#else
+#define MAX_CONC_CXNS 4
+#endif
 
 #ifdef WLAN_FEATURE_SR
 /**
@@ -64,6 +76,16 @@ static QDF_STATUS policy_mgr_init_cfg(struct wlan_objmgr_psoc *psoc)
 	cfg = &pm_ctx->cfg;
 
 	cfg->mcc_to_scc_switch = cfg_get(psoc, CFG_MCC_TO_SCC_SWITCH);
+	if (cfg->mcc_to_scc_switch != QDF_MCC_TO_SCC_SWITCH_DISABLE &&
+	    cfg->mcc_to_scc_switch <
+			QDF_MCC_TO_SCC_SWITCH_FORCE_WITHOUT_DISCONNECTION) {
+		policy_mgr_info("User configured mcc_to_scc_switch: %d, overwrite it to: %d",
+			cfg->mcc_to_scc_switch,
+			QDF_MCC_TO_SCC_SWITCH_FORCE_WITHOUT_DISCONNECTION);
+		cfg->mcc_to_scc_switch =
+			QDF_MCC_TO_SCC_SWITCH_FORCE_WITHOUT_DISCONNECTION;
+	}
+
 	cfg->sys_pref = cfg_get(psoc, CFG_CONC_SYS_PREF);
 
 	if (wlan_is_mlo_sta_nan_ndi_allowed(psoc)) {
@@ -73,8 +95,11 @@ static QDF_STATUS policy_mgr_init_cfg(struct wlan_objmgr_psoc *psoc)
 		cfg->max_conc_cxns = cfg_get(psoc, CFG_MAX_CONC_CXNS);
 		policy_mgr_err("max_conc_cxns %d non-nan", cfg->max_conc_cxns);
 	}
+
 	cfg->max_conc_cxns = QDF_MIN(cfg->max_conc_cxns,
-				     MAX_NUMBER_OF_CONC_CONNECTIONS);
+				     QDF_MIN(MAX_NUMBER_OF_CONC_CONNECTIONS,
+					     MAX_CONC_CXNS));
+
 	cfg->conc_rule1 = cfg_get(psoc, CFG_ENABLE_CONC_RULE1);
 	cfg->conc_rule2 = cfg_get(psoc, CFG_ENABLE_CONC_RULE2);
 	cfg->pcl_band_priority = cfg_get(psoc, CFG_PCL_BAND_PRIORITY);
@@ -105,13 +130,7 @@ static QDF_STATUS policy_mgr_init_cfg(struct wlan_objmgr_psoc *psoc)
 	if (cfg_get(psoc, CFG_INDOOR_CHANNEL_SUPPORT))
 		cfg->sta_sap_scc_on_indoor_channel = true;
 
-	/*
-	 * Force set sta_sap_scc_on_dfs_chnl on Non-DBS HW so that standalone
-	 * SAP is not allowed on DFS channel on non-DBS HW, Also, force SCC in
-	 * case of STA+SAP
-	 */
-	if (cfg->sta_sap_scc_on_dfs_chnl == 2 &&
-	    !cfg_get(psoc, CFG_ENABLE_DFS_MASTER_CAPABILITY))
+	if (!cfg_get(psoc, CFG_ENABLE_DFS_MASTER_CAPABILITY))
 		cfg->sta_sap_scc_on_dfs_chnl = 0;
 	cfg->nan_sap_scc_on_lte_coex_chnl =
 		cfg_get(psoc, CFG_NAN_SAP_SCC_ON_LTE_COEX_CHAN);
@@ -349,10 +368,12 @@ bool ucfg_policy_mgr_is_hw_sbs_capable(struct wlan_objmgr_psoc *psoc)
 }
 
 bool ucfg_policy_mgr_get_vdev_same_freq_new_conn(struct wlan_objmgr_psoc *psoc,
+						 uint8_t self_vdev_id,
 						 uint32_t new_freq,
 						 uint8_t *vdev_id)
 {
-	return policy_mgr_get_vdev_same_freq_new_conn(psoc, new_freq, vdev_id);
+	return policy_mgr_get_vdev_same_freq_new_conn(psoc, self_vdev_id,
+						      new_freq, vdev_id);
 }
 
 bool ucfg_policy_mgr_get_vdev_diff_freq_new_conn(struct wlan_objmgr_psoc *psoc,
@@ -362,3 +383,161 @@ bool ucfg_policy_mgr_get_vdev_diff_freq_new_conn(struct wlan_objmgr_psoc *psoc,
 	return policy_mgr_get_vdev_diff_freq_new_conn(psoc, new_freq, vdev_id);
 }
 
+QDF_STATUS ucfg_policy_mgr_get_dbs_hw_modes(struct wlan_objmgr_psoc *psoc,
+					    bool *one_by_one_dbs,
+					    bool *two_by_two_dbs)
+{
+	return policy_mgr_get_dbs_hw_modes(psoc, one_by_one_dbs,
+					   two_by_two_dbs);
+}
+
+QDF_STATUS
+ucfg_policy_mgr_wait_chan_switch_complete_evt(struct wlan_objmgr_psoc *psoc)
+{
+	return policy_mgr_wait_chan_switch_complete_evt(psoc);
+}
+
+#ifdef WLAN_FEATURE_11BE_MLO
+QDF_STATUS
+ucfg_policy_mgr_pre_ap_start(struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(
+				psoc, vdev_id,
+				ml_nlink_ap_start_evt, NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_post_ap_start_failed(
+			     struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(
+				psoc, vdev_id,
+				ml_nlink_ap_start_failed_evt, NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_acs_start(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(psoc, vdev_id,
+						   ml_nlink_acs_start_evt,
+						   NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_acs_completed(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(psoc, vdev_id,
+						   ml_nlink_acs_completed_evt,
+						   NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_pre_sta_p2p_start(struct wlan_objmgr_psoc *psoc,
+				  uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(
+				psoc, vdev_id,
+				ml_nlink_connect_pre_start_evt, NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_post_sta_p2p_start_failed(
+			     struct wlan_objmgr_psoc *psoc,
+			     uint8_t vdev_id)
+{
+	if (wlan_mlme_is_aux_emlsr_support(psoc))
+		return ml_nlink_conn_change_notify(
+				psoc, vdev_id,
+				ml_nlink_connect_failed_evt, NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_clear_ml_links_settings_in_fw(struct wlan_objmgr_psoc *psoc,
+					      uint8_t vdev_id)
+{
+	QDF_STATUS status;
+
+	if (ml_is_nlink_service_supported(psoc))
+		status =
+		policy_mgr_clear_ml_links_settings_in_fw_nlink(
+							psoc,
+							vdev_id);
+	else
+		status =
+		policy_mgr_clear_ml_links_settings_in_fw(psoc,
+							 vdev_id);
+
+	return status;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_update_active_mlo_num_links(struct wlan_objmgr_psoc *psoc,
+					    uint8_t vdev_id,
+					    uint8_t force_active_cnt)
+{
+	QDF_STATUS status;
+
+	if (ml_is_nlink_service_supported(psoc))
+		status =
+		policy_mgr_update_active_mlo_num_nlink(psoc,
+						       vdev_id,
+						       force_active_cnt);
+	else
+		status =
+		policy_mgr_update_active_mlo_num_links(psoc,
+						       vdev_id,
+						       force_active_cnt);
+	return status;
+}
+
+QDF_STATUS
+ucfg_policy_mgr_update_mlo_links_based_on_linkid(struct wlan_objmgr_psoc *psoc,
+						 uint8_t vdev_id,
+						 uint8_t num_links,
+						 uint8_t *link_id_list,
+						 uint32_t *config_state_list)
+{
+	QDF_STATUS status;
+
+	if (ml_is_nlink_service_supported(psoc))
+		status =
+		policy_mgr_update_mlo_links_based_on_linkid_nlink(
+						psoc,
+						vdev_id, num_links,
+						link_id_list,
+						config_state_list);
+	else
+		status = policy_mgr_update_mlo_links_based_on_linkid(
+						psoc,
+						vdev_id, num_links,
+						link_id_list,
+						config_state_list);
+
+	return status;
+}
+
+enum policy_mgr_curr_hw_mode
+ucfg_policy_mgr_find_current_hw_mode(struct wlan_objmgr_psoc *psoc)
+{
+	return policy_mgr_find_current_hw_mode(psoc);
+}
+#endif

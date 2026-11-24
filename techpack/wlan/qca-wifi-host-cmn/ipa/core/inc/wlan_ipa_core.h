@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -26,6 +26,8 @@
 #include "wlan_ipa_public_struct.h"
 
 #define WLAN_IPA_NBUF_CB_PEER_ID_OFFSET		5
+#define IPA_DEF_PDEV_ID 0
+
 /**
  * wlan_ipa_is_enabled() - Is IPA enabled?
  * @ipa_cfg: IPA config
@@ -72,6 +74,21 @@ bool wlan_ipa_is_rt_debugging_enabled(struct wlan_ipa_config *ipa_cfg)
 	return WLAN_IPA_IS_CONFIG_ENABLED(ipa_cfg,
 					  WLAN_IPA_REAL_TIME_DEBUGGING);
 }
+
+#ifdef IPA_WDI3_TX_TWO_PIPES
+static inline bool
+wlan_ipa_is_two_tx_pipes_enabled(struct wlan_ipa_config *ipa_cfg)
+{
+	return WLAN_IPA_IS_CONFIG_ENABLED(ipa_cfg,
+					  WLAN_IPA_TWO_TX_PIPES_ENABLE_MASK);
+}
+#else /* !IPA_WDI3_TX_TWO_PIPES */
+static inline bool
+wlan_ipa_is_two_tx_pipes_enabled(struct wlan_ipa_config *ipa_cfg)
+{
+	return false;
+}
+#endif /* IPA_WDI3_TX_TWO_PIPES */
 
 /**
  * wlan_ipa_setup - IPA initialize and setup
@@ -839,6 +856,15 @@ void wlan_ipa_cleanup_dev_iface(struct wlan_ipa_priv *ipa_ctx,
 				qdf_netdev_t net_dev, uint8_t session_id);
 
 /**
+ * wlan_ipa_uc_shutdown_opt_dp_ctrl_cleanup() - enables flag to clean filters
+ * in opt_dp_ctrl
+ * @ipa_ctx: IPA context
+ *
+ * Return: None
+ */
+void wlan_ipa_uc_shutdown_opt_dp_ctrl_cleanup(struct wlan_ipa_priv *ipa_ctx);
+
+/**
  * wlan_ipa_uc_ssr_cleanup() - handle IPA UC clean up during SSR
  * @ipa_ctx: IPA context
  *
@@ -963,7 +989,120 @@ int wlan_ipa_wdi_opt_dpath_flt_rsrv_rel_cb(void *ipa_ctx);
  */
 void wlan_ipa_wdi_opt_dpath_notify_flt_rlsd(int result0, int result1);
 
+#ifdef IPA_OPT_WIFI_DP_CTRL
+/**
+ * wlan_ipa_wdi_opt_dpath_ctrl_flt_add_cb - Add filter tuple to lce filter
+ * @ipa_ctx: IPA context
+ * @in_out: filter tuple info
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_ctrl_flt_add_cb(
+			    void *ipa_ctx,
+			    struct ipa_wdi_opt_dpath_flt_add_cb_params *in_out);
+/**
+ * wlan_ipa_wdi_opt_dpath_ctrl_flt_rem_cb_wrapper - callback to remove
+ * filter tuple from lce filter
+ * @ipa_ctx: IPA context
+ * @in: filter tuple info
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_ctrl_flt_rem_cb_wrapper(
+			   void *ipa_ctx,
+			   struct ipa_wdi_opt_dpath_flt_rem_cb_params *in);
+
+/**
+ * wlan_ipa_wdi_opt_dpath_ctrl_flt_rem_cb -remove filter tuple from lce filter
+ * @ipa_ctx: IPA context
+ * @in: filter tuple info
+ * @source: filter delete caller
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_ctrl_flt_rem_cb(
+			   void *ipa_ctx,
+			   struct ipa_wdi_opt_dpath_flt_rem_cb_params *in,
+			   uint16_t source);
+/**
+ * wlan_ipa_wdi_opt_dpath_clk_status_cb - notify clock enable
+ * @ipa_ctx: IPA context
+ * @status: status of clock
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_clk_status_cb(void *ipa_ctx, bool status);
+
+/**
+ * wlan_ipa_wdi_opt_dpath_enable_clk_req() - send clock enable request to ipa
+ * @ipa_ctx: IPA context
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_enable_clk_req(void *ipa_ctx);
+
+/**
+ * wlan_ipa_wdi_opt_dpath_disable_clk_req() - send clock enable request to ipa
+ * @ipa_ctx: IPA context
+ *
+ * Return: 0 on success, negative on failure
+ */
+int wlan_ipa_wdi_opt_dpath_disable_clk_req(void *ipa_ctx);
+
+/**
+ * wlan_ipa_tx_pkt_opt_dp_ctrl() - handle opt_dp_ctrl tx pkt
+ * @vdev_id: vdev id
+ * @nbuf: nbuf
+ */
+void wlan_ipa_tx_pkt_opt_dp_ctrl(uint8_t vdev_id, qdf_nbuf_t nbuf);
+
+/**
+ * wlan_ipa_wdi_opt_dpath_ctrl_notify_flt_install()- send tx super rule filter
+ * add result to ipa
+ *
+ * @flt_resp_params : array of filter parameters
+ *
+ * Return: void
+ */
+void wlan_ipa_wdi_opt_dpath_ctrl_notify_flt_install(struct filter_response
+						    *flt_resp_params);
+
+/**
+ * wlan_ipa_wdi_opt_dpath_ctrl_notify_flt_delete()- send tx super rule filter
+ * delete result to ipa
+ *
+ * @flt_resp_params : array of filter parameters
+ *
+ * Return: void
+ */
+void wlan_ipa_wdi_opt_dpath_ctrl_notify_flt_delete(struct filter_response
+						   *flt_resp_params);
+
+/**
+ * wlan_ipa_ctrl_flt_db_deinit - clean db on wlan SSR event in
+ *	opt_dp_ctrl feature
+ * @ipa_obj: IPA context
+ * @status: status code
+ *
+ * Return: void
+ */
+void wlan_ipa_ctrl_flt_db_deinit(struct wlan_ipa_priv *ipa_obj,
+				 uint8_t status);
+#endif /* IPA_OPT_WIFI_DP_CTRL */
+#else /* !IPA_OPT_WIFI_DP */
+static inline int wlan_ipa_wdi_opt_dpath_flt_rsrv_rel_cb(void *ipa_ctx)
+{
+	return 0;
+}
 #endif /* IPA_OPT_WIFI_DP */
+
+#ifndef IPA_OPT_WIFI_DP_CTRL
+static inline
+void wlan_ipa_ctrl_flt_db_deinit(struct wlan_ipa_priv *ipa_obj,
+				 uint8_t status)
+{
+}
+#endif
 
 #ifdef IPA_WDI3_TX_TWO_PIPES
 /**

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -316,22 +316,13 @@ mlme_set_cac_required(struct wlan_objmgr_vdev *vdev, bool val);
  * mlme_set_mbssid_info() - save mbssid info
  * @vdev: vdev pointer
  * @mbssid_info: mbssid info
+ * @freq: current operating frequency
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS
 mlme_set_mbssid_info(struct wlan_objmgr_vdev *vdev,
-		     struct scan_mbssid_info *mbssid_info);
-
-/**
- * mlme_get_mbssid_info() - get mbssid info
- * @vdev: vdev pointer
- * @mbss_11ax: mbss 11ax info
- *
- * Return: None
- */
-void mlme_get_mbssid_info(struct wlan_objmgr_vdev *vdev,
-			  struct vdev_mlme_mbss_11ax *mbss_11ax);
+		     struct scan_mbssid_info *mbssid_info, qdf_freq_t freq);
 
 /**
  * mlme_set_tx_power() - set tx power
@@ -586,6 +577,80 @@ wlan_handle_emlsr_sta_concurrency(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS
 wlan_ll_sap_sort_channel_list(uint8_t vdev_id, qdf_list_t *list,
 			      struct sap_sel_ch_info *ch_info);
+
+/**
+ * wlan_ll_sap_free_chan_info() - API to free allocated memory
+ * @ch_param: pointer to sap_sel_ch_info structure
+ *
+ * Return: None
+ */
+void wlan_ll_sap_free_chan_info(struct sap_sel_ch_info *ch_param);
+
+/**
+ * wlan_ll_sap_freq_present_in_pcl() - API to check whether given
+ * frequency is present in PCL or not
+ * @pcl: pcl list
+ * @freq: Frequency to check in PCL list
+ *
+ * Return: True/False
+ */
+bool wlan_ll_sap_freq_present_in_pcl(struct policy_mgr_pcl_list *pcl,
+				     qdf_freq_t freq);
+
+/**
+ * wlan_ll_sap_send_continue_vdev_restart() - Continue vdev restart
+ * @vdev: pointer to vdev object
+ *
+ * Return: None
+ */
+void wlan_ll_sap_send_continue_vdev_restart(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * wlan_ll_sap_send_action_frame() - Send csa param via action frame
+ * @vdev: pointer to vdev object
+ * @macaddr: peer mac addr
+ *
+ * Return: None
+ */
+void wlan_ll_sap_send_action_frame(struct wlan_objmgr_vdev *vdev,
+				   uint8_t *macaddr);
+
+/**
+ * wlan_ll_sap_notify_chan_switch_started() - Notify channel switch started
+ * @vdev: pointer to vdev object
+ *
+ * Return: None
+ */
+void wlan_ll_sap_notify_chan_switch_started(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * wlan_ll_sap_csa_bearer_switch_rsp() - LL_LT_SAP csa bearer switch rsp
+ * @vdev_id: vdev id
+ *
+ * Return: None
+ */
+void wlan_ll_sap_csa_bearer_switch_rsp(uint8_t vdev_id);
+#else
+static inline
+void wlan_ll_sap_send_continue_vdev_restart(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline
+void wlan_ll_sap_send_action_frame(struct wlan_objmgr_vdev *vdev,
+				   uint8_t *macaddr)
+{
+}
+
+static inline
+void wlan_ll_sap_notify_chan_switch_started(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline
+void wlan_ll_sap_csa_bearer_switch_rsp(uint8_t vdev_id)
+{
+}
 #endif
 
 /**
@@ -593,10 +658,10 @@ wlan_ll_sap_sort_channel_list(uint8_t vdev_id, qdf_list_t *list,
  * @vdev_id: Vdev Id
  * @filter: Filter to apply to get scan result
  *
- * Return: None
+ * Return: QDF_STATUS
  *
  */
-void
+QDF_STATUS
 wlan_sap_get_user_config_acs_ch_list(uint8_t vdev_id,
 				     struct scan_filter *filter);
 #endif

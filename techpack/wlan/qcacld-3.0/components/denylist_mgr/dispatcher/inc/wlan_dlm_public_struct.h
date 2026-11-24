@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -25,11 +25,16 @@
 
 #include <qdf_types.h>
 #include "wlan_objmgr_pdev_obj.h"
+#include "wmi_unified.h"
 
-#define MAX_BAD_AP_LIST_SIZE               28
 #define MAX_RSSI_AVOID_BSSID_LIST          10
-#define PDEV_MAX_NUM_BSSID_DISALLOW_LIST   28
-
+/*
+ * Size of wmi_pdev_bssid_disallow_list_config_params is 96, total size
+ * should less than MAX_WLAN_TX_CREDIT_SIZE 2176
+ */
+#define MAX_BAD_AP_LIST_SIZE               22
+#define PDEV_MAX_NUM_BSSID_DISALLOW_LIST   22
+#define MAX_CONNECTION_TRIAL_PER_ASSOC_LINK WMI_MAX_FAILED_LINK_COMBO_COUNT
 /**
  * enum dlm_reject_ap_source - Source of adding BSSID to DLM
  * @ADDED_BY_DRIVER: Source adding this BSSID is driver
@@ -96,6 +101,15 @@ enum dlm_reject_ap_type {
  * @REASON_REASSOC_RSSI_REJECT: Re-Assoc resp received with reason code 34
  * @REASON_REASSOC_NO_MORE_STAS: Re-assoc reject received with reason code
  * 17
+ * @REASON_BASIC_RATES_MISMATCH: Re/assoc reject received with reason code
+ * 18
+ * @REASON_OTHER: Assoc reject received with reason code 12
+ * @REASON_STA_AFFILIATED_WITH_MLD_WITH_EXISTING_MLD_ASSOCIATION: Assoc
+ * reject received with reason code 130
+ * @REASON_EHT_NOT_SUPPORTED: Assoc reject received with reason code 135
+ * @REASON_TX_LINK_NOT_ACCEPTED: Assoc reject received with reason code 139
+ * @REASON_LINK_REJECTED: Link is rejected during ML association.
+ * @REASON_EAPOL_TIMEOUT: Deauth received with reason code 15
  */
 enum dlm_reject_ap_reason {
 	REASON_UNKNOWN = 0,
@@ -111,6 +125,13 @@ enum dlm_reject_ap_reason {
 	REASON_BTM_MBO_RETRY,
 	REASON_REASSOC_RSSI_REJECT,
 	REASON_REASSOC_NO_MORE_STAS,
+	REASON_BASIC_RATES_MISMATCH,
+	REASON_OTHER,
+	REASON_STA_AFFILIATED_WITH_MLD_WITH_EXISTING_MLD_ASSOCIATION,
+	REASON_EHT_NOT_SUPPORTED,
+	REASON_TX_LINK_NOT_ACCEPTED,
+	REASON_LINK_REJECTED,
+	REASON_EAPOL_TIMEOUT,
 };
 
 /**
@@ -123,9 +144,49 @@ enum dlm_connection_state {
 	DLM_AP_DISCONNECTED,
 };
 
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * enum wlan_link_combination_to_reject - the combinations that need to be avoided
+ * based on assoc reject/connection failure.
+ * @WLAN_HOST_AVOID_ASSOC_LINK: Avoid bssid mentioned in reject_ap_info as assoc
+ * link.
+ * @WLAN_HOST_AVOID_CANDIDATE_WITH_ASSOC_OR_PARTNER_LINK: Avoid bssid mentioned
+ * in reject_ap_info as assoc link or partner link of MLO AP
+ * @WLAN_HOST_AVOID_3_LINK: Avoid 3 link combination with bssid mentioned in
+ * reject_ap_info
+ * @WLAN_HOST_AVOID_2_LINK: Avoid 2 link combination with bssid mentioned in
+ * reject_ap_info
+ * @WLAN_HOST_REJECT_11BE: Avoid 11 BE connection for mentioned bssid in reject
+ * ap info
+ */
+enum wlan_link_combination_to_reject {
+	WLAN_HOST_AVOID_ASSOC_LINK = BIT(0),
+	WLAN_HOST_AVOID_CANDIDATE_WITH_ASSOC_OR_PARTNER_LINK = BIT(1),
+	WLAN_HOST_AVOID_3_LINK = BIT(2),
+	WLAN_HOST_AVOID_2_LINK = BIT(3),
+	WLAN_HOST_REJECT_11BE = BIT(4),
+};
+
+/**
+ * struct reject_mlo_ap_info - structure to hold mlo AP info in rejectlist
+ * @mld_addr: AP mld address
+ * @tried_links: bitmap of tried partner links combination
+ * @tried_link_count: no of combination for bssid/assoc link specified in
+ * reject_ap_info
+ * @link_action: link combinations that need to avoided
+ */
+struct reject_mlo_ap_info {
+	struct qdf_mac_addr mld_addr;
+	uint32_t tried_links[MAX_CONNECTION_TRIAL_PER_ASSOC_LINK];
+	uint8_t tried_link_count;
+	uint8_t link_action;
+};
+#endif
+
 /**
  * struct reject_ap_config_params - Structure to send reject ap list to FW
  * @bssid: BSSID of the AP
+ * @reject_mlo_ap_config_param: reject MLO AP config
  * @reject_ap_type: Type of the rejection done with the BSSID
  * @reject_duration: time left till the AP is in the reject list.
  * @expected_rssi: expected RSSI when the AP expects the connection to be
@@ -137,6 +198,9 @@ enum dlm_connection_state {
  */
 struct reject_ap_config_params {
 	struct qdf_mac_addr bssid;
+#ifdef WLAN_FEATURE_11BE_MLO
+	struct reject_mlo_ap_info reject_mlo_ap_config_param;
+#endif
 	enum dlm_reject_ap_type reject_ap_type;
 	uint32_t reject_duration;
 	int32_t expected_rssi;
@@ -169,6 +233,7 @@ struct wlan_dlm_tx_ops {
 /**
  * struct reject_ap_info - structure to specify the reject ap info.
  * @bssid: BSSID of the AP.
+ * @reject_mlo_ap_info: MLO AP info
  * @rssi_reject_params: RSSI reject params of the AP is of type RSSI reject
  * @reject_ap_type: Reject type of AP (eg. avoid, denylist, rssi reject
  * etc.)
@@ -177,6 +242,9 @@ struct wlan_dlm_tx_ops {
  */
 struct reject_ap_info {
 	struct qdf_mac_addr bssid;
+#ifdef WLAN_FEATURE_11BE_MLO
+	struct reject_mlo_ap_info reject_mlo_ap_info;
+#endif
 	struct dlm_rssi_disallow_params rssi_reject_params;
 	enum dlm_reject_ap_type reject_ap_type;
 	enum dlm_reject_ap_reason reject_reason;

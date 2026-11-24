@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -87,7 +87,7 @@ void hdd_softap_tx_resume_timer_expired_handler(void *adapter_context)
 		return;
 	}
 
-	hdd_debug("Enabling queues");
+	hdd_debug("vdev %d Enabling queues", adapter->deflink->vdev_id);
 	wlan_hdd_netif_queue_control(adapter, WLAN_WAKE_ALL_NETIF_QUEUE,
 				     WLAN_CONTROL_PATH);
 }
@@ -109,7 +109,7 @@ hdd_softap_tx_resume_false(struct hdd_adapter *adapter, bool tx_resume)
 	if (true == tx_resume)
 		return;
 
-	hdd_debug("Disabling queues");
+	hdd_debug("vdev %d Disabling queues", adapter->deflink->vdev_id);
 	wlan_hdd_netif_queue_control(adapter, WLAN_STOP_ALL_NETIF_QUEUE,
 				     WLAN_DATA_FLOW_CONTROL);
 
@@ -143,7 +143,7 @@ void hdd_softap_tx_resume_cb(void *adapter_context, bool tx_resume)
 			qdf_mc_timer_stop(&adapter->tx_flow_control_timer);
 		}
 
-		hdd_debug("Enabling queues");
+		hdd_debug("vdev %d Enabling queues", adapter->deflink->vdev_id);
 		wlan_hdd_netif_queue_control(adapter,
 					WLAN_WAKE_ALL_NETIF_QUEUE,
 					WLAN_DATA_FLOW_CONTROL);
@@ -166,7 +166,8 @@ void hdd_ipa_update_rx_mcbc_stats(struct hdd_adapter *adapter,
 	hdd_sta_info = hdd_get_sta_info_by_mac(
 				&adapter->sta_info_list,
 				src_mac->bytes,
-				STA_INFO_SOFTAP_IPA_RX_PKT_CALLBACK);
+				STA_INFO_SOFTAP_IPA_RX_PKT_CALLBACK,
+				STA_INFO_MATCH_STA_OR_MLD_MAC);
 	if (!hdd_sta_info)
 		return;
 
@@ -412,15 +413,17 @@ static QDF_STATUS hdd_sta_info_re_attach(
 	return QDF_STATUS_SUCCESS;
 }
 
-QDF_STATUS hdd_softap_init_tx_rx_sta(struct hdd_adapter *adapter,
+QDF_STATUS hdd_softap_init_tx_rx_sta(struct wlan_hdd_link_info *link_info,
 				     struct qdf_mac_addr *sta_mac)
 {
 	struct hdd_station_info *sta_info;
+	struct hdd_adapter *adapter = link_info->adapter;
 	QDF_STATUS status;
 
 	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list,
 					   sta_mac->bytes,
-					   STA_INFO_SOFTAP_INIT_TX_RX_STA);
+					   STA_INFO_SOFTAP_INIT_TX_RX_STA,
+					   STA_INFO_MATCH_STA_MAC_ONLY);
 
 	if (sta_info) {
 		hdd_err("Reinit of in use station " QDF_MAC_ADDR_FMT,
@@ -437,6 +440,7 @@ QDF_STATUS hdd_softap_init_tx_rx_sta(struct hdd_adapter *adapter,
 		return QDF_STATUS_E_NOMEM;
 
 	sta_info->is_deauth_in_progress = false;
+	sta_info->link_info = link_info;
 	qdf_mem_copy(&sta_info->sta_mac, sta_mac, sizeof(struct qdf_mac_addr));
 
 	status = hdd_sta_info_attach(&adapter->sta_info_list, sta_info);
@@ -554,18 +558,26 @@ QDF_STATUS hdd_softap_register_sta(struct wlan_hdd_link_info *link_info,
 	 * to the data path. Else provide the mac address of the connected peer.
 	 */
 	if (qdf_is_macaddr_broadcast(sta_mac)) {
-		qdf_mem_copy(&txrx_desc.peer_addr, &adapter->mac_addr,
-			     QDF_MAC_ADDR_SIZE);
+		if (adapter->device_mode == QDF_SAP_MODE &&
+		    wlan_vdev_mlme_is_mlo_vdev(adapter->deflink->vdev))
+			qdf_mem_copy(&txrx_desc.peer_addr,
+				     &link_info->link_addr,
+				     QDF_MAC_ADDR_SIZE);
+		else
+			qdf_mem_copy(&txrx_desc.peer_addr,
+				     &adapter->mac_addr,
+				     QDF_MAC_ADDR_SIZE);
 		is_macaddr_broadcast = true;
 	} else {
 		qdf_mem_copy(&txrx_desc.peer_addr, sta_mac,
 			     QDF_MAC_ADDR_SIZE);
 	}
 
-	qdf_status = hdd_softap_init_tx_rx_sta(adapter, sta_mac);
+	qdf_status = hdd_softap_init_tx_rx_sta(link_info, sta_mac);
 	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list,
 					   sta_mac->bytes,
-					   STA_INFO_SOFTAP_REGISTER_STA);
+					   STA_INFO_SOFTAP_REGISTER_STA,
+					   STA_INFO_MATCH_STA_MAC_ONLY);
 
 	if (!sta_info) {
 		hdd_debug("STA not found");
@@ -598,8 +610,8 @@ QDF_STATUS hdd_softap_register_sta(struct wlan_hdd_link_info *link_info,
 	txrx_desc.bw = hdd_convert_ch_width_to_cdp_peer_bw(ch_width);
 	qdf_status = cdp_peer_register(soc, OL_TXRX_PDEV_ID, &txrx_desc);
 	if (!QDF_IS_STATUS_SUCCESS(qdf_status)) {
-		hdd_debug("cdp_peer_register() failed to register.  Status = %d [0x%08X]",
-			  qdf_status, qdf_status);
+		hdd_debug("vdev %d cdp_peer_register() failed to register.  Status = %d [0x%08X]",
+			  link_info->vdev_id, qdf_status, qdf_status);
 		hdd_put_sta_info_ref(&adapter->sta_info_list, &sta_info, true,
 				     STA_INFO_SOFTAP_REGISTER_STA);
 		return qdf_status;
@@ -614,8 +626,9 @@ QDF_STATUS hdd_softap_register_sta(struct wlan_hdd_link_info *link_info,
 	sta_info->is_qos_enabled = wmm_enabled;
 
 	if (!auth_required) {
-		hdd_debug("open/shared auth STA MAC= " QDF_MAC_ADDR_FMT
-			  ".  Changing TL state to AUTHENTICATED at Join time",
+		hdd_debug("Vdev %d open/shared/FILS auth STA " QDF_MAC_ADDR_FMT
+			  " Changing TL state to AUTHENTICATED at Join time",
+			 link_info->vdev_id,
 			 QDF_MAC_ADDR_REF(sta_info->sta_mac.bytes));
 
 		/* Connections that do not need Upper layer auth,
@@ -632,9 +645,10 @@ QDF_STATUS hdd_softap_register_sta(struct wlan_hdd_link_info *link_info,
 							sta_mac);
 	} else {
 
-		hdd_debug("ULA auth STA MAC = " QDF_MAC_ADDR_FMT
-			  ".  Changing TL state to CONNECTED at Join time",
-			 QDF_MAC_ADDR_REF(sta_info->sta_mac.bytes));
+		hdd_debug("Vdev %d ULA auth STA " QDF_MAC_ADDR_FMT
+			  " Changing TL state to CONNECTED at Join time",
+			  link_info->vdev_id,
+			  QDF_MAC_ADDR_REF(sta_info->sta_mac.bytes));
 
 		qdf_status = hdd_change_peer_state(link_info,
 						   txrx_desc.peer_addr.bytes,
@@ -650,7 +664,7 @@ QDF_STATUS hdd_softap_register_sta(struct wlan_hdd_link_info *link_info,
 			     STA_INFO_SOFTAP_REGISTER_STA);
 
 	if (is_macaddr_broadcast) {
-		hdd_debug("Enabling queues");
+		hdd_debug("vdev %d Enabling queues", link_info->vdev_id);
 		wlan_hdd_netif_queue_control(adapter,
 					     WLAN_START_ALL_NETIF_QUEUE_N_CARRIER,
 					     WLAN_CONTROL_PATH);
@@ -743,26 +757,28 @@ QDF_STATUS hdd_softap_stop_bss(struct hdd_adapter *adapter)
 
 /**
  * hdd_softap_change_per_sta_state() - Change the state of a SoftAP station
- * @adapter: pointer to adapter context
+ * @link_info: Link info pointer in HDD adapter
  * @sta_mac: MAC address of the station
  * @state: new state of the station
  *
  * Return: QDF_STATUS_SUCCESS on success, QDF_STATUS_E_** on error
  */
-static QDF_STATUS hdd_softap_change_per_sta_state(struct hdd_adapter *adapter,
-						  struct qdf_mac_addr *sta_mac,
-						  enum ol_txrx_peer_state state)
+static QDF_STATUS
+hdd_softap_change_per_sta_state(struct wlan_hdd_link_info *link_info,
+				struct qdf_mac_addr *sta_mac,
+				enum ol_txrx_peer_state state)
 {
 	QDF_STATUS qdf_status;
 	struct hdd_station_info *sta_info;
 	struct qdf_mac_addr mac_addr;
 	struct wlan_objmgr_vdev *vdev;
 
-	hdd_enter_dev(adapter->dev);
+	hdd_enter_dev(link_info->adapter->dev);
 
-	sta_info = hdd_get_sta_info_by_mac(&adapter->sta_info_list,
+	sta_info = hdd_get_sta_info_by_mac(&link_info->adapter->sta_info_list,
 					   sta_mac->bytes,
-					   STA_INFO_SOFTAP_CHANGE_STA_STATE);
+					   STA_INFO_SOFTAP_CHANGE_STA_STATE,
+					   STA_INFO_MATCH_STA_MAC_ONLY);
 
 	if (!sta_info) {
 		hdd_debug("Failed to find right station MAC: " QDF_MAC_ADDR_FMT,
@@ -771,20 +787,21 @@ static QDF_STATUS hdd_softap_change_per_sta_state(struct hdd_adapter *adapter,
 	}
 
 	if (qdf_is_macaddr_broadcast(&sta_info->sta_mac))
-		qdf_mem_copy(&mac_addr, &adapter->mac_addr, QDF_MAC_ADDR_SIZE);
+		qdf_mem_copy(&mac_addr, &link_info->link_addr,
+			     QDF_MAC_ADDR_SIZE);
 	else
 		qdf_mem_copy(&mac_addr, sta_mac, QDF_MAC_ADDR_SIZE);
 
 	qdf_status =
-		hdd_change_peer_state(adapter->deflink, mac_addr.bytes, state);
-	hdd_debug("Station " QDF_MAC_ADDR_FMT " changed to state %d",
-		  QDF_MAC_ADDR_REF(mac_addr.bytes), state);
+		hdd_change_peer_state(link_info, mac_addr.bytes, state);
+	hdd_debug("Vdev %d, Station " QDF_MAC_ADDR_FMT " changed to state %d",
+		  link_info->vdev_id, QDF_MAC_ADDR_REF(mac_addr.bytes), state);
 
 	if (QDF_IS_STATUS_ERROR(qdf_status))
 		goto put_ref;
 
 	sta_info->peer_state = OL_TXRX_PEER_STATE_AUTH;
-	vdev = hdd_objmgr_get_vdev_by_user(adapter->deflink, WLAN_OSIF_ID);
+	vdev = hdd_objmgr_get_vdev_by_user(link_info, WLAN_OSIF_ID);
 	if (vdev) {
 		p2p_peer_authorized(vdev, sta_mac->bytes);
 		hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_ID);
@@ -793,13 +810,14 @@ static QDF_STATUS hdd_softap_change_per_sta_state(struct hdd_adapter *adapter,
 	}
 
 put_ref:
-	hdd_put_sta_info_ref(&adapter->sta_info_list, &sta_info, true,
+	hdd_put_sta_info_ref(&link_info->adapter->sta_info_list,
+			     &sta_info, true,
 			     STA_INFO_SOFTAP_CHANGE_STA_STATE);
 	hdd_exit();
 	return qdf_status;
 }
 
-QDF_STATUS hdd_softap_change_sta_state(struct hdd_adapter *adapter,
+QDF_STATUS hdd_softap_change_sta_state(struct wlan_hdd_link_info *link_info,
 				       struct qdf_mac_addr *sta_mac,
 				       enum ol_txrx_peer_state state)
 {
@@ -807,8 +825,9 @@ QDF_STATUS hdd_softap_change_sta_state(struct hdd_adapter *adapter,
 	struct wlan_objmgr_peer *peer;
 	QDF_STATUS status = QDF_STATUS_E_INVAL;
 	struct hdd_context *hdd_ctx;
+	struct hdd_adapter *adapter = link_info->adapter;
 
-	status = hdd_softap_change_per_sta_state(adapter, sta_mac, state);
+	status = hdd_softap_change_per_sta_state(link_info, sta_mac, state);
 
 	if (QDF_IS_STATUS_ERROR(status))
 		return status;
@@ -829,7 +848,7 @@ QDF_STATUS hdd_softap_change_sta_state(struct hdd_adapter *adapter,
 	}
 	mldaddr = (struct qdf_mac_addr *)wlan_peer_mlme_get_mldaddr(peer);
 	if (mldaddr && !qdf_is_macaddr_zero(mldaddr))
-		status = hdd_softap_change_per_sta_state(adapter, mldaddr,
+		status = hdd_softap_change_per_sta_state(link_info, mldaddr,
 							 state);
 	wlan_objmgr_peer_release_ref(peer, WLAN_LEGACY_MAC_ID);
 

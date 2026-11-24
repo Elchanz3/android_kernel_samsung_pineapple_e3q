@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,6 +32,7 @@
 
 /**
  * struct mlme_cm_ops: connection manager osif callbacks
+ * @mlme_cm_connect_active_notify_cb: Connect active notify callback
  * @mlme_cm_connect_complete_cb: Connect done callback
  * @vdev: vdev pointer
  * @rsp: connect response
@@ -105,6 +106,7 @@
  * @mlme_cm_perfd_reset_cpufreq_ctrl_cb: callback to reset CPU min freq
  */
 struct mlme_cm_ops {
+	void (*mlme_cm_connect_active_notify_cb)(uint8_t vdev_id);
 	QDF_STATUS (*mlme_cm_connect_complete_cb)(
 					struct wlan_objmgr_vdev *vdev,
 					struct wlan_cm_connect_resp *rsp);
@@ -317,6 +319,7 @@ struct mlme_twt_ops {
  * @mlme_cm_ext_disconnect_req_cb:          callback to disconnect req to
  *                                          VDEV/PEER SM
  * @mlme_cm_ext_bss_peer_delete_req_cb:     callback to bss peer delete request
+ * @mlme_cm_ext_force_bss_peer_delete_req_cb: callback to force bss peer delete request
  * @mlme_cm_ext_disconnect_complete_ind_cb: callback to indicate disconnect
  *                                          complete
  * @mlme_cm_ext_vdev_down_req_cb:           callback to send vdev down to FW
@@ -388,6 +391,8 @@ struct mlme_ext_ops {
 			(struct wlan_objmgr_vdev *vdev,
 			struct wlan_cm_vdev_discon_req *req);
 	QDF_STATUS (*mlme_cm_ext_bss_peer_delete_req_cb)(
+			struct wlan_objmgr_vdev *vdev);
+	QDF_STATUS (*mlme_cm_ext_force_bss_peer_delete_req_cb)(
 			struct wlan_objmgr_vdev *vdev);
 	QDF_STATUS (*mlme_cm_ext_disconnect_complete_ind_cb)(
 				struct wlan_objmgr_vdev *vdev,
@@ -734,6 +739,21 @@ QDF_STATUS mlme_cm_bss_peer_create_req(struct wlan_objmgr_vdev *vdev,
 QDF_STATUS mlme_cm_connect_req(struct wlan_objmgr_vdev *vdev,
 			       struct wlan_cm_vdev_connect_req *req);
 
+#ifdef CONN_MGR_ADV_FEATURE
+/**
+ * mlme_cm_osif_connect_active_notify() - CNX manager ext connect active
+ * notification.
+ * @vdev_id: VDEV ID
+ *
+ * Return: void
+ */
+void mlme_cm_osif_connect_active_notify(uint8_t vdev_id);
+#else
+static inline void mlme_cm_osif_connect_active_notify(uint8_t vdev_id)
+{
+}
+#endif
+
 /**
  * mlme_cm_connect_complete_ind() - Connection manager ext connect complete
  * indication
@@ -807,6 +827,16 @@ QDF_STATUS mlme_cm_disconnect_req(struct wlan_objmgr_vdev *vdev,
  */
 QDF_STATUS
 mlme_cm_bss_peer_delete_req(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * mlme_cm_force_bss_peer_delete_req() - Connection manager ext force bss peer
+ * delete request
+ * @vdev: VDEV object
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+mlme_cm_force_bss_peer_delete_req(struct wlan_objmgr_vdev *vdev);
 
 /**
  * mlme_cm_disconnect_complete_ind() - Connection manager ext disconnect

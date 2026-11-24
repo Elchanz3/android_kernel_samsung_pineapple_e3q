@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -121,7 +121,9 @@ struct hdd_config {
 	bool is_11k_offload_supported;
 	bool is_unit_test_framework_enabled;
 	bool disable_channel;
-
+#ifdef WLAN_FEATURE_UL_JITTER
+	bool ul_jitter_log;
+#endif
 	/* HDD converged ini items are listed below this*/
 	bool bug_on_reinit_failure;
 	bool is_ramdump_enabled;
@@ -204,9 +206,14 @@ struct hdd_config {
 	bool get_wifi_features;
 #endif
 #ifdef FEATURE_RUNTIME_PM
-	uint16_t cpu_cxpc_threshold;
+	unsigned long cpu_cxpc_threshold;
 #endif
 	bool exclude_selftx_from_cca_busy;
+#ifdef WLAN_FEATURE_11BE_MLO
+	/* ml link state cache expiry time*/
+	qdf_time_t link_state_cache_expiry_time;
+#endif
+	enum cfg_sub_20_channel_width sub_20_ch_width;
 };
 
 /**
@@ -382,6 +389,16 @@ void hdd_override_all_ps(struct hdd_context *hdd_ctx);
  */
 int hdd_vendor_mode_to_phymode(enum qca_wlan_vendor_phy_mode vendor_phy_mode,
 			       eCsrPhyMode *csr_phy_mode);
+
+/**
+ * hdd_phymode_to_vendor_mode() - Get vendor phy mode according to CSR phy mode.
+ * @csr_phy_mode: phy mode of eCsrPhyMode
+ * @vendor_phy_mode: vendor phy mode
+ *
+ * Return: 0 on success, negative error value on failure
+ */
+int hdd_phymode_to_vendor_mode(eCsrPhyMode csr_phy_mode,
+			       enum qca_wlan_vendor_phy_mode *vendor_phy_mode);
 
 /**
  * hdd_vendor_mode_to_band() - Get band_info according to vendor phy mode

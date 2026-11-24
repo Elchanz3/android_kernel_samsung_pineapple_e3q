@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2015,2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -39,7 +39,8 @@
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0) && \
-LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
+LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0) && \
+!defined(CFG80211_CRYPTO_WEP_KEYS_REMOVED)
 static QDF_STATUS
 osif_cm_update_wep_seq_info(struct wlan_cm_connect_req *connect_req,
 			    const struct cfg80211_connect_params *req)
@@ -540,6 +541,7 @@ void osif_update_partner_vdev_info(struct wlan_objmgr_vdev *vdev,
 	}
 }
 
+#ifndef ENABLE_CFG80211_BACKPORTS
 static inline
 QDF_STATUS osif_update_mlo_partner_info(
 			struct wlan_objmgr_vdev *vdev,
@@ -622,7 +624,8 @@ QDF_STATUS osif_update_mlo_partner_info(
 		}
 
 		status = util_get_bvmlie_persta_partner_info(ml_ie, ml_ie_len,
-							     &partner_info);
+							     &partner_info,
+							     WLAN_FC0_STYPE_INVALID);
 		if (QDF_IS_STATUS_ERROR(status)) {
 			osif_err("Unable to find per-sta profile in ML IE");
 			return status;
@@ -661,6 +664,84 @@ QDF_STATUS osif_update_mlo_partner_info(
 
 	return QDF_STATUS_SUCCESS;
 }
+
+#else
+static inline
+QDF_STATUS osif_update_mlo_partner_info(
+			struct wlan_objmgr_vdev *vdev,
+			struct wlan_cm_connect_req *connect_req,
+			const struct cfg80211_connect_params *req)
+{
+	struct mlo_partner_info partner_info = {0};
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct wlan_objmgr_pdev *pdev = NULL;
+	struct wlan_objmgr_psoc *psoc;
+	struct wlan_mlo_dev_context *ml_dev = NULL;
+	uint8_t aplinks = 0;
+
+	if (!vdev || !connect_req || !req)
+		return status;
+
+	pdev = wlan_vdev_get_pdev(vdev);
+
+	if (!pdev) {
+		osif_debug("null pdev");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc) {
+		osif_err("null psoc");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	if (!wlan_mlo_get_psoc_capable(psoc))
+		return QDF_STATUS_SUCCESS;
+
+	ml_dev = vdev->mlo_dev_ctx;
+	if (!ml_dev) {
+		osif_err("ML ctx is NULL");
+		return QDF_STATUS_SUCCESS;
+	}
+
+	if (!req->ap_mld_addr) {
+		/* For MLD fallback case */
+		return QDF_STATUS_SUCCESS;
+	}
+	wlan_vdev_set_link_id(vdev, req->link_id);
+	wlan_vdev_mlme_set_mlo_vdev(vdev);
+	partner_info.num_partner_links = 0;
+
+	status = mlo_mlme_connect_get_partner_info(vdev, req, &partner_info);
+	if ((partner_info.num_partner_links != 0) &&
+	    QDF_IS_STATUS_ERROR(status)) {
+		osif_err("Failed to get ML partner info status:%d ", status);
+		return status;
+	}
+
+	qdf_mem_copy(&connect_req->ml_parnter_info,
+		     &partner_info, sizeof(struct mlo_partner_info));
+
+	/* Get total number of links in association */
+	aplinks = partner_info.num_partner_links + 1;
+
+	mlo_clear_connect_req_links_bmap(vdev);
+	/* Handle 4 LINK RDP Case*/
+	if (mlo_check_topology(pdev, vdev, aplinks) != QDF_STATUS_SUCCESS) {
+		osif_err("Topology check failed prevent association\n");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (mlo_sta_bridge_exists(vdev))
+		mlo_update_partner_bridge_info(ml_dev, &partner_info);
+
+	mlo_update_connect_req_links(vdev, 1);
+	osif_update_partner_vdev_info(vdev, partner_info);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+#endif /* ENABLE_CFG80211_BACKPORTS */
 #endif /* WLAN_FEATURE_11BE_MLO_ADV_FEATURE */
 #else
 static inline
@@ -773,8 +854,11 @@ int osif_cm_connect(struct net_device *dev, struct wlan_objmgr_vdev *vdev,
 		goto connect_start_fail;
 
 	status = mlo_connect(vdev, connect_req);
-	if (QDF_IS_STATUS_ERROR(status))
+	if (QDF_IS_STATUS_ERROR(status)) {
 		osif_err("Connect failed with status %d", status);
+		ucfg_cm_handle_legacy_conn_fail(wlan_vdev_get_psoc(vdev),
+						wlan_vdev_get_id(vdev));
+	}
 
 connect_start_fail:
 	ucfg_cm_free_connect_req(connect_req);

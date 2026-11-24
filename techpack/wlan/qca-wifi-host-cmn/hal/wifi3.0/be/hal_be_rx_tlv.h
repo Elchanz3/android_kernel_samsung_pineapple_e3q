@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -21,6 +21,8 @@
 #define _HAL_BE_RX_TLV_H_
 
 #include "hal_api_mon.h"
+#include "hal_be_rx_compact_tlv.h"
+#include "hal_be_api_mon.h"
 
 /*
  * Structures & Macros to obtain fields from the TLV's in the Rx packet
@@ -33,7 +35,9 @@
 #define TLV_TAG_T uint64_t
 #endif
 
-#define HAL_RX_BE_PKT_HDR_TLV_LEN		112
+#define HAL_RX_BE_PKT_HDR_TLV_LEN	112
+/* Number of bytes to store SW private info in rx_pkt_tlvs */
+#define HAL_RX_TLV_PRIV_INFO_BYTES	4
 
 #ifndef BIG_ENDIAN_HOST
 struct rx_pkt_hdr_tlv {
@@ -55,350 +59,26 @@ struct rx_pkt_hdr_tlv {
 
 
 #ifdef CONFIG_WORD_BASED_TLV
-#ifndef BIG_ENDIAN_HOST
-struct rx_msdu_end_compact {
-	uint32_t sa_sw_peer_id				: 16,
-		 sa_idx_timeout				:  1,
-		 da_idx_timeout				:  1,
-		 to_ds					:  1,
-		 tid					:  4,
-		 sa_is_valid				:  1,
-		 da_is_valid				:  1,
-		 da_is_mcbc				:  1,
-		 l3_header_padding			:  2,
-		 first_msdu				:  1,
-		 last_msdu				:  1,
-		 fr_ds					:  1,
-		 ip_chksum_fail_copy			:  1;
-	uint32_t sa_idx					: 16,
-		 da_idx_or_sw_peer_id			: 16;
-	uint32_t msdu_drop				:  1,
-		 reo_destination_indication		:  5,
-		 flow_idx				: 20,
-		 use_ppe				:  1,
-		 mesh_sta				:  2,
-		 vlan_ctag_stripped			:  1,
-		 vlan_stag_stripped			:  1,
-		 fragment_flag				:  1;
-	uint32_t fse_metadata				: 32;
-	uint32_t cce_metadata				: 16,
-		 tcp_udp_chksum				: 16;
-	uint32_t aggregation_count			:  8,
-		 flow_aggregation_continuation		:  1,
-		 fisa_timeout				:  1,
-		 tcp_udp_chksum_fail_copy		:  1,
-		 msdu_limit_error			:  1,
-		 flow_idx_timeout			:  1,
-		 flow_idx_invalid			:  1,
-		 cce_match				:  1,
-		 amsdu_parser_error			:  1,
-		 cumulative_ip_length			: 16;
-	uint32_t key_id_octet				:  8,
-		 reserved_8a				: 24;
-	uint32_t reserved_9a				:  6,
-		 service_code				:  9,
-		 priority_valid				:  1,
-		 intra_bss				:  1,
-		 dest_chip_id				:  2,
-		 multicast_echo				:  1,
-		 wds_learning_event			:  1,
-		 wds_roaming_event			:  1,
-		 wds_keep_alive_event			:  1,
-		 dest_chip_pmac_id			:  1,
-		 reserved_9b				:  8;
-	uint32_t msdu_length				: 14,
-		 stbc					:  1,
-		 ipsec_esp				:  1,
-		 l3_offset				:  7,
-		 ipsec_ah				:  1,
-		 l4_offset				:  8;
-	uint32_t msdu_number				:  8,
-		 decap_format				:  2,
-		 ipv4_proto				:  1,
-		 ipv6_proto				:  1,
-		 tcp_proto				:  1,
-		 udp_proto				:  1,
-		 ip_frag				:  1,
-		 tcp_only_ack				:  1,
-		 da_is_bcast_mcast			:  1,
-		 toeplitz_hash_sel			:  2,
-		 ip_fixed_header_valid			:  1,
-		 ip_extn_header_valid			:  1,
-		 tcp_udp_header_valid			:  1,
-		 mesh_control_present			:  1,
-		 ldpc					:  1,
-		 ip4_protocol_ip6_next_header		:  8;
-	uint32_t vlan_ctag_ci				: 16,
-		 vlan_stag_ci				: 16;
-	uint32_t peer_meta_data				: 32;
-	uint32_t user_rssi				:  8,
-		 pkt_type				:  4,
-		 sgi					:  2,
-		 rate_mcs				:  4,
-		 receive_bandwidth			:  3,
-		 reception_type				:  3,
-		 mimo_ss_bitmap				:  7,
-		 msdu_done_copy				:  1;
-	uint32_t flow_id_toeplitz			: 32;
-	uint32_t ppdu_start_timestamp_63_32;
-	uint32_t sw_phy_meta_data			: 32;
-	uint32_t first_mpdu				:  1,
-		 reserved_16a				:  1,
-		 mcast_bcast				:  1,
-		 ast_index_not_found			:  1,
-		 ast_index_timeout			:  1,
-		 power_mgmt				:  1,
-		 non_qos				:  1,
-		 null_data				:  1,
-		 mgmt_type				:  1,
-		 ctrl_type				:  1,
-		 more_data				:  1,
-		 eosp					:  1,
-		 a_msdu_error				:  1,
-		 reserved_16b				:  1,
-		 order					:  1,
-		 wifi_parser_error			:  1,
-		 overflow_err				:  1,
-		 msdu_length_err			:  1,
-		 tcp_udp_chksum_fail			:  1,
-		 ip_chksum_fail				:  1,
-		 sa_idx_invalid				:  1,
-		 da_idx_invalid				:  1,
-		 amsdu_addr_mismatch			:  1,
-		 rx_in_tx_decrypt_byp			:  1,
-		 encrypt_required			:  1,
-		 directed				:  1,
-		 buffer_fragment			:  1,
-		 mpdu_length_err			:  1,
-		 tkip_mic_err				:  1,
-		 decrypt_err				:  1,
-		 unencrypted_frame_err			:  1,
-		 fcs_err				:  1;
-	uint32_t reserved_17a				: 10,
-		 decrypt_status_code			:  3,
-		 rx_bitmap_not_updated			:  1,
-		 reserved_17b				: 17,
-		 msdu_done				:  1;
-};
-
-struct rx_mpdu_start_compact {
-	uint32_t rx_reo_queue_desc_addr_39_32		:  8,
-		 receive_queue_number			: 16,
-		 pre_delim_err_warning			:  1,
-		 first_delim_err			:  1,
-		 reserved_0				:  6;
-	uint32_t pn_31_0				: 32;
-	uint32_t pn_63_32				: 32;
-	uint32_t pn_95_64				: 32;
-	uint32_t ast_index				: 16,
-		 sw_peer_id				: 16;
-	uint32_t mpdu_frame_control_valid		:  1,
-		 mpdu_duration_valid			:  1,
-		 mac_addr_ad1_valid			:  1,
-		 mac_addr_ad2_valid			:  1,
-		 mac_addr_ad3_valid			:  1,
-		 mac_addr_ad4_valid			:  1,
-		 mpdu_sequence_control_valid		:  1,
-		 mpdu_qos_control_valid			:  1,
-		 mpdu_ht_control_valid			:  1,
-		 frame_encryption_info_valid		:  1,
-		 mpdu_fragment_number			:  4,
-		 more_fragment_flag			:  1,
-		 reserved_7a				:  1,
-		 fr_ds					:  1,
-		 to_ds					:  1,
-		 encrypted				:  1,
-		 mpdu_retry				:  1,
-		 mpdu_sequence_number			: 12;
-	uint32_t mpdu_frame_control_field		: 16,
-		 mpdu_duration_field			: 16;
-	uint32_t mac_addr_ad1_31_0			: 32;
-	uint32_t mac_addr_ad1_47_32			: 16,
-		 mac_addr_ad2_15_0			: 16;
-	uint32_t mac_addr_ad2_47_16			: 32;
-	uint32_t mac_addr_ad3_31_0			: 32;
-	uint32_t mac_addr_ad3_47_32			: 16,
-		 mpdu_sequence_control_field		: 16;
-};
-#else
-struct rx_msdu_end_compact {
-	uint32_t ip_chksum_fail_copy			:  1,
-		 fr_ds					:  1,
-		 last_msdu				:  1,
-		 first_msdu				:  1,
-		 l3_header_padding			:  2,
-		 da_is_mcbc				:  1,
-		 da_is_valid				:  1,
-		 sa_is_valid				:  1,
-		 tid					:  4,
-		 to_ds					:  1,
-		 da_idx_timeout				:  1,
-		 sa_idx_timeout				:  1,
-		 sa_sw_peer_id				: 16;
-	uint32_t da_idx_or_sw_peer_id			: 16,
-		 sa_idx					: 16;
-	uint32_t fragment_flag				:  1,
-		 vlan_stag_stripped			:  1,
-		 vlan_ctag_stripped			:  1,
-		 mesh_sta				:  2,
-		 use_ppe				:  1,
-		 flow_idx				: 20,
-		 reo_destination_indication		:  5,
-		 msdu_drop				:  1;
-	uint32_t fse_metadata				: 32;
-	uint32_t tcp_udp_chksum				: 16,
-		 cce_metadata				: 16;
-	uint32_t cumulative_ip_length			: 16,
-		 amsdu_parser_error			:  1,
-		 cce_match				:  1,
-		 flow_idx_invalid			:  1,
-		 flow_idx_timeout			:  1,
-		 msdu_limit_error			:  1,
-		 tcp_udp_chksum_fail_copy		:  1,
-		 fisa_timeout				:  1,
-		 flow_aggregation_continuation		:  1,
-		 aggregation_count			:  8;
-	uint32_t reserved_8a				: 24,
-		 key_id_octet				:  8;
-	uint32_t reserved_9b				:  8,
-		 dest_chip_pmac_id			:  1,
-		 wds_keep_alive_event			:  1,
-		 wds_roaming_event			:  1,
-		 wds_learning_event			:  1,
-		 multicast_echo				:  1,
-		 dest_chip_id				:  2,
-		 intra_bss				:  1,
-		 priority_valid				:  1,
-		 service_code				:  9,
-		 reserved_9a				:  6;
-	uint32_t l4_offset				:  8,
-		 ipsec_ah				:  1,
-		 l3_offset				:  7,
-		 ipsec_esp				:  1,
-		 stbc					:  1,
-		 msdu_length				: 14;
-	uint32_t ip4_protocol_ip6_next_header		:  8,
-		 ldpc					:  1,
-		 mesh_control_present			:  1,
-		 tcp_udp_header_valid			:  1,
-		 ip_extn_header_valid			:  1,
-		 ip_fixed_header_valid			:  1,
-		 toeplitz_hash_sel			:  2,
-		 da_is_bcast_mcast			:  1,
-		 tcp_only_ack				:  1,
-		 ip_frag				:  1,
-		 udp_proto				:  1,
-		 tcp_proto				:  1,
-		 ipv6_proto				:  1,
-		 ipv4_proto				:  1,
-		 decap_format				:  2,
-		 msdu_number				:  8;
-	uint32_t vlan_stag_ci				: 16,
-		 vlan_ctag_ci				: 16;
-	uint32_t peer_meta_data				: 32;
-	uint32_t msdu_done_copy				:  1,
-		 mimo_ss_bitmap				:  7,
-		 reception_type				:  3,
-		 receive_bandwidth			:  3,
-		 rate_mcs				:  4,
-		 sgi					:  2,
-		 pkt_type				:  4,
-		 user_rssi				:  8;
-	uint32_t flow_id_toeplitz			: 32;
-	uint32_t ppdu_start_timestamp_63_32;
-	uint32_t sw_phy_meta_data			: 32;
-	uint32_t fcs_err				:  1,
-		 unencrypted_frame_err			:  1,
-		 decrypt_err				:  1,
-		 tkip_mic_err				:  1,
-		 mpdu_length_err			:  1,
-		 buffer_fragment			:  1,
-		 directed				:  1,
-		 encrypt_required			:  1,
-		 rx_in_tx_decrypt_byp			:  1,
-		 amsdu_addr_mismatch			:  1,
-		 da_idx_invalid				:  1,
-		 sa_idx_invalid				:  1,
-		 ip_chksum_fail				:  1,
-		 tcp_udp_chksum_fail			:  1,
-		 msdu_length_err			:  1,
-		 overflow_err				:  1,
-		 wifi_parser_error			:  1,
-		 order					:  1,
-		 reserved_16b				:  1,
-		 a_msdu_error				:  1,
-		 eosp					:  1,
-		 more_data				:  1,
-		 ctrl_type				:  1,
-		 mgmt_type				:  1,
-		 null_data				:  1,
-		 non_qos				:  1,
-		 power_mgmt				:  1,
-		 ast_index_timeout			:  1,
-		 ast_index_not_found			:  1,
-		 mcast_bcast				:  1,
-		 reserved_16a				:  1,
-		 first_mpdu				:  1;
-	uint32_t msdu_done				:  1,
-		 reserved_17b				: 17,
-		 rx_bitmap_not_updated			:  1,
-		 decrypt_status_code			:  3,
-		 reserved_17a				: 10;
-};
-
-struct rx_mpdu_start_compact {
-	uint32_t reserved_0				:  6,
-		 first_delim_err			:  1,
-		 pre_delim_err_warning			:  1,
-		 receive_queue_number			: 16,
-		 rx_reo_queue_desc_addr_39_32		:  8;
-	uint32_t pn_31_0				: 32;
-	uint32_t pn_63_32				: 32;
-	uint32_t pn_95_64				: 32;
-	uint32_t sw_peer_id				: 16,
-		 ast_index				: 16;
-	uint32_t mpdu_sequence_number			: 12,
-		 mpdu_retry				:  1,
-		 encrypted				:  1,
-		 to_ds					:  1,
-		 fr_ds					:  1,
-		 reserved_7a				:  1,
-		 more_fragment_flag			:  1,
-		 mpdu_fragment_number			:  4,
-		 frame_encryption_info_valid		:  1,
-		 mpdu_ht_control_valid			:  1,
-		 mpdu_qos_control_valid			:  1,
-		 mpdu_sequence_control_valid		:  1,
-		 mac_addr_ad4_valid			:  1,
-		 mac_addr_ad3_valid			:  1,
-		 mac_addr_ad2_valid			:  1,
-		 mac_addr_ad1_valid			:  1,
-		 mpdu_duration_valid			:  1,
-		 mpdu_frame_control_valid		:  1;
-	uint32_t mpdu_duration_field			: 16,
-		 mpdu_frame_control_field		: 16;
-	uint32_t mac_addr_ad1_31_0			: 32;
-	uint32_t mac_addr_ad2_15_0			: 16,
-		 mac_addr_ad1_47_32			: 16;
-	uint32_t mac_addr_ad2_47_16			: 32;
-	uint32_t mac_addr_ad3_31_0			: 32;
-	uint32_t mpdu_sequence_control_field		: 16,
-		 mac_addr_ad3_47_32			: 16;
-};
-#endif
 #define RX_BE_PADDING0_BYTES 4
 
 typedef struct rx_mpdu_start_compact hal_rx_mpdu_start_t;
 typedef struct rx_msdu_end_compact hal_rx_msdu_end_t;
+typedef struct rx_mpdu_start_compact hal_rx_mpdu_start_info_t;
 
 struct rx_mpdu_start_tlv {
 	hal_rx_mpdu_start_t rx_mpdu_start;
 };
 
+#ifdef BE_NON_AP_COMPACT_TLV
+struct rx_msdu_end_tlv {
+	hal_rx_msdu_end_t rx_msdu_end;
+};
+#else
 struct rx_msdu_end_tlv {
 	TLV_TAG_T tag;					/* TLV_TAG_T B */
 	hal_rx_msdu_end_t rx_msdu_end;
 };
+#endif
 
 struct rx_pkt_tlvs {
 	struct rx_msdu_end_tlv   msdu_end_tlv;		/*  80 bytes */
@@ -423,6 +103,7 @@ struct rx_pkt_tlvs {
 #else /* CONFIG_WORD_BASED_TLV */
 typedef struct rx_mpdu_start hal_rx_mpdu_start_t;
 typedef struct rx_msdu_end hal_rx_msdu_end_t;
+typedef struct rx_mpdu_info hal_rx_mpdu_start_info_t;
 
 #define RX_BE_PADDING0_BYTES 8
 /*
@@ -478,9 +159,6 @@ struct rx_pkt_tlvs {
 #define HAL_RX_REO_QUEUE_DESC_ADDR_31_0_GET(_rx_pkt_tlv)	\
 	HAL_RX_MPDU_START(_rx_pkt_tlv).rx_reo_queue_desc_addr_31_0
 
-#define HAL_RX_TLV_AMPDU_FLAG_GET(_rx_pkt_tlv)		\
-	HAL_RX_MPDU_START(_rx_pkt_tlv).ampdu_flag
-
 #define HAL_RX_TLV_MPDU_PN_127_96_GET(_rx_pkt_tlv)	\
 	HAL_RX_MPDU_START(_rx_pkt_tlv).pn_127_96
 
@@ -490,14 +168,8 @@ struct rx_pkt_tlvs {
 #define HAL_RX_TLV_FIRST_MPDU_GET(_rx_pkt_tlv)		\
 	HAL_RX_MPDU_START(_rx_pkt_tlv).first_mpdu
 
-#define HAL_RX_TLV_L3_TYPE_GET(_rx_pkt_tlv)	\
-	HAL_RX_MSDU_END(_rx_pkt_tlv).l3_type
-
 #define HAL_RX_GET_PPDU_ID(_rx_pkt_tlv)	\
 	HAL_RX_MPDU_START(_rx_pkt_tlv).phy_ppdu_id
-
-#define HAL_RX_TLV_PHY_PPDU_ID_GET(_rx_pkt_tlv)		\
-	HAL_RX_MSDU_END(_rx_pkt_tlv).phy_ppdu_id
 
 #define HAL_RX_GET_FILTER_CATEGORY(_rx_pkt_tlv) \
 	HAL_RX_MPDU_START(_rx_pkt_tlv).rxpcu_mpdu_filter_in_category
@@ -515,26 +187,9 @@ struct rx_pkt_tlvs {
 	HAL_RX_PKT_HDR_TLV(_rx_pkt_tlv).phy_ppdu_id
 #endif
 
-/**
- * struct rx_mon_pkt_tlvs - RX packet data structure for DEST ring in the
- *			    monitor mode.
- * @msdu_end_tlv: MSDU end TLV
- * @rx_padding0: Padding bytes
- * @mpdu_start_tlv: MPDU start TLV
- * @pkt_hdr_tlv: 802.11 packet header TLV
- */
-struct rx_mon_pkt_tlvs {
-	struct rx_msdu_end_tlv msdu_end_tlv;		/* 128B + sizeof(tag) */
-	uint8_t rx_padding0[RX_BE_PADDING0_BYTES];	/* 8B */
-	struct rx_mpdu_start_tlv mpdu_start_tlv;	/* 120B + sizeof(tag) */
-	struct rx_pkt_hdr_tlv pkt_hdr_tlv;		/* 120B + sizeof(tag) */
-};
-
 #define SIZE_OF_DATA_RX_TLV sizeof(struct rx_pkt_tlvs)
-#define SIZE_OF_MON_DATA_RX_TLV sizeof(struct rx_mon_pkt_tlvs)
 
 #define RX_PKT_TLVS_LEN		SIZE_OF_DATA_RX_TLV
-#define MON_RX_PKT_TLVS_LEN	SIZE_OF_MON_DATA_RX_TLV
 
 #define RX_PKT_TLV_OFFSET(field) qdf_offsetof(struct rx_pkt_tlvs, field)
 
@@ -543,6 +198,12 @@ struct rx_mon_pkt_tlvs {
 
 #define HAL_RX_TLV_DECAP_FORMAT_GET(_rx_pkt_tlv)	\
 	HAL_RX_MSDU_END(_rx_pkt_tlv).decap_format
+
+#define HAL_RX_TLV_PHY_PPDU_ID_GET(_rx_pkt_tlv)		\
+	HAL_RX_MSDU_END(_rx_pkt_tlv).phy_ppdu_id
+
+#define HAL_RX_TLV_AMPDU_FLAG_GET(_rx_pkt_tlv)		\
+	HAL_RX_MPDU_START(_rx_pkt_tlv).ampdu_flag
 
 #ifdef RECEIVE_OFFLOAD
 #define HAL_RX_TLV_GET_TCP_PURE_ACK(_rx_pkt_tlv) \
@@ -618,6 +279,9 @@ struct rx_mon_pkt_tlvs {
 #define HAL_RX_TLV_IP_CSUM_FAIL_GET(_rx_pkt_tlv)	\
 	HAL_RX_MSDU_END(_rx_pkt_tlv).ip_chksum_fail
 
+#define HAL_RX_TLV_IP_FRAG_GET(_rx_pkt_tlv)	\
+	HAL_RX_MSDU_END(_rx_pkt_tlv).ip_frag
+
 #define HAL_RX_TLV_TCP_UDP_CSUM_FAIL_GET(_rx_pkt_tlv)	\
 	HAL_RX_MSDU_END(_rx_pkt_tlv).tcp_udp_chksum_fail
 
@@ -634,6 +298,12 @@ struct rx_mon_pkt_tlvs {
 /*
  * LRO information needed from the TLVs
  */
+#if defined(CONFIG_WORD_BASED_TLV) && defined(BE_NON_AP_COMPACT_TLV)
+#define HAL_RX_TLV_GET_LRO_ELIGIBLE(_rx_pkt_tlv)	0
+#define HAL_RX_TLV_GET_TCP_ACK(_rx_pkt_tlv)	0
+#define HAL_RX_TLV_GET_TCP_SEQ(_rx_pkt_tlv)	0
+#define HAL_RX_TLV_GET_TCP_WIN(_rx_pkt_tlv)	0
+#else
 #define HAL_RX_TLV_GET_LRO_ELIGIBLE(_rx_pkt_tlv) \
 	HAL_RX_MSDU_END(_rx_pkt_tlv).lro_eligible
 
@@ -646,14 +316,13 @@ struct rx_mon_pkt_tlvs {
 #define HAL_RX_TLV_GET_TCP_WIN(_rx_pkt_tlv) \
 	HAL_RX_MSDU_END(_rx_pkt_tlv).window_size
 #endif
+#endif
 
 #define HAL_RX_TLV_L3_TYPE_GET(_rx_pkt_tlv)	\
 	HAL_RX_MSDU_END(_rx_pkt_tlv).l3_type
 
-#ifdef RX_MSDU_END_PEER_META_DATA_OFFSET
 #define HAL_RX_TLV_MSDU_PEER_META_DATA_GET(_rx_pkt_tlv)	\
 	HAL_RX_MSDU_END(_rx_pkt_tlv).peer_meta_data
-#endif
 
 #define HAL_RX_TLV_PEER_META_DATA_GET(_rx_pkt_tlv)	\
 	HAL_RX_MPDU_START(_rx_pkt_tlv).peer_meta_data
@@ -872,19 +541,6 @@ static inline bool hal_rx_msdu_cce_match_get_be(uint8_t *buf)
 	return HAL_RX_TLV_CCE_MATCH_GET(rx_pkt_tlvs);
 }
 
-#ifdef RX_MSDU_END_PEER_META_DATA_OFFSET
-/*
- * Get peer_meta_data from RX_MSDU_END
- */
-
-static inline uint32_t hal_rx_msdu_peer_meta_data_get_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-
-	return HAL_RX_TLV_MSDU_PEER_META_DATA_GET(rx_pkt_tlvs);
-}
-#endif
-
 /**
  * hal_rx_mpdu_get_addr1_be() - API to check get address1 of the mpdu
  * @buf: pointer to the start of RX PKT TLV headera
@@ -961,8 +617,8 @@ static inline void hal_rx_print_pn_be(uint8_t *buf)
 	uint32_t pn_95_64 = HAL_RX_TLV_MPDU_PN_95_64_GET(rx_pkt_tlvs);
 	uint32_t pn_127_96 = HAL_RX_TLV_MPDU_PN_127_96_GET(rx_pkt_tlvs);
 
-	hal_debug("PN number pn_127_96 0x%x pn_95_64 0x%x pn_63_32 0x%x pn_31_0 0x%x",
-		  pn_127_96, pn_95_64, pn_63_32, pn_31_0);
+	hal_err_rl("pn_127_96 0x%x pn_95_64 0x%x pn_63_32 0x%x pn_31_0 0x%x",
+		   pn_127_96, pn_95_64, pn_63_32, pn_31_0);
 }
 
 static inline void hal_rx_tlv_get_pn_num_be(uint8_t *buf, uint64_t *pn_num)
@@ -1045,20 +701,6 @@ static inline void hal_rx_priv_info_get_from_tlv_be(uint8_t *buf,
 }
 
 /**
- * hal_rx_tlv_l3_type_get_be() - API to get the l3 type from
- *                               rx_msdu_start TLV
- * @buf: pointer to the start of RX PKT TLV headers
- *
- * Return: uint32_t(l3 type)
- */
-static inline uint32_t hal_rx_tlv_l3_type_get_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-
-	return HAL_RX_TLV_L3_TYPE_GET(rx_pkt_tlvs);
-}
-
-/**
  * hal_rx_hw_desc_get_ppduid_get_be() - retrieve ppdu id
  * @rx_tlv_hdr: start address of rx_pkt_tlvs
  * @rxdma_dst_ring_desc: Rx HW descriptor
@@ -1113,32 +755,6 @@ hal_rx_get_ppdu_id_be(uint8_t *buf)
 	return HAL_RX_GET_PPDU_ID(rx_pkt_tlvs);
 }
 
-/**
- * hal_rx_mpdu_peer_meta_data_set_be() - set peer meta data in RX mpdu start tlv
- * @buf: rx_tlv_hdr of the received packet
- * @peer_mdata: peer meta data to be set.
- *
- * Return: void
- */
-static inline void
-hal_rx_mpdu_peer_meta_data_set_be(uint8_t *buf, uint32_t peer_mdata)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-
-	HAL_RX_TLV_PEER_META_DATA_GET(rx_pkt_tlvs) = peer_mdata;
-}
-
-/*
- * Get peer_meta_data from RX_MPDU_INFO within RX_MPDU_START
- */
-
-static inline uint32_t hal_rx_mpdu_peer_meta_data_get_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-
-	return HAL_RX_TLV_PEER_META_DATA_GET(rx_pkt_tlvs);
-}
-
 static inline uint8_t hal_rx_get_filter_category_be(uint8_t *buf)
 {
 	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
@@ -1174,49 +790,6 @@ static inline bool hal_rx_is_unicast_be(uint8_t *buf)
 }
 
 /**
- * hal_rx_priv_info_set_in_tlv_be() - Save the private info to
- *                             the reserved bytes of rx_tlv_hdr
- * @buf: start of rx_tlv_hdr
- * @priv_data: hal_wbm_err_desc_info structure
- * @len: length of the private data
- *
- * Return: void
- */
-static inline void hal_rx_priv_info_set_in_tlv_be(uint8_t *buf,
-						  uint8_t *priv_data,
-						  uint32_t len)
-{
-	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-	uint32_t copy_len = (len > RX_BE_PADDING0_BYTES) ?
-			    RX_BE_PADDING0_BYTES : len;
-
-	qdf_mem_copy(&(HAL_RX_MSDU_END(pkt_tlvs).ppdu_start_timestamp_63_32),
-		     priv_data, copy_len);
-}
-
-/**
- * hal_rx_priv_info_get_from_tlv_be() - retrieve the private data from
- *                             the reserved bytes of rx_tlv_hdr.
- * @buf: start of rx_tlv_hdr
- * @priv_data: Handle to get the private data, output parameter.
- * @len: length of the private data
- *
- * Return: void
- */
-static inline void hal_rx_priv_info_get_from_tlv_be(uint8_t *buf,
-						    uint8_t *priv_data,
-						    uint32_t len)
-{
-	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-	uint32_t copy_len = (len > RX_BE_PADDING0_BYTES) ?
-			    RX_BE_PADDING0_BYTES : len;
-
-	qdf_mem_copy(priv_data,
-		     &(HAL_RX_MSDU_END(pkt_tlvs).ppdu_start_timestamp_63_32),
-		     copy_len);
-}
-
-/**
  * hal_rx_print_pn_be() - Prints the PN of rx packet.
  * @buf: rx_tlv_hdr of the received packet
  *
@@ -1230,8 +803,8 @@ static inline void hal_rx_print_pn_be(uint8_t *buf)
 	uint32_t pn_63_32 = HAL_RX_TLV_MPDU_PN_63_32_GET(rx_pkt_tlvs);
 	uint32_t pn_95_64 = HAL_RX_TLV_MPDU_PN_95_64_GET(rx_pkt_tlvs);
 
-	hal_debug("PN number pn_95_64 0x%x pn_63_32 0x%x pn_31_0 0x%x",
-		  pn_95_64, pn_63_32, pn_31_0);
+	hal_err_rl("PN number pn_95_64 0x%x pn_63_32 0x%x pn_31_0 0x%x",
+		   pn_95_64, pn_63_32, pn_31_0);
 }
 
 static inline void hal_rx_tlv_get_pn_num_be(uint8_t *buf, uint64_t *pn_num)
@@ -1354,24 +927,6 @@ static inline uint32_t hal_rx_tlv_rate_mcs_get_be(uint8_t *buf)
 }
 
 /**
- * hal_rx_msdu_get_keyid_be() - API to get the key id of the decrypted packet
- *                              from rx_msdu_end
- * @buf: pointer to the start of RX PKT TLV header
- *
- * Return: uint32_t(key id)
- */
-
-static inline uint8_t hal_rx_msdu_get_keyid_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-	uint32_t keyid_octet;
-
-	keyid_octet = HAL_RX_TLV_KEYID_OCTET_GET(rx_pkt_tlvs);
-
-	return keyid_octet & 0x3;
-}
-
-/**
  * hal_rx_tlv_get_rssi_be() - API to get the rssi of received pkt from
  *                            rx_msdu_start
  * @buf: pointer to the start of RX PKT TLV header
@@ -1388,25 +943,6 @@ static inline uint32_t hal_rx_tlv_get_rssi_be(uint8_t *buf)
 
 	return rssi;
 }
-
-/**
- * hal_rx_tlv_get_freq_be() - API to get the frequency of operating
- *                            channel from rx_msdu_start
- * @buf: pointer to the start of RX PKT TLV header
- *
- * Return: uint32_t(frequency)
- */
-
-static inline uint32_t hal_rx_tlv_get_freq_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-	uint32_t freq;
-
-	freq = HAL_RX_TLV_FREQ_GET(rx_pkt_tlvs);
-
-	return freq;
-}
-
 
 /**
  * hal_rx_tlv_get_pkt_type_be() - API to get the pkt type from
@@ -1840,19 +1376,6 @@ static inline bool hal_rx_get_mpdu_mac_ad4_valid_be(uint8_t *buf)
 }
 
 /**
- * hal_rx_mpdu_start_sw_peer_id_get_be() - Retrieve sw peer_id
- * @buf: network buffer
- *
- * Return: sw peer_id
- */
-static inline uint32_t hal_rx_mpdu_start_sw_peer_id_get_be(uint8_t *buf)
-{
-	struct rx_pkt_tlvs *rx_pkt_tlvs = (struct rx_pkt_tlvs *)buf;
-
-	return HAL_RX_TLV_SW_PEER_ID_GET(rx_pkt_tlvs);
-}
-
-/**
  * hal_rx_mpdu_get_to_ds_be() - API to get the tods info
  *                              from rx_mpdu_start
  *
@@ -2166,7 +1689,8 @@ uint16_t hal_rx_get_rx_sequence_be(uint8_t *buf)
 }
 
 #ifdef RECEIVE_OFFLOAD
-#ifdef QCA_WIFI_KIWI_V2
+#if defined(QCA_WIFI_KIWI_V2) || defined(QCA_WIFI_WCN7750) || \
+	defined(QCA_WIFI_QCC2072)
 static inline
 uint16_t hal_rx_get_fisa_cumulative_l4_checksum_be(uint8_t *buf)
 {
@@ -2316,9 +1840,6 @@ static inline  uint32_t hal_rx_pkt_tlv_offset_get_generic(void)
 #endif
 
 #ifdef CONFIG_WORD_BASED_TLV
-#define MPDU_START_WMASK 0x074C
-#define MSDU_END_WMASK 0x13FC1
-
 /**
  * hal_rx_mpdu_start_wmask_get_be() - API to get the mpdu_start_tlv word mask
  *
@@ -2474,18 +1995,20 @@ static inline uint8_t *hal_rx_pkt_hdr_get_be(uint8_t *buf)
  * @rx_tlv_hdr: start address of rx_tlv_hdr
  * @ip_csum_err: buffer to return ip_csum_fail flag
  * @tcp_udp_csum_err: placeholder to return tcp-udp checksum fail flag
+ * @ip_frag: fragment IP flag
  *
  * Return: None
  */
 static inline void
 hal_rx_tlv_csum_err_get_be(uint8_t *rx_tlv_hdr, uint32_t *ip_csum_err,
-			   uint32_t *tcp_udp_csum_err)
+			   uint32_t *tcp_udp_csum_err, uint32_t *ip_frag)
 {
 	struct rx_pkt_tlvs *rx_pkt_tlvs =
 					(struct rx_pkt_tlvs *)rx_tlv_hdr;
 
 	*ip_csum_err = HAL_RX_TLV_IP_CSUM_FAIL_GET(rx_pkt_tlvs);
 	*tcp_udp_csum_err = HAL_RX_TLV_TCP_UDP_CSUM_FAIL_GET(rx_pkt_tlvs);
+	*ip_frag = HAL_RX_TLV_IP_FRAG_GET(rx_pkt_tlvs);
 }
 
 static inline
@@ -2583,5 +2106,40 @@ hal_rx_msdu_end_sa_sw_peer_id_get_be(uint8_t *buf)
 	hal_rx_msdu_end_t *msdu_end = &pkt_tlvs->msdu_end_tlv.rx_msdu_end;
 
 	return HAL_RX_MSDU_END_SA_SW_PEER_ID_GET(msdu_end);
+}
+
+/**
+ * hal_rx_parse_eht_sig_hdr_be()
+ *				    - process eht sig header
+ * @hal_soc: HAL soc handle
+ * @tlv: pointer to EHT SIG TLV buffer
+ * @ppdu_info_handle: pointer to ppdu_info
+ *
+ * Return: None
+ */
+static inline
+void hal_rx_parse_eht_sig_hdr_be(struct hal_soc *hal_soc, uint8_t *tlv,
+				 void *ppdu_info_handle)
+{
+	struct hal_rx_ppdu_info *ppdu_info  = ppdu_info_handle;
+
+	ppdu_info->rx_status.eht_flags = 1;
+
+	if (hal_rx_is_frame_type_ndp(hal_soc, ppdu_info))
+		hal_rx_parse_eht_sig_ndp(hal_soc, tlv, ppdu_info);
+	else if (hal_rx_is_non_ofdma(hal_soc, ppdu_info))
+		hal_rx_parse_eht_sig_non_ofdma_be(hal_soc, tlv, ppdu_info);
+	else if (hal_rx_is_ofdma(hal_soc, ppdu_info))
+		hal_rx_parse_eht_sig_ofdma_be(hal_soc, tlv, ppdu_info);
+}
+
+static inline
+void hal_rx_ru_info_details_be(void *rx_tlv_hdr, void *ppdu_info_hdl)
+{
+}
+
+static inline
+void hal_rx_proc_phyrx_all_sigb_tlv_be(void *rx_tlv_hdr, void *ppdu_info_hdl)
+{
 }
 #endif /* _HAL_BE_RX_TLV_H_ */

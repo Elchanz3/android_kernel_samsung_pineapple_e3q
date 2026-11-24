@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -145,6 +145,25 @@ dp_tx_comp_get_params_from_hal_desc_be(struct dp_soc *soc,
 				       void *tx_comp_hal_desc,
 				       struct dp_tx_desc_s **r_tx_desc);
 
+#ifdef DP_TX_COMP_RING_DESC_SANITY_CHECK
+/**
+ * dp_srng_tx_comp_ring_desc_mark_invalid(): mark descriptors in tx comp ring
+ *                                           invalid during allocation
+ * @soc: DP soc handle
+ * @srng: DP srng handle of tx completion ring
+ *
+ * Return: None
+ */
+void dp_srng_tx_comp_ring_desc_mark_invalid(struct dp_soc *soc,
+					    struct dp_srng *srng);
+#else
+static inline
+void dp_srng_tx_comp_ring_desc_mark_invalid(struct dp_soc *soc,
+					    struct dp_srng *srng)
+{
+}
+#endif
+
 /**
  * dp_tx_process_htt_completion_be() - Tx HTT Completion Indication Handler
  * @soc: Handle to DP soc structure
@@ -280,9 +299,10 @@ void dp_tx_mlo_mcast_handler_be(struct dp_soc *soc,
  */
 bool dp_tx_mlo_is_mcast_primary_be(struct dp_soc *soc,
 				   struct dp_vdev *vdev);
-#ifdef WLAN_MCAST_MLO
-#ifdef WLAN_MLO_MULTI_CHIP
-#ifdef CONFIG_MLO_SINGLE_DEV
+
+#if defined(WLAN_MCAST_MLO) && defined(WLAN_MLO_MULTI_CHIP) || \
+	defined(WLAN_MCAST_MLO_SAP)
+#if defined(CONFIG_MLO_SINGLE_DEV) || defined(WLAN_MCAST_MLO_SAP)
 /**
  * dp_tx_mlo_mcast_send_be() - Tx send handler for mlo mcast enhance
  * @soc: DP soc handle
@@ -310,7 +330,6 @@ qdf_nbuf_t dp_tx_mlo_mcast_send_be(struct dp_soc *soc, struct dp_vdev *vdev,
 void dp_tx_mlo_mcast_pkt_send(struct dp_vdev_be *be_vdev,
 			      struct dp_vdev *ptnr_vdev,
 			      void *arg);
-#endif
 #endif
 #endif
 
@@ -371,4 +390,77 @@ QDF_STATUS dp_tx_desc_pool_alloc_be(struct dp_soc *soc, uint32_t num_elem,
  * Return: none
  */
 void dp_tx_desc_pool_free_be(struct dp_soc *soc, uint8_t pool_id);
+
+/**
+ * dp_tx_comp_handler_be()- Handle tx completions for wbm2sw ring
+ * @int_ctx: Interrupt context
+ * @soc: Handle to DP Soc structure
+ * @hal_ring_hdl: TX completion ring handle
+ * @ring_id: TX completion ring number
+ * @quota: Max number of tx completions to process
+ *
+ * Return: Number of tx completions processed
+ */
+uint32_t dp_tx_comp_handler_be(struct dp_intr *int_ctx, struct dp_soc *soc,
+			       hal_ring_handle_t hal_ring_hdl,
+			       uint8_t ring_id, uint32_t quota);
+
+/**
+ * dp_mlo_tx_pool_map_be() - Check whether need to remap tx desc pool
+ * for mlo case.
+ *
+ * @soc: dp soc handle
+ * @vdev_id: dp vdev id
+ * @mod_id: module id which is requesting the reference
+ *
+ * Return: true if pool already remap and not need create,
+ *         otherwise return false.
+ */
+bool dp_mlo_tx_pool_map_be(struct dp_soc *soc,
+			   uint8_t vdev_id,
+			   enum dp_mod_id mod_id);
+
+/**
+ * dp_mlo_tx_pool_unmap_be() - Check whether need to unmap tx desc pool
+ * for mlo case.
+ *
+ * @soc: dp soc handle
+ * @vdev_id: dp vdev id
+ * @new_id: output the new pool id that will be deleted
+ * @mod_id: module id which is requesting the reference
+ *
+ * Return: true if pool not need unmap, otherwise return false.
+ */
+bool dp_mlo_tx_pool_unmap_be(struct dp_soc *soc,
+			     uint8_t vdev_id,
+			     uint8_t *new_id,
+			     enum dp_mod_id mod_id);
+
+/**
+ * dp_tx_override_flow_pool_id_be() - Override the pool id of the tx desc pool
+ * @vdev: dp vdev
+ * @queue: queue ids container for nbuf
+ *
+ * Return: None
+ */
+void
+dp_tx_override_flow_pool_id_be(struct dp_vdev *vdev,
+			       struct dp_tx_queue *queue);
+/**
+ * dp_update_ppeds_tx_comp_stats() - Update PPeds Tx completion stats
+ * @soc: dp soc handle
+ * @txrx_peer: txrx peer handle
+ * @ts: Completion stats buffer
+ * @desc: Tx descriptor
+ * @ring_id: Ring id on which buffer is received
+ * @comp_index: Completion status position index
+ *
+ * Return: None
+ */
+void
+dp_update_ppeds_tx_comp_stats(struct dp_soc *soc,
+			      struct dp_txrx_peer *txrx_peer,
+			      struct hal_tx_completion_status *ts,
+			      struct dp_tx_desc_s *desc,
+			      uint8_t ring_id, uint16_t comp_index);
 #endif

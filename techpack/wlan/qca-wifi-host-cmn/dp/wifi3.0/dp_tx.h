@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -35,23 +35,37 @@
 #ifdef CONFIG_SAWF
 #include "dp_sawf.h"
 #endif
+#ifdef WLAN_SUPPORT_LAPB
+#include "wlan_dp_lapb_flow.h"
+#endif
 #include <qdf_pkt_add_timestamp.h>
 #include "dp_ipa.h"
 #ifdef IPA_OFFLOAD
 #include <wlan_ipa_obj_mgmt_api.h>
 #endif
-
-#define DP_INVALID_VDEV_ID 0xFF
+#ifdef WLAN_SUPPORT_FLOW_PRIORTIZATION
+#include "wlan_dp_api.h"
+#endif
 
 #define DP_TX_MAX_NUM_FRAGS 6
 
 /* invalid peer id for reinject*/
 #define DP_INVALID_PEER 0XFFFE
 
+#define DP_GET_HW_LINK_ID_FRM_PPDU_ID(PPDU_ID, LINK_ID_OFFSET, LINK_ID_BITS) \
+	(((PPDU_ID) >> (LINK_ID_OFFSET)) & ((1 << (LINK_ID_BITS)) - 1))
+
 void dp_tx_nawds_handler(struct dp_soc *soc, struct dp_vdev *vdev,
 			 struct dp_tx_msdu_info_s *msdu_info,
 			 qdf_nbuf_t nbuf, uint16_t sa_peer_id);
 int dp_tx_proxy_arp(struct dp_vdev *vdev, qdf_nbuf_t nbuf);
+
+void dp_tx_update_eapol_comp_status_stats(struct dp_soc *soc,
+					  struct dp_vdev *vdev,
+					  qdf_nbuf_t nbuf,
+					  struct dp_txrx_peer *txrx_peer,
+					  uint8_t link_id, uint8_t tx_status,
+					  bool pairwise);
 /*
  * DP_TX_DESC_FLAG_FRAG flags should always be defined to 0x1
  * please do not change this flag's definition
@@ -76,6 +90,8 @@ int dp_tx_proxy_arp(struct dp_vdev *vdev, qdf_nbuf_t nbuf);
 #define DP_TX_DESC_FLAG_PPEDS		0x20000
 #define DP_TX_DESC_FLAG_FAST		0x40000
 #define DP_TX_DESC_FLAG_SPECIAL         0x80000
+#define DP_TX_DESC_FLAG_BCAST           0x100000
+#define DP_TX_DESC_FLAG_OPT_DP_CTRL           0x200000
 
 #define DP_TX_EXT_DESC_FLAG_METADATA_VALID 0x1
 
@@ -105,7 +121,7 @@ do {                                                           \
 #define MAX_CDP_SEC_TYPE 12
 
 /* number of dwords for htt_tx_msdu_desc_ext2_t */
-#define DP_TX_MSDU_INFO_META_DATA_DWORDS 7
+#define DP_TX_MSDU_INFO_META_DATA_DWORDS 9
 
 #define dp_tx_alert(params...) QDF_TRACE_FATAL(QDF_MODULE_ID_DP_TX, params)
 #define dp_tx_err(params...) QDF_TRACE_ERROR(QDF_MODULE_ID_DP_TX, params)
@@ -212,6 +228,7 @@ struct dp_tx_queue {
  * @buf_len:
  * @payload_addr:
  * @driver_ingress_ts: driver ingress timestamp
+ * @is_opt_dp_ctrl: opt_dp_ctrl pkt
  *
  * This structure holds the complete MSDU information needed to program the
  * Hardware TCL and MSDU extension descriptors for different frame types
@@ -231,13 +248,12 @@ struct dp_tx_msdu_info_s {
 	uint32_t meta_data[DP_TX_MSDU_INFO_META_DATA_DWORDS];
 	uint16_t ppdu_cookie;
 	uint8_t xmit_type;
-#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_MLO_MULTI_CHIP)
-#ifdef WLAN_MCAST_MLO
+#if defined(WLAN_FEATURE_11BE_MLO) && ((defined(WLAN_MLO_MULTI_CHIP) &&\
+	defined(WLAN_MCAST_MLO)) || defined(WLAN_MCAST_MLO_SAP))
 	uint16_t gsn;
 	uint8_t vdev_id;
 #endif
-#endif
-#ifdef WLAN_DP_FEATURE_SW_LATENCY_MGR
+#if defined(WLAN_DP_FEATURE_SW_LATENCY_MGR) || defined(WLAN_SUPPORT_LAPB)
 	uint8_t skip_hp_update;
 #endif
 #ifdef QCA_DP_TX_RMNET_OPTIMIZATION
@@ -246,6 +262,9 @@ struct dp_tx_msdu_info_s {
 #endif
 #ifdef WLAN_FEATURE_TX_LATENCY_STATS
 	qdf_ktime_t driver_ingress_ts;
+#endif
+#ifdef IPA_OPT_WIFI_DP_CTRL
+	bool is_opt_dp_ctrl;
 #endif
 };
 
@@ -533,6 +552,39 @@ static inline uint8_t dp_get_ext_tx_desc_pool_num(struct dp_soc *soc)
 }
 #endif
 
+#if defined(WLAN_MAX_PDEVS) && (WLAN_MAX_PDEVS == 1)
+static inline void dp_update_fw_rsn_cnt(struct dp_soc *soc, uint8_t ring_id,
+					uint8_t tx_status)
+{
+}
+static inline void dp_update_wbm_rsm_stats(struct dp_soc *soc, uint8_t ring_id,
+					   uint8_t buffer_src)
+{
+}
+static inline void dp_update_tqm_rsn_cnt(struct dp_soc *soc, uint8_t ring_id,
+					 uint8_t reason, uint8_t buffer_src)
+{
+}
+#else
+static inline void dp_update_fw_rsn_cnt(struct dp_soc *soc, uint8_t ring_id,
+					uint8_t tx_status)
+{
+	DP_STATS_INC(soc, tx.fw_rel_status_cnt[ring_id][tx_status], 1);
+}
+static inline void dp_update_wbm_rsm_stats(struct dp_soc *soc, uint8_t ring_id,
+					   uint8_t buffer_src)
+{
+	DP_STATS_INC(soc, tx.rsm_cnt[ring_id][buffer_src], 1);
+}
+static inline void dp_update_tqm_rsn_cnt(struct dp_soc *soc, uint8_t ring_id,
+					 uint8_t reason, uint8_t buffer_src)
+{
+	if (buffer_src == HAL_TX_COMP_RELEASE_SOURCE_TQM)
+		DP_STATS_INC(soc, tx.tqm_rr_cnt[ring_id][reason], 1);
+}
+#endif
+
+
 #ifndef QCA_HOST_MODE_WIFI_DISABLED
 /**
  * dp_tso_soc_attach() - TSO Attach handler
@@ -781,6 +833,7 @@ static inline QDF_STATUS dp_tx_pdev_init(struct dp_pdev *pdev)
  * @hal_ring_hdl: ring pointer
  * @last_prefetched_hw_desc: pointer to the last prefetched HW descriptor
  * @last_prefetched_sw_desc: pointer to last prefetch SW desc
+ * @last_hw_desc: pointer to last HW desc
  *
  * Return: None
  */
@@ -792,12 +845,17 @@ void dp_tx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
 				    hal_ring_handle_t hal_ring_hdl,
 				    void **last_prefetched_hw_desc,
 				    struct dp_tx_desc_s
-				    **last_prefetched_sw_desc)
+				    **last_prefetched_sw_desc,
+				    void *last_hw_desc)
 {
 	if (*last_prefetched_sw_desc) {
 		qdf_prefetch((uint8_t *)(*last_prefetched_sw_desc)->nbuf);
 		qdf_prefetch((uint8_t *)(*last_prefetched_sw_desc)->nbuf + 64);
 	}
+
+	if (qdf_unlikely(last_hw_desc &&
+			 (*last_prefetched_hw_desc == last_hw_desc)))
+		return;
 
 	if (num_avail_for_reap && *last_prefetched_hw_desc) {
 		soc->arch_ops.tx_comp_get_params_from_hal_desc(soc,
@@ -817,6 +875,37 @@ void dp_tx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
 					(uint8_t *)*last_prefetched_hw_desc);
 	}
 }
+
+/**
+ * dp_tx_check_if_more_desc_available() - check if more desc available
+ * @num_processed: Number of processed descriptors
+ * @quota: Quota for descriptors to process
+ * @hal_ring_hdl: ring pointer
+ * @hal_soc: HAL SOC handle
+ *
+ * Return: Number of descriptors available to process
+ */
+static inline
+uint32_t dp_tx_check_if_more_desc_available(
+					uint32_t num_processed,
+					uint32_t quota,
+					hal_ring_handle_t hal_ring_hdl,
+					hal_soc_handle_t hal_soc)
+{
+	uint32_t num_avail_for_reap = 0;
+
+	if (num_processed < quota) {
+		num_avail_for_reap = hal_srng_dst_num_valid(hal_soc,
+							    hal_ring_hdl, 1);
+		if (num_avail_for_reap > (quota - num_processed)) {
+			num_avail_for_reap = (quota - num_processed);
+			return num_avail_for_reap;
+		} else {
+			return num_avail_for_reap;
+		}
+	}
+	return 0;
+}
 #else
 static inline
 void dp_tx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
@@ -825,8 +914,19 @@ void dp_tx_prefetch_hw_sw_nbuf_desc(struct dp_soc *soc,
 				    hal_ring_handle_t hal_ring_hdl,
 				    void **last_prefetched_hw_desc,
 				    struct dp_tx_desc_s
-				    **last_prefetched_sw_desc)
+				    **last_prefetched_sw_desc,
+				    void *last_hw_desc)
 {
+}
+
+static inline
+uint32_t dp_tx_check_if_more_desc_available(
+					uint32_t num_processed,
+					uint32_t quota,
+					hal_ring_handle_t hal_ring_hdl,
+					hal_soc_handle_t hal_soc)
+{
+	return 0;
 }
 #endif
 
@@ -908,6 +1008,18 @@ static inline enum qdf_dp_tx_rx_status dp_tx_hw_to_qdf(uint16_t status)
 	}
 }
 
+/**
+ * dp_tx_override_flow_pool_id() - Override the pool id of the tx desc pool
+ * @soc: DP soc structure pointer
+ * @vdev: dp vdev
+ * @msdu_info: msdu information pointer
+ *
+ * Return: None
+ */
+void dp_tx_override_flow_pool_id(struct dp_soc *soc,
+				 struct dp_vdev *vdev,
+				 struct dp_tx_msdu_info_s *msdu_info);
+
 #ifndef QCA_HOST_MODE_WIFI_DISABLED
 /**
  * dp_tx_get_queue() - Returns Tx queue IDs to be used for this Tx frame
@@ -931,10 +1043,13 @@ static inline enum qdf_dp_tx_rx_status dp_tx_hw_to_qdf(uint16_t status)
 static inline void dp_tx_get_queue(struct dp_vdev *vdev,
 				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
 {
+	struct dp_soc *soc = vdev->pdev->soc;
+
 	queue->ring_id = qdf_get_cpu();
-	if (vdev->pdev->soc->wlan_cfg_ctx->ipa_enabled)
+	if (soc->wlan_cfg_ctx->ipa_enabled)
 		if ((queue->ring_id == IPA_TCL_DATA_RING_IDX) ||
-		    (queue->ring_id == IPA_TX_ALT_RING_IDX))
+		    ((queue->ring_id == IPA_TX_ALT_RING_IDX) &&
+		     wlan_cfg_is_ipa_two_tx_pipes_enabled(soc->wlan_cfg_ctx)))
 			queue->ring_id = 0;
 
 	queue->desc_pool_id = queue->ring_id;
@@ -952,26 +1067,12 @@ static inline void dp_tx_get_queue(struct dp_vdev *vdev,
 }
 #endif
 #else
-#ifdef WLAN_TX_PKT_CAPTURE_ENH
-static inline void dp_tx_get_queue(struct dp_vdev *vdev,
-				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
-{
-	if (qdf_unlikely(vdev->is_override_rbm_id))
-		queue->ring_id = vdev->rbm_id;
-	else
-		queue->ring_id = qdf_get_cpu();
-
-	queue->desc_pool_id = queue->ring_id;
-}
-#else
 static inline void dp_tx_get_queue(struct dp_vdev *vdev,
 				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
 {
 	queue->ring_id = qdf_get_cpu();
 	queue->desc_pool_id = queue->ring_id;
 }
-
-#endif
 #endif
 
 /**
@@ -993,18 +1094,57 @@ static inline hal_ring_handle_t dp_tx_get_hal_ring_hdl(struct dp_soc *soc,
 #else /* QCA_OL_TX_MULTIQ_SUPPORT */
 
 #ifdef TX_MULTI_TCL
-#ifdef IPA_OFFLOAD
+#if defined(IPA_OFFLOAD) && defined(WLAN_SUPPORT_LAPB)
+static inline void dp_tx_get_queue(struct dp_vdev *vdev,
+				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
+{
+	/* get flow id */
+	queue->desc_pool_id = DP_TX_GET_DESC_POOL_ID(vdev);
+
+	if (vdev->pdev->soc->wlan_cfg_ctx->ipa_enabled &&
+	    !ipa_config_is_opt_wifi_dp_enabled())
+		queue->ring_id = DP_TX_GET_RING_ID(vdev);
+	else if (wlan_cfg_is_lapb_enabled(vdev->pdev->soc->wlan_cfg_ctx)) {
+		if (wlan_dp_is_lapb_frame(vdev->pdev->soc, nbuf))
+			queue->ring_id =
+				    vdev->pdev->soc->num_tcl_data_rings - 1;
+		else
+			queue->ring_id = (qdf_nbuf_get_queue_mapping(nbuf) %
+				    (vdev->pdev->soc->num_tcl_data_rings - 1));
+	} else
+		queue->ring_id = (qdf_nbuf_get_queue_mapping(nbuf) %
+				  vdev->pdev->soc->num_tcl_data_rings);
+}
+#elif defined(IPA_OFFLOAD)
 static inline void dp_tx_get_queue(struct dp_vdev *vdev,
 				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
 {
 	/* get flow id */
 	queue->desc_pool_id = DP_TX_GET_DESC_POOL_ID(vdev);
 	if (vdev->pdev->soc->wlan_cfg_ctx->ipa_enabled &&
-	    !ipa_config_is_opt_wifi_dp_enabled())
+	    !wlan_ipa_config_is_opt_wifi_dp_enabled())
 		queue->ring_id = DP_TX_GET_RING_ID(vdev);
 	else
 		queue->ring_id = (qdf_nbuf_get_queue_mapping(nbuf) %
 					vdev->pdev->soc->num_tcl_data_rings);
+}
+#elif defined(WLAN_SUPPORT_LAPB)
+static inline void dp_tx_get_queue(struct dp_vdev *vdev,
+				   qdf_nbuf_t nbuf, struct dp_tx_queue *queue)
+{
+	/* get flow id */
+	queue->desc_pool_id = DP_TX_GET_DESC_POOL_ID(vdev);
+
+	if (wlan_cfg_is_lapb_enabled(vdev->pdev->soc->wlan_cfg_ctx)) {
+		if (wlan_dp_is_lapb_frame(vdev->pdev->soc, nbuf))
+			queue->ring_id =
+				    vdev->pdev->soc->num_tcl_data_rings - 1;
+		else
+			queue->ring_id = (qdf_nbuf_get_queue_mapping(nbuf) %
+				    (vdev->pdev->soc->num_tcl_data_rings - 1));
+	} else
+		queue->ring_id = (qdf_nbuf_get_queue_mapping(nbuf) %
+				  vdev->pdev->soc->num_tcl_data_rings);
 }
 #else
 static inline void dp_tx_get_queue(struct dp_vdev *vdev,
@@ -1101,6 +1241,17 @@ static inline void dp_tx_hal_ring_access_end_reap(struct dp_soc *soc,
 #define DP_TX_TID_OVERRIDE(_msdu_info, _nbuf)
 #endif
 
+#ifdef WLAN_SUPPORT_FLOW_PRIORTIZATION
+#define DP_FLOW_TX_TID_OVERRIDE(_msdu_info, _nbuf) \
+	do { \
+		uint8_t tid = 0; \
+		if (qdf_unlikely(wlan_dp_fpm_is_tid_override(_nbuf, &tid))) { \
+			(_msdu_info)->tid = tid; \
+		} \
+	} while (0)
+#else
+#define DP_FLOW_TX_TID_OVERRIDE(_msdu_info, _nbuf)
+#endif
 /* TODO TX_FEATURE_NOT_YET */
 static inline void dp_tx_comp_process_exception(struct dp_tx_desc_s *tx_desc)
 {
@@ -1364,7 +1515,7 @@ dp_send_completion_to_pkt_capture(struct dp_soc *soc,
 #endif
 
 #ifndef QCA_HOST_MODE_WIFI_DISABLED
-#ifdef WLAN_DP_FEATURE_SW_LATENCY_MGR
+#if defined WLAN_DP_FEATURE_SW_LATENCY_MGR || defined WLAN_SUPPORT_LAPB
 /**
  * dp_tx_update_stats() - Update soc level tx stats
  * @soc: DP soc handle
@@ -1582,6 +1733,7 @@ QDF_STATUS dp_get_uplink_delay(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 			       uint32_t *val);
 #endif /* WLAN_FEATURE_TSF_UPLINK_TSF */
 
+#ifdef WLAN_TRACEPOINTS
 /**
  * dp_tx_pkt_tracepoints_enabled() - Get the state of tx pkt tracepoint
  *
@@ -1592,8 +1744,16 @@ bool dp_tx_pkt_tracepoints_enabled(void)
 {
 	return (qdf_trace_dp_tx_comp_tcp_pkt_enabled() ||
 		qdf_trace_dp_tx_comp_udp_pkt_enabled() ||
-		qdf_trace_dp_tx_comp_pkt_enabled());
+		qdf_trace_dp_tx_comp_pkt_enabled())    ||
+		qdf_trace_dp_tx_enqueue_enabled();
 }
+#else
+static inline
+bool dp_tx_pkt_tracepoints_enabled(void)
+{
+	return false;
+}
+#endif
 
 #ifdef QCA_SUPPORT_DP_GLOBAL_CTX
 static inline
@@ -1615,6 +1775,16 @@ struct dp_tx_desc_pool_s *dp_get_spcl_tx_desc_pool(struct dp_soc *soc,
 	dp_global = wlan_objmgr_get_global_ctx();
 	return dp_global->spcl_tx_desc[soc->arch_id][pool_id];
 }
+
+static inline
+struct dp_tx_ext_desc_pool_s *dp_get_tx_ext_desc_pool(struct dp_soc *soc,
+						      uint8_t pool_id)
+{
+	struct dp_global_context *dp_global = NULL;
+
+	dp_global = wlan_objmgr_get_global_ctx();
+	return dp_global->tx_ext_desc[pool_id];
+}
 #else
 static inline
 struct dp_tx_desc_pool_s *dp_get_tx_desc_pool(struct dp_soc *soc,
@@ -1628,6 +1798,13 @@ struct dp_tx_desc_pool_s *dp_get_spcl_tx_desc_pool(struct dp_soc *soc,
 						   uint8_t pool_id)
 {
 	return &soc->tx_desc[pool_id];
+}
+
+static inline
+struct dp_tx_ext_desc_pool_s *dp_get_tx_ext_desc_pool(struct dp_soc *soc,
+						      uint8_t pool_id)
+{
+	return &((soc)->tx_ext_desc[pool_id]);
 }
 #endif
 
@@ -1668,6 +1845,24 @@ void dp_tx_desc_check_corruption(struct dp_tx_desc_s *tx_desc)
 
 #ifndef CONFIG_SAWF
 static inline bool dp_sawf_tag_valid_get(qdf_nbuf_t nbuf)
+{
+	return false;
+}
+
+static inline void dp_soc_sawf_init(struct dp_soc *soc)
+{
+}
+
+static inline void dp_soc_sawf_deinit(struct dp_soc *soc)
+{
+}
+
+static inline bool dp_sawf_me_enabled(ol_txrx_soc_handle soc)
+{
+	return false;
+}
+
+static inline bool dp_sawf_q_valid_get(qdf_nbuf_t nbuf)
 {
 	return false;
 }
@@ -2148,7 +2343,7 @@ static inline int dp_get_rtpm_tput_policy_requirement(struct dp_soc *soc)
  * @txrx_peer: txrx_peer pointer
  * @link_id: Peer Link ID
  *
- * Returen: None
+ * Return: None
  */
 static inline void
 dp_tx_set_nbuf_band(qdf_nbuf_t nbuf, struct dp_txrx_peer *txrx_peer,
@@ -2203,4 +2398,201 @@ dp_tx_latency_stats_config(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 QDF_STATUS dp_tx_latency_stats_register_cb(struct cdp_soc_t *handle,
 					   cdp_tx_latency_cb cb);
 #endif
+
+#ifdef QCA_DP_TX_NBUF_LIST_FREE
+static inline void
+dp_tx_nbuf_queue_head_init(qdf_nbuf_queue_head_t *nbuf_queue_head)
+{
+	qdf_nbuf_queue_head_init(nbuf_queue_head);
+}
+
+static inline void
+dp_tx_nbuf_dev_queue_free(qdf_nbuf_queue_head_t *nbuf_queue_head,
+			  struct dp_tx_desc_s *desc)
+{
+	qdf_nbuf_t nbuf = NULL;
+
+	nbuf = desc->nbuf;
+	if (qdf_likely(nbuf->is_from_recycler) &&
+	    qdf_likely(nbuf->fast_xmit))
+		qdf_nbuf_dev_queue_head(nbuf_queue_head, nbuf);
+	else
+		qdf_nbuf_free(nbuf);
+}
+
+static inline void
+dp_tx_nbuf_dev_queue_free_no_flag(qdf_nbuf_queue_head_t *nbuf_queue_head,
+				  qdf_nbuf_t nbuf)
+{
+	if (!nbuf)
+		return;
+
+	if (nbuf->is_from_recycler)
+		qdf_nbuf_dev_queue_head(nbuf_queue_head, nbuf);
+	else
+		qdf_nbuf_free(nbuf);
+}
+
+static inline void
+dp_tx_nbuf_dev_kfree_list(qdf_nbuf_queue_head_t *nbuf_queue_head)
+{
+	qdf_nbuf_dev_kfree_list(nbuf_queue_head);
+}
+#else
+static inline void
+dp_tx_nbuf_queue_head_init(qdf_nbuf_queue_head_t *nbuf_queue_head)
+{
+}
+
+static inline void
+dp_tx_nbuf_dev_queue_free(qdf_nbuf_queue_head_t *nbuf_queue_head,
+			  struct dp_tx_desc_s *desc)
+{
+	qdf_nbuf_free(desc->nbuf);
+}
+
+static inline void
+dp_tx_nbuf_dev_queue_free_no_flag(qdf_nbuf_queue_head_t *nbuf_queue_head,
+				  qdf_nbuf_t nbuf)
+{
+	qdf_nbuf_free(nbuf);
+}
+
+static inline void
+dp_tx_nbuf_dev_kfree_list(qdf_nbuf_queue_head_t *nbuf_queue_head)
+{
+}
+#endif /* QCA_DP_TX_NBUF_LIST_FREE */
+
+/**
+ * dp_tx_update_peer_basic_stats() - Update basic pper stats
+ * @txrx_peer: Peer handle
+ * @length: Length of the packet in bytes
+ * @tx_status: Tx status
+ * @update: flag to check enable ol_stats
+ *
+ * Return: None
+ */
+void dp_tx_update_peer_basic_stats(struct dp_txrx_peer *txrx_peer,
+				   uint32_t length, uint8_t tx_status,
+				   bool update);
+
+/**
+ * dp_tx_get_link_id_from_ppdu_id_wrapper() - wrapper function to
+ * get HW link Id from PPDU Id
+ * @soc: dp_soc handle
+ * @ts: Tx completion status structure
+ * @txrx_peer: peer handle
+ * @vdev: dp_vdev handle
+ *
+ * Return: HW link id
+ */
+uint8_t
+dp_tx_get_link_id_from_ppdu_id_wrapper(
+				struct dp_soc *soc,
+				struct hal_tx_completion_status *ts,
+				struct dp_txrx_peer *txrx_peer,
+				struct dp_vdev *vdev);
+
+/**
+ * dp_tx_update_peer_stats_wrapper() - wrapper function to Update peer stats
+ * from Tx completion indications per wbm ring
+ *
+ * @tx_desc: software descriptor head pointer
+ * @ts: Tx completion status
+ * @txrx_peer: peer handle
+ * @ring_id: ring number
+ * @link_id: Link id
+ *
+ * Return: None
+ */
+void
+dp_tx_update_peer_stats_wrapper(struct dp_tx_desc_s *tx_desc,
+				struct hal_tx_completion_status *ts,
+				struct dp_txrx_peer *txrx_peer, uint8_t ring_id,
+				uint8_t link_id);
+
+/**
+ * hal_tx_comp_desc_sync_wrapper() - wrapper function for HAL tx comp desc
+ * @tx_comp_hal_desc: Handle to HAL desc
+ * @tx_desc_pool: Tx desc pool handle
+ * @tx_desc: Tx Descriptor
+ * @buffer_src: FW/TQM who released the buffer
+ * @comp_index: Tx completion index position
+ * @read_status: 0 - Do not read status words from descriptors
+ *               1 - Enable reading of status words from descriptor
+ *
+ * Return: None
+ */
+void hal_tx_comp_desc_sync_wrapper(void *tx_comp_hal_desc,
+				   struct dp_tx_desc_pool_s *tx_desc_pool,
+				   struct dp_tx_desc_s *tx_desc,
+				   uint8_t buffer_src,
+				   uint16_t comp_index, bool read_status);
+
+/**
+ * hal_tx_comp_get_status_wrapper() - wrapper function for HAL get tx status
+ * @soc: dp_soc handle
+ * @tx_desc_pool: Tx desc pool handle
+ * @tx_desc: Tx Descriptor
+ * @ts: Tx completion status structure
+ * @comp_index: Tx completion index position
+ *
+ * Return: None
+ */
+void hal_tx_comp_get_status_wrapper(struct dp_soc *soc,
+				    struct dp_tx_desc_pool_s *tx_desc_pool,
+				    struct dp_tx_desc_s *tx_desc,
+				    void *ts, uint16_t comp_index);
+#ifndef WLAN_SOFTUMAC_SUPPORT
+/**
+ * dp_tx_dump_tx_desc() - Dump tx desc for debugging
+ * @tx_desc: software descriptor head pointer
+ *
+ * This function will dump tx desc for further debugging
+ *
+ * Return: none
+ */
+static inline
+void dp_tx_dump_tx_desc(struct dp_tx_desc_s *tx_desc)
+{
+	if (tx_desc) {
+		dp_tx_comp_warn("tx_desc->nbuf: %pK", tx_desc->nbuf);
+		dp_tx_comp_warn("tx_desc->flags: 0x%x", tx_desc->flags);
+		dp_tx_comp_warn("tx_desc->id: %u", tx_desc->id);
+		dp_tx_comp_warn("tx_desc->dma_addr: 0x%x",
+				(unsigned int)tx_desc->dma_addr);
+		dp_tx_comp_warn("tx_desc->vdev_id: %u",
+				tx_desc->vdev_id);
+		dp_tx_comp_warn("tx_desc->tx_status: %u",
+				tx_desc->tx_status);
+		dp_tx_comp_warn("tx_desc->pdev: %pK",
+				tx_desc->pdev);
+		dp_tx_comp_warn("tx_desc->tx_encap_type: %u",
+				tx_desc->tx_encap_type);
+		dp_tx_comp_warn("tx_desc->buffer_src: %u",
+				tx_desc->buffer_src);
+		dp_tx_comp_warn("tx_desc->frm_type: %u",
+				tx_desc->frm_type);
+		dp_tx_comp_warn("tx_desc->pkt_offset: %u",
+				tx_desc->pkt_offset);
+		dp_tx_comp_warn("tx_desc->pool_id: %u",
+				tx_desc->pool_id);
+	}
+}
+#endif /* WLAN_SOFTUMAC_SUPPORT */
+
+#ifdef QCA_DP_OPTIMIZED_TX_DESC
+static inline
+struct dp_tx_desc_pool_s *dp_get_tx_desc_pool_wrapper(struct dp_soc *soc)
+{
+	return dp_get_tx_desc_pool(soc, qdf_get_cpu());
+}
+#else
+static inline
+struct dp_tx_desc_pool_s *dp_get_tx_desc_pool_wrapper(struct dp_soc *soc)
+{
+	return NULL;
+}
+#endif /* QCA_DP_OPTIMIZED_TX_DESC */
 #endif

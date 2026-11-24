@@ -505,6 +505,10 @@ struct sme_context {
 	/* async oem event callback */
 	void (*oem_data_async_event_handler_cb)
 			(const struct oem_data *oem_event_data);
+#ifdef FEATURE_SMEM_MAILBOX
+	void (*oem_data_smem_event_handler_cb)
+			(const struct oem_data *oem_event_data);
+#endif
 #endif
 
 	QDF_STATUS (*pagefault_action_cb)(void *buf, uint32_t data);
@@ -518,13 +522,15 @@ struct sme_context {
 	sme_get_raom_scan_ch_callback roam_scan_ch_callback;
 	void *roam_scan_ch_get_context;
 #ifdef FEATURE_MONITOR_MODE_SUPPORT
-	void (*monitor_mode_cb)(uint8_t vdev_id);
+	void (*monitor_mode_cb)(uint8_t vdev_id, bool is_up);
 #endif
 #if defined(CLD_PM_QOS) && defined(WLAN_FEATURE_LL_MODE)
 	void (*beacon_latency_event_cb)(uint32_t latency_level);
 #endif
 	QDF_STATUS (*sme_vdev_del_cb)(mac_handle_t mac_handle,
 				      struct wlan_objmgr_vdev *vdev);
+	void (*set_disconnect_link_info_cb)(uint8_t vdev_id,
+					    bool is_disconnect_sent);
 };
 
 #endif /* #if !defined( __SMEINTERNAL_H ) */

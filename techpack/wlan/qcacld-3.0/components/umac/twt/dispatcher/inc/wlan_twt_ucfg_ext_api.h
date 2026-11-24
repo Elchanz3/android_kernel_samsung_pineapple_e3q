@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -136,6 +136,32 @@ QDF_STATUS ucfg_twt_nudge_req(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS
 ucfg_twt_ac_pdev_param_send(struct wlan_objmgr_psoc *psoc,
 			    enum twt_traffic_ac twt_ac);
+
+/**
+ * ucfg_twt_send_unavailability_mode() - Send unavailability mode
+ * @psoc: Pointer to PSOC object
+ * @vdev: Pointer to vdev object
+ * @unavailability_mode: unavailability_mode
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+ucfg_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+				  struct wlan_objmgr_vdev *vdev,
+				  bool unavailability_mode);
+
+/**
+ * ucfg_twt_send_unavailability_mode() - Send unavailability mode
+ * @psoc: Pointer to PSOC object
+ * @vdev: Pointer to vdev object
+ * @unavailability_mode: unavailability_mode
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+ucfg_twt_send_unavailability_mode(struct wlan_objmgr_psoc *psoc,
+				  struct wlan_objmgr_vdev *vdev,
+				  bool unavailability_mode);
 
 /**
  * ucfg_twt_is_max_sessions_reached() - Check if the maximum number of
@@ -315,6 +341,15 @@ void ucfg_twt_get_work_params(struct wlan_objmgr_vdev *vdev,
  * Return: QDF_STATUS
  */
 QDF_STATUS ucfg_twt_cfg_set_responder(struct wlan_objmgr_psoc *psoc, bool val);
+
+/**
+ * ucfg_twt_cfg_reset_responder() - Reset cfg responder
+ * @psoc: psoc
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS ucfg_twt_cfg_reset_responder(struct wlan_objmgr_psoc *psoc);
+
 /**
  * ucfg_twt_get_pmo_allowed() - Get twt allowed
  * @psoc: psoc handler
@@ -322,6 +357,27 @@ QDF_STATUS ucfg_twt_cfg_set_responder(struct wlan_objmgr_psoc *psoc, bool val);
  * Return: QDF_STATUS_SUCCESS
  */
 bool ucfg_twt_get_pmo_allowed(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_twt_set_requestor_enable_cmd_in_progress() - Set TWT requestor enable
+ * command is in progress
+ * @psoc: Pointer to psoc object
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+ucfg_twt_set_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_twt_reset_requestor_enable_cmd_in_progress() - Reset TWT requestor enable
+ * command is in progress
+ * @psoc: Pointer to psoc object
+ *
+ * Return: None
+ */
+void
+ucfg_twt_reset_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc);
+
 #else
 static inline
 QDF_STATUS ucfg_twt_psoc_open(struct wlan_objmgr_psoc *psoc)
@@ -437,6 +493,12 @@ QDF_STATUS ucfg_twt_cfg_set_responder(struct wlan_objmgr_psoc *psoc, bool val)
 }
 
 static inline
+QDF_STATUS ucfg_twt_cfg_reset_responder(struct wlan_objmgr_psoc *psoc)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline
 bool ucfg_twt_cfg_is_twt_enabled(struct wlan_objmgr_psoc *psoc)
 {
 	return false;
@@ -448,5 +510,15 @@ bool ucfg_twt_get_pmo_allowed(struct wlan_objmgr_psoc *psoc)
 	return false;
 }
 
+static inline QDF_STATUS
+ucfg_twt_set_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline void
+ucfg_twt_reset_requestor_enable_cmd_in_progress(struct wlan_objmgr_psoc *psoc)
+{
+}
 #endif
 #endif

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2018, 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -97,9 +97,12 @@ struct hif_bus_ops {
 	int (*hif_disable_grp_irqs)(struct hif_softc *scn);
 #ifdef FEATURE_IRQ_AFFINITY
 	void (*hif_set_grp_intr_affinity)(struct hif_softc *scn,
-					  uint32_t grp_intr_bitmask, bool perf);
+					  uint32_t grp_intr_bitmask,
+					  uint32_t cpumask, bool perf);
 #endif
 	void (*hif_affinity_mgr_set_affinity)(struct hif_softc *scn);
+	QDF_STATUS (*hif_bus_get_device_handle)(struct hif_softc *hif_ctx,
+						void **handle);
 };
 
 #ifdef HIF_SNOC

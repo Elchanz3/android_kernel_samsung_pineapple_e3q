@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -103,6 +103,16 @@ defined(QCA_WIFI_QCA5018)
 #define WLAN_SET_MAC_ADDR_TIMEOUT      START_RESPONSE_TIMER
 #endif
 
+/*
+ * struct vdev_cmd_rsp_rt_lock - VDEV level runtime lock struct
+ * @is_lock_acquired: Is lock currently held by the vdev
+ * @vdev_cmd_rt_lock: Runtime lock
+ */
+struct vdev_cmd_rsp_rt_lock {
+	bool is_lock_acquired;
+	qdf_runtime_lock_t vdev_cmd_rt_lock;
+};
+
 /**
  * struct vdev_response_timer - vdev mgmt response ops timer
  * @psoc: Object manager psoc
@@ -113,6 +123,7 @@ defined(QCA_WIFI_QCA5018)
  * @rsp_timer_inuse: Status bit to inform whether the rsp timer is inuse
  * @vdev_id: vdev object id
  * @peer_type_bitmap: Peer type bitmap
+ * @rt_lock: Per vdev RTPM lock
  */
 struct vdev_response_timer {
 	struct wlan_objmgr_psoc *psoc;
@@ -123,6 +134,7 @@ struct vdev_response_timer {
 	qdf_atomic_t rsp_timer_inuse;
 	uint8_t vdev_id;
 	uint32_t peer_type_bitmap;
+	struct vdev_cmd_rsp_rt_lock rt_lock;
 };
 
 /**
@@ -137,6 +149,7 @@ struct vdev_response_timer {
  * @cfgd_tx_streams: configured tx streams
  * @cfgd_rx_streams: configured rx streams
  * @max_allowed_tx_power: max tx power allowed
+ * @min_allowed_tx_power: min tx power allowed
  */
 struct vdev_start_response {
 	uint8_t vdev_id;
@@ -149,6 +162,7 @@ struct vdev_start_response {
 	uint32_t cfgd_tx_streams;
 	uint32_t cfgd_rx_streams;
 	uint32_t max_allowed_tx_power;
+	uint32_t min_allowed_tx_power;
 };
 
 /**

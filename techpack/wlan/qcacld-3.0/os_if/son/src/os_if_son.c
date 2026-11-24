@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -35,6 +35,9 @@
 #include <wlan_reg_services_api.h>
 #include <wlan_scan_ucfg_api.h>
 #include <wlan_dcs_ucfg_api.h>
+#include <wlan_nlink_common.h>
+#include <ieee80211_defines.h>
+#include <include/wlan_mlme_cmn.h>
 
 static struct son_callbacks g_son_os_if_cb;
 static struct wlan_os_if_son_ops g_son_os_if_txrx_ops;
@@ -975,6 +978,7 @@ QDF_STATUS os_if_son_vdev_ops(struct wlan_objmgr_vdev *vdev,
 {
 	union wlan_mlme_vdev_data *in = (union wlan_mlme_vdev_data *)data;
 	union wlan_mlme_vdev_data *out = (union wlan_mlme_vdev_data *)ret;
+	struct wlan_channel *chan;
 
 	if (!vdev)
 		return QDF_STATUS_E_INVAL;
@@ -1001,14 +1005,23 @@ QDF_STATUS os_if_son_vdev_ops(struct wlan_objmgr_vdev *vdev,
 		break;
 	case VDEV_SET_WNM_BSS_PREF:
 		break;
+	case VDEV_SET_SON_MAP_VERSION:
+		break;
+	case VDEV_SET_MCTBL:
+		break;
 	case VDEV_GET_NSS:
 		break;
 	case VDEV_GET_CHAN:
 		if (!out)
 			return QDF_STATUS_E_INVAL;
-		qdf_mem_copy(&out->chan,
-			     wlan_vdev_get_active_channel(vdev),
-			     sizeof(out->chan));
+		chan = wlan_vdev_get_active_channel(vdev);
+		if (!chan) {
+			osif_err("failed to get active chan");
+			return QDF_STATUS_E_INVAL;
+		}
+		out->chan.ic_freq = chan->ch_freq;
+		out->chan.ic_ieee = chan->ch_ieee;
+		out->chan.ic_flags = chan->ch_flags;
 		break;
 	case VDEV_GET_CHAN_WIDTH:
 		break;
@@ -1139,6 +1152,8 @@ QDF_STATUS os_if_son_peer_ops(struct wlan_objmgr_peer *peer,
 						(peer, WLAN_PEER_F_EXT_STATS);
 			}
 		}
+		break;
+	case PEER_SET_VLAN_ID:
 		break;
 	case PEER_REQ_INST_STAT:
 		status = wlan_son_peer_req_inst_stats(pdev, peer->macaddr,
@@ -1774,25 +1789,14 @@ QDF_STATUS os_if_son_get_node_datarate_info(struct wlan_objmgr_vdev *vdev,
 					    uint8_t *mac_addr,
 					    wlan_node_info *node_info)
 {
-	int8_t max_tx_power;
-	int8_t min_tx_power;
-	struct wlan_objmgr_psoc *psoc;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
-
-	psoc = wlan_vdev_get_psoc(vdev);
-	if (!psoc) {
-		osif_err("null posc");
-		return QDF_STATUS_E_INVAL;
-	}
 
 	if (WLAN_ADDR_EQ(wlan_vdev_mlme_get_macaddr(vdev), mac_addr) ==
 							   QDF_STATUS_SUCCESS) {
 		node_info->max_chwidth = os_if_son_get_chwidth(vdev);
 		node_info->phymode = os_if_son_get_phymode(vdev);
 		node_info->num_streams = os_if_son_get_rx_streams(vdev);
-		ucfg_son_get_min_and_max_power(psoc, &max_tx_power,
-					       &min_tx_power);
-		node_info->max_txpower = max_tx_power;
+		node_info->max_txpower = 0;
 		node_info->max_MCS = ucfg_mlme_get_vdev_max_mcs_idx(vdev);
 		if (node_info->max_MCS == INVALID_MCS_NSS_INDEX) {
 			osif_err("invalid mcs index");
@@ -1834,3 +1838,97 @@ int os_if_son_get_sta_stats(struct wlan_objmgr_vdev *vdev, uint8_t *mac_addr,
 	return 0;
 }
 qdf_export_symbol(os_if_son_get_sta_stats);
+
+int os_if_son_del_ast(struct wlan_objmgr_vdev *vdev,
+		      struct qdf_mac_addr *wds_macaddr,
+		      struct qdf_mac_addr *peer_macaddr)
+{
+	if (!vdev || !wds_macaddr || !peer_macaddr) {
+		osif_err("invalid param");
+		return -EINVAL;
+	}
+
+	wlan_son_del_ast(vdev, wds_macaddr, peer_macaddr);
+
+	return 0;
+}
+
+qdf_export_symbol(os_if_son_del_ast);
+
+QDF_STATUS
+os_if_son_send_status_nlink_msg(uint32_t event_id,
+				enum osif_son_status_evt_type event_type,
+				char *module_name)
+{
+	struct osif_son_status_evt event = {0};
+	int flags = GFP_KERNEL;
+	struct sk_buff *skb;
+	struct nlmsghdr *nlhdr;
+
+	if (in_interrupt() || irqs_disabled() || in_atomic())
+		flags = GFP_ATOMIC;
+
+	skb = nlmsg_new(NLMSG_SPACE(WLAN_NL_MAX_PAYLOAD), flags);
+	if (!skb) {
+		osif_err("null skb");
+		return QDF_STATUS_E_NOMEM;
+	}
+	event.id = event_id;
+	event.event_type = event_type;
+
+	nlhdr = nlmsg_put(skb, 0, 0, RTM_NEWLINK, sizeof(struct ifinfomsg), 0);
+	if (!nlhdr) {
+		osif_err("null nlhdr");
+		return QDF_STATUS_E_NOMEM;
+	}
+
+	if (nla_put_string(skb, IFLA_IFNAME, module_name))
+		goto nla_put_failed;
+
+	if (nla_put(skb, IFLA_WIRELESS, sizeof(struct osif_son_status_evt),
+		    &event))
+		goto nla_put_failed;
+
+	nlmsg_end(skb, nlhdr);
+	rtnl_notify(skb, &init_net, 0, RTNLGRP_NOTIFY, NULL, GFP_KERNEL);
+	osif_debug("send status nl msg done, id %x, type %x",
+		   event.id, event.event_type);
+
+	return QDF_STATUS_SUCCESS;
+
+nla_put_failed:
+	osif_err("nla put failed");
+	kfree_skb(skb);
+	return QDF_STATUS_E_NOMEM;
+}
+
+qdf_export_symbol(os_if_son_send_status_nlink_msg);
+
+#ifdef WLAN_FEATURE_SON
+struct mlme_external_tx_ops mlme_tx_ops;
+
+#define wlan_peer_ops_data os_if_son_peer_ops
+
+static
+QDF_STATUS wlan_peer_ops(struct wlan_objmgr_peer *peer,
+			 enum wlan_mlme_peer_param type,
+			 void *data, void *ret)
+{
+	return wlan_peer_ops_data(peer, type, (union wlan_mlme_peer_data *)data,
+				  (union wlan_mlme_peer_data *)ret);
+}
+
+struct mlme_external_tx_ops *wlan_mlme_register_tx_ops(void)
+{
+	struct mlme_external_tx_ops *ops = &mlme_tx_ops;
+
+	ops->peer_ops = wlan_peer_ops;
+	ops->vdev_ops = os_if_son_vdev_ops;
+	ops->pdev_ops = os_if_son_pdev_ops;
+	ops->scan_db_iterate = os_if_son_scan_db_iterate;
+
+	return ops;
+}
+
+qdf_export_symbol(wlan_mlme_register_tx_ops);
+#endif //WLAN_FEATURE_SON

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -69,7 +69,7 @@ struct ring_util_stats {
 
 /* calculate the register address offset from bar0 of shadow register x */
 #if defined(QCA_WIFI_QCA6390) || defined(QCA_WIFI_QCA6490) || \
-    defined(QCA_WIFI_KIWI)
+    defined(QCA_WIFI_KIWI) || defined(QCA_WIFI_QCC2072)
 #define SHADOW_REGISTER_START_ADDRESS_OFFSET 0x000008FC
 #define SHADOW_REGISTER_END_ADDRESS_OFFSET \
 	((SHADOW_REGISTER_START_ADDRESS_OFFSET) + (4 * (MAX_SHADOW_REGISTERS)))
@@ -79,7 +79,7 @@ struct ring_util_stats {
 #define SHADOW_REGISTER_END_ADDRESS_OFFSET \
 	((SHADOW_REGISTER_START_ADDRESS_OFFSET) + (4 * (MAX_SHADOW_REGISTERS)))
 #define SHADOW_REGISTER(x) ((SHADOW_REGISTER_START_ADDRESS_OFFSET) + (4 * (x)))
-#elif defined(QCA_WIFI_QCA6750)
+#elif defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_WCN7750)
 #define SHADOW_REGISTER_START_ADDRESS_OFFSET 0x00000504
 #define SHADOW_REGISTER_END_ADDRESS_OFFSET \
 	((SHADOW_REGISTER_START_ADDRESS_OFFSET) + (4 * (MAX_SHADOW_REGISTERS)))
@@ -272,7 +272,8 @@ static inline void hal_tx_init_cmd_credit_ring(hal_soc_handle_t hal_soc_hdl,
  */
 #if !defined(QCA_WIFI_QCA6390) && !defined(QCA_WIFI_QCA6490) && \
     !defined(QCA_WIFI_QCA6750) && !defined(QCA_WIFI_KIWI) && \
-    !defined(QCA_WIFI_WCN6450)
+    !defined(QCA_WIFI_WCN6450) && !defined(QCA_WIFI_WCN7750) && \
+    !defined(QCA_WIFI_QCC2072)
 static inline void hal_write32_mb(struct hal_soc *hal_soc, uint32_t offset,
 				  uint32_t value)
 {
@@ -316,9 +317,9 @@ static inline QDF_STATUS hal_write32_mb_confirm(struct hal_soc *hal_soc,
 static inline void hal_write32_mb(struct hal_soc *hal_soc, uint32_t offset,
 				  uint32_t value)
 {
-	int ret;
 	unsigned long flags;
 	qdf_iomem_t new_addr;
+	bool init_phase;
 
 	if (!TARGET_ACCESS_ALLOWED(HIF_GET_SOFTC(
 					hal_soc->hif_handle))) {
@@ -332,14 +333,13 @@ static inline void hal_write32_mb(struct hal_soc *hal_soc, uint32_t offset,
 		return;
 	}
 
+	init_phase = hal_soc->init_phase;
+
 	/* Region greater than BAR + 4K */
-	if (!hal_soc->init_phase) {
-		ret = hif_force_wake_request(hal_soc->hif_handle);
-		if (ret) {
-			hal_err_rl("Wake up request failed");
-			qdf_check_state_before_panic(__func__, __LINE__);
-			return;
-		}
+	if (!init_phase && hif_force_wake_request(hal_soc->hif_handle)) {
+		hal_err_rl("Wake up request failed");
+		qdf_check_state_before_panic(__func__, __LINE__);
+		return;
 	}
 
 	if (!hal_soc->use_register_windowing ||
@@ -358,13 +358,10 @@ static inline void hal_write32_mb(struct hal_soc *hal_soc, uint32_t offset,
 		hal_unlock_reg_access(hal_soc, &flags);
 	}
 
-	if (!hal_soc->init_phase) {
-		ret = hif_force_wake_release(hal_soc->hif_handle);
-		if (ret) {
-			hal_err("Wake up release failed");
-			qdf_check_state_before_panic(__func__, __LINE__);
-			return;
-		}
+	if (!init_phase && hif_force_wake_release(hal_soc->hif_handle)) {
+		hal_err("Wake up release failed");
+		qdf_check_state_before_panic(__func__, __LINE__);
+		return;
 	}
 }
 
@@ -380,10 +377,10 @@ static inline QDF_STATUS hal_write32_mb_confirm(struct hal_soc *hal_soc,
 						uint32_t offset,
 						uint32_t value)
 {
-	int ret;
 	unsigned long flags;
 	qdf_iomem_t new_addr;
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
+	bool init_phase;
 
 	if (!TARGET_ACCESS_ALLOWED(HIF_GET_SOFTC(
 					hal_soc->hif_handle))) {
@@ -397,14 +394,13 @@ static inline QDF_STATUS hal_write32_mb_confirm(struct hal_soc *hal_soc,
 		return QDF_STATUS_E_NOSUPPORT;
 	}
 
+	init_phase = hal_soc->init_phase;
+
 	/* Region greater than BAR + 4K */
-	if (!hal_soc->init_phase) {
-		ret = hif_force_wake_request(hal_soc->hif_handle);
-		if (ret) {
-			hal_err("Wake up request failed");
-			qdf_check_state_before_panic(__func__, __LINE__);
-			return status;
-		}
+	if (!init_phase && hif_force_wake_request(hal_soc->hif_handle)) {
+		hal_err("Wake up request failed");
+		qdf_check_state_before_panic(__func__, __LINE__);
+		return status;
 	}
 
 	if (!hal_soc->use_register_windowing ||
@@ -434,13 +430,10 @@ static inline QDF_STATUS hal_write32_mb_confirm(struct hal_soc *hal_soc,
 		hal_unlock_reg_access(hal_soc, &flags);
 	}
 
-	if (!hal_soc->init_phase) {
-		ret = hif_force_wake_release(hal_soc->hif_handle);
-		if (ret) {
-			hal_err("Wake up release failed");
-			qdf_check_state_before_panic(__func__, __LINE__);
-			return QDF_STATUS_E_INVAL;
-		}
+	if (!init_phase && hif_force_wake_release(hal_soc->hif_handle)) {
+		hal_err("Wake up release failed");
+		qdf_check_state_before_panic(__func__, __LINE__);
+		return QDF_STATUS_E_INVAL;
 	}
 
 	return status;
@@ -537,7 +530,8 @@ static inline void hal_srng_write_address_32_mb(struct hal_soc *hal_soc,
 
 #if !defined(QCA_WIFI_QCA6390) && !defined(QCA_WIFI_QCA6490) && \
     !defined(QCA_WIFI_QCA6750) && !defined(QCA_WIFI_KIWI) && \
-    !defined(QCA_WIFI_WCN6450)
+    !defined(QCA_WIFI_WCN6450) && !defined(QCA_WIFI_WCN7750) && \
+    !defined(QCA_WIFI_QCC2072)
 /**
  * hal_read32_mb() - Access registers to read configuration
  * @hal_soc: hal soc handle
@@ -589,6 +583,7 @@ uint32_t hal_read32_mb(struct hal_soc *hal_soc, uint32_t offset)
 	uint32_t ret;
 	unsigned long flags;
 	qdf_iomem_t new_addr;
+	bool init_phase;
 
 	if (!TARGET_ACCESS_ALLOWED(HIF_GET_SOFTC(
 					hal_soc->hif_handle))) {
@@ -600,8 +595,8 @@ uint32_t hal_read32_mb(struct hal_soc *hal_soc, uint32_t offset)
 	if (offset < MAPPED_REF_OFF)
 		return qdf_ioread32(hal_soc->dev_base_addr + offset);
 
-	if ((!hal_soc->init_phase) &&
-	    hif_force_wake_request(hal_soc->hif_handle)) {
+	init_phase = hal_soc->init_phase;
+	if (!init_phase && hif_force_wake_request(hal_soc->hif_handle)) {
 		hal_err("Wake up request failed");
 		qdf_check_state_before_panic(__func__, __LINE__);
 		return 0;
@@ -623,8 +618,7 @@ uint32_t hal_read32_mb(struct hal_soc *hal_soc, uint32_t offset)
 		hal_unlock_reg_access(hal_soc, &flags);
 	}
 
-	if ((!hal_soc->init_phase) &&
-	    hif_force_wake_release(hal_soc->hif_handle)) {
+	if (!init_phase && hif_force_wake_release(hal_soc->hif_handle)) {
 		hal_err("Wake up release failed");
 		qdf_check_state_before_panic(__func__, __LINE__);
 		return 0;
@@ -844,6 +838,88 @@ static inline void hal_write32_mb_confirm_retry(struct hal_soc *hal_soc,
 }
 #endif /* GENERIC_SHADOW_REGISTER_ACCESS_ENABLE */
 
+#if defined(FEATURE_HAL_DELAYED_REG_WRITE) && defined(DELAYED_REG_FORCE_WRITE)
+#define HAL_DELAY_REG_FORCE_WRITE_HANG_THRESH 50
+/**
+ * hal_srng_delay_reg_force_write_detect() - Detect if force register direct
+ *                                           writing needed
+ * @hal_ring_hdl: Ring pointer (Source or Destination ring)
+ *
+ * When attempt to write srng register, if register writing is still
+ * pending in delayed register work and no direct register writing happen,
+ * once this hit with threshold HAL_DELAY_REG_FORCE_WRITE_HANG_THRESH
+ * times, then likely register writing is stuck, need to issue a force
+ * direct write next.
+ *
+ * Retuen: None
+ */
+static inline
+void hal_srng_delay_reg_force_write_detect(hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+
+	if (!srng->is_last_reg_direct_write && srng->reg_write_in_progress)
+		srng->delay_reg_write_hang_cnt++;
+	else
+		srng->delay_reg_write_hang_cnt = 0;
+
+	if (qdf_unlikely(srng->delay_reg_write_hang_cnt >
+			 HAL_DELAY_REG_FORCE_WRITE_HANG_THRESH)) {
+		srng->force_reg_direct_write = true;
+		srng->wstats.force_direct_write++;
+		hal_err_rl("force write triggered, cnt %u",
+			   srng->wstats.force_direct_write);
+	} else {
+		srng->force_reg_direct_write = false;
+	}
+}
+
+/**
+ * hal_srng_is_delay_reg_force_write() - Get the flag to show if force
+ *                                       register direct writing needed
+ * @srng: Ring pointer (Source or Destination ring)
+ *
+ * Return: true - need force register writing, false - not
+ */
+static inline
+bool hal_srng_is_delay_reg_force_write(struct hal_srng *srng)
+{
+	return  srng->force_reg_direct_write;
+}
+
+/**
+ * hal_srng_delay_reg_record_direct_write() - Record if current register
+ *                                            update by direct writing or not
+ * @srng: Ring pointer (Source or Destination ring)
+ * @is_direct_write: direct register writes or not
+ *
+ * Return: None
+ */
+static inline
+void hal_srng_delay_reg_record_direct_write(struct hal_srng *srng,
+					    bool is_direct_write)
+{
+	srng->is_last_reg_direct_write = is_direct_write;
+}
+#else
+static inline
+void hal_srng_delay_reg_force_write_detect(hal_ring_handle_t hal_ring_hdl)
+{
+}
+
+static inline
+bool hal_srng_is_delay_reg_force_write(struct hal_srng *srng)
+{
+	return false;
+}
+
+static inline
+void hal_srng_delay_reg_record_direct_write(struct hal_srng *srng,
+					    bool is_direct_write)
+{
+}
+#endif
+
 #if defined(FEATURE_HAL_DELAYED_REG_WRITE)
 /**
  * hal_dump_reg_write_srng_stats() - dump SRNG reg write stats
@@ -882,6 +958,27 @@ static inline void hal_dump_reg_write_stats(hal_soc_handle_t hal_soc_hdl)
 static inline int hal_get_reg_write_pending_work(void *hal_soc)
 {
 	return 0;
+}
+#endif
+
+#if defined(FEATURE_HAL_DELAYED_REG_WRITE) && defined(QCA_WIFI_QCA6750)
+/**
+ * hal_srng_check_and_update_hptp() - Check and force update HP/TP
+ *		to the hardware
+ * @hal_soc: HAL soc handle
+ * @srng: SRNG handle
+ * @update: Whether or not update is needed
+ *
+ * Returns: void
+ */
+void hal_srng_check_and_update_hptp(struct hal_soc *hal_soc,
+				    struct hal_srng *srng,
+				    bool update);
+#else
+static inline void
+hal_srng_check_and_update_hptp(struct hal_soc *hal_soc, struct hal_srng *srng,
+			       bool update)
+{
 }
 #endif
 
@@ -1301,6 +1398,16 @@ void hal_srng_dst_set_hp_paddr_confirm(struct hal_srng *sring,
 void hal_srng_dst_init_hp(struct hal_soc_handle *hal_soc,
 			  struct hal_srng *srng,
 			  uint32_t *vaddr);
+
+/**
+ * hal_srng_dst_update_hp_addr() - Update hp_addr with current HW HP value
+ * @hal_soc: hal_soc handle
+ * @hal_ring_hdl: Opaque HAL SRNG pointer
+ *
+ * Return: None
+ */
+void hal_srng_dst_update_hp_addr(struct hal_soc_handle *hal_soc,
+				 hal_ring_handle_t hal_ring_hdl);
 
 /**
  * hal_srng_cleanup() - Deinitialize HW SRNG ring.
@@ -1787,11 +1894,12 @@ uint32_t hal_srng_dst_num_valid(void *hal_soc,
  *
  * Invalidates a set of cached descriptors starting from TP to cached_HP
  *
- * Return: None
+ * Return: HAL ring descriptor
  */
-static inline void hal_srng_dst_inv_cached_descs(void *hal_soc,
-						 hal_ring_handle_t hal_ring_hdl,
-						 uint32_t entry_count)
+static inline void *
+hal_srng_dst_inv_cached_descs(void *hal_soc,
+			      hal_ring_handle_t hal_ring_hdl,
+			      uint32_t entry_count)
 {
 	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
 	uint32_t *first_desc;
@@ -1803,10 +1911,10 @@ static inline void hal_srng_dst_inv_cached_descs(void *hal_soc,
 	 * API call should be a no op
 	 */
 	if (!(srng->flags & HAL_SRNG_CACHED_DESC))
-		return;
+		return NULL;
 
 	if (!entry_count)
-		return;
+		return NULL;
 
 	first_desc = &srng->ring_base_vaddr[srng->u.dst_ring.tp];
 
@@ -1830,6 +1938,8 @@ static inline void hal_srng_dst_inv_cached_descs(void *hal_soc,
 					      (void *)last_desc);
 	}
 	qdf_dsb();
+
+	return last_desc;
 }
 
 /**
@@ -3347,6 +3457,48 @@ void hal_update_ring_util(void *hal_soc, hal_ring_handle_t hal_ring_hdl,
 }
 
 /**
+ * hal_umac_reset_read() - To check if the interrupt reset is successful
+ * @hal_soc_hdl: HAL SoC context
+ * @offset: Physical address of PCIE
+ * @addr: IOremapped address
+ *
+ * Return: void
+ */
+static inline
+uint32_t hal_umac_reset_read(hal_soc_handle_t hal_soc_hdl,
+			     uint32_t offset, void __iomem *addr)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+
+	if (hal_soc->ops->hal_umac_reset_read)
+		return hal_soc->ops->hal_umac_reset_read(hal_soc_hdl,
+							 offset, addr);
+
+	return 0;
+}
+
+/**
+ * hal_umac_reset_intr() - function to reset the interrupt
+ * @hal_soc_hdl: HAL SOC handle
+ * @offset: Physical address of PCIE
+ * @value: (Reset) value to write
+ * @addr: IOremapped address
+ *
+ * Return: None.
+ */
+static inline
+void hal_umac_reset_intr(hal_soc_handle_t hal_soc_hdl,
+			 uint32_t offset, uint32_t value,
+			 void __iomem *addr)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+
+	if (hal_soc->ops->hal_umac_reset_intr)
+		hal_soc->ops->hal_umac_reset_intr(hal_soc_hdl, offset,
+						  value, addr);
+}
+
+/**
  * hal_cmem_write() - function for CMEM buffer writing
  * @hal_soc_hdl: HAL SOC handle
  * @offset: CMEM address
@@ -3534,6 +3686,34 @@ void hal_srng_dst_set_tp(hal_ring_handle_t hal_ring_hdl, uint16_t idx)
 }
 
 /**
+ * hal_srng_src_get_hp() - get head idx.
+ * @hal_ring_hdl: srng handle
+ *
+ * Return: head idx
+ */
+static inline
+uint32_t hal_srng_src_get_hp(hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+
+	return srng->u.src_ring.hp;
+}
+
+/**
+ * hal_srng_dst_get_tp() - get tail idx.
+ * @hal_ring_hdl: srng handle
+ *
+ * Return: head idx
+ */
+static inline
+uint32_t hal_srng_dst_get_tp(hal_ring_handle_t hal_ring_hdl)
+{
+	struct hal_srng *srng = (struct hal_srng *)hal_ring_hdl;
+
+	return srng->u.dst_ring.tp;
+}
+
+/**
  * hal_srng_src_get_tpidx() - get tail idx
  * @hal_ring_hdl: srng handle
  *
@@ -3609,4 +3789,29 @@ hal_srng_set_msi_irq_config(hal_soc_handle_t hal_soc_hdl,
 	return QDF_STATUS_E_NOSUPPORT;
 }
 #endif
+
+/**
+ * hal_srng_dst_get_num_avail_words() - Get num available words in dst ring
+ *
+ * @hal_soc_hdl: hal soc handle
+ * @hal_ring_hdl: srng handle
+ * @num_avail: Num available words
+ *
+ * Return: QDF status
+ */
+static inline QDF_STATUS
+hal_srng_dst_get_num_avail_words(hal_soc_handle_t hal_soc_hdl,
+				 hal_ring_handle_t hal_ring_hdl,
+				 uint16_t *num_avail)
+{
+	struct hal_soc *hal_soc = (struct hal_soc *)hal_soc_hdl;
+
+	if (!hal_soc->ops->hal_srng_dst_get_num_avail_words)
+		return QDF_STATUS_E_NOSUPPORT;
+
+	*num_avail =
+		hal_soc->ops->hal_srng_dst_get_num_avail_words(hal_ring_hdl);
+
+	return QDF_STATUS_SUCCESS;
+}
 #endif /* _HAL_APIH_ */

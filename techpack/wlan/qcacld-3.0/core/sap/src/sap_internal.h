@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -235,6 +235,8 @@ struct sap_context {
 	qdf_list_t ft_pending_assoc_ind_list;
 	qdf_event_t ft_pending_event;
 	uint32_t freq_before_ch_switch;
+	struct ch_params ch_params_before_ch_switch;
+	bool is_dfs_wakelock_held;
 #ifdef WLAN_FEATURE_P2P_P2P_STA
 /*
  *This param is used for GO+GO force scc logic where after
@@ -317,6 +319,14 @@ QDF_STATUS wlansap_pre_start_bss_acs_scan_callback(mac_handle_t mac_handle,
 						   eCsrScanStatus scan_status);
 
 /**
+ * sap_chan_sel_exit() - Exit function for free out the allocated memory,
+ * @ch_info_params: Pointer to sap_sel_ch_info structure
+ *
+ * Return: None
+ */
+void sap_chan_sel_exit(struct sap_sel_ch_info *ch_info_params);
+
+/**
  * sap_sort_channel_list() - Sort channel list based on channel weight
  * @mac_ctx: Pointer to mac_context
  * @vdev_id: Vdev ID
@@ -325,10 +335,10 @@ QDF_STATUS wlansap_pre_start_bss_acs_scan_callback(mac_handle_t mac_handle,
  * @domain: Regulatory Domain
  * @operating_band: Operating band
  *
- * Return: None
+ * Return: QDF_STATUS
  *
  */
-void
+QDF_STATUS
 sap_sort_channel_list(struct mac_context *mac_ctx, uint8_t vdev_id,
 		      qdf_list_t *ch_list, struct sap_sel_ch_info *ch_info,
 		      v_REGDOMAIN_t *domain, uint32_t *operating_band);
@@ -390,6 +400,15 @@ void sap_dfs_cac_timer_callback(void *data);
  * DFS global structure.
  */
 void sap_cac_reset_notify(mac_handle_t mac_handle);
+
+/**
+ * sap_cac_reset_current_notify() - Current BSS cleanup notification handler
+ * @sap_ctx: SAP context
+ *
+ * This function should be called upon stop bss or channel switch to
+ * clean up DFS global structure of current SAP
+ */
+void sap_cac_reset_current_notify(struct sap_context *sap_ctx);
 
 bool is_concurrent_sap_ready_for_channel_change(mac_handle_t mac_handle,
 						struct sap_context *sap_ctx);
@@ -492,7 +511,7 @@ static inline qdf_freq_t sap_indicate_radar(struct sap_context *sap_ctx)
 /**
  * sap_select_default_oper_chan() - Select AP mode default operating channel
  * @mac_ctx: mac context
- * @acs_cfg: pointer to ACS config info
+ * @sap_ctx: pointer to SAP context
  *
  * Select AP mode default operating channel based on ACS hw mode and channel
  * range configuration when ACS scan fails due to some reasons, such as scan
@@ -501,7 +520,7 @@ static inline qdf_freq_t sap_indicate_radar(struct sap_context *sap_ctx)
  * Return: Selected operating channel frequency
  */
 uint32_t sap_select_default_oper_chan(struct mac_context *mac_ctx,
-				      struct sap_acs_cfg *acs_cfg);
+				      struct sap_context *sap_ctx);
 
 /*
  * sap_is_dfs_cac_wait_state() - check if sap is in cac wait state
@@ -549,4 +568,30 @@ bool sap_plus_sap_cac_skip(struct mac_context *mac,
 void
 sap_build_start_bss_config(struct start_bss_config *sap_bss_cfg,
 			   struct sap_config *config);
+
+#ifdef QCA_DFS_BW_PUNCTURE
+/**
+ * sap_is_chan_change_needed_for_radar() - Check if SAP channel change needed
+ * when radar found.
+ * @sap_ctx: sap context.
+ * @freq: pointer to freq
+ *
+ * Even some 20 MHz sub channel disabled for nol, if puncture pattern is valid,
+ * SAP still can keep current channel width and primary channel, don't need
+ * change channel, but need send CSA to update puncture bitmap.
+ * if radar found on punctured sub channel, then do nothing, no CSA needed.
+ *
+ * Return: bool, true: channel change needed
+ */
+bool
+sap_is_chan_change_needed_for_radar(struct sap_context *sap_ctx,
+				    qdf_freq_t *freq);
+#else
+static inline bool
+sap_is_chan_change_needed_for_radar(struct sap_context *sap_ctx,
+				    qdf_freq_t *freq)
+{
+	return true;
+}
+#endif
 #endif

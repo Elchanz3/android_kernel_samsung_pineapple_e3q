@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,11 +28,14 @@
 #ifdef WLAN_PKT_CAPTURE_TX_2_0
 #include <dp_tx_mon_2.0.h>
 #endif
+#if defined(IPA_OFFLOAD) && defined(IPA_OFFLOAD_LOW_MEM)
+#define DP_MON_RING_FILL_LEVEL_DEFAULT 512
+#else
 #define DP_MON_RING_FILL_LEVEL_DEFAULT 2048
+#endif
 #define DP_MON_DATA_BUFFER_SIZE     2048
 #define DP_MON_DESC_MAGIC 0xdeadabcd
 #define DP_MON_MAX_STATUS_BUF 1200
-#define DP_MON_QUEUE_DEPTH_MAX 16
 #define DP_MON_MSDU_LOGGING 0
 #define DP_MON_MPDU_LOGGING 1
 #define DP_MON_DESC_ADDR_MASK 0x000000FFFFFFFFFF
@@ -47,17 +50,7 @@
 	((uint32_t)(((unsigned long long)(mon_desc) & DP_MON_DESC_COOKIE_MASK) \
 	>> DP_MON_DESC_COOKIE_LSB))
 
-#ifdef DP_RX_MON_DESC_64_BIT
-#define  DP_MON_GET_DESC(mon_desc) \
-	((struct dp_mon_desc *)(uintptr_t)(((unsigned long long)(mon_desc) & \
-	DP_MON_DESC_ADDR_MASK) | ((unsigned long long)DP_MON_DESC_FIXED_ADDR)))
-
-#else
-#define  DP_MON_GET_DESC(mon_desc) \
-	((struct dp_mon_desc *)(uintptr_t)(((unsigned long)(mon_desc) & \
-	DP_MON_DESC_ADDR_MASK)))
-#endif
-
+#define DP_MON_DESC_64B_PTR_SZ 8
 #define DP_MON_DECAP_FORMAT_INVALID 0xff
 #define DP_MON_MIN_FRAGS_FOR_RESTITCH 2
 
@@ -255,6 +248,7 @@ struct dp_mon_desc_pool {
  * @rx_mon_free_queue: RxMON ppdu info free element queue
  * @ppdu_info_lock: RxPPDU ppdu info queue lock
  * @rx_mon_queue_depth: RxMON queue depth
+ * @ppdu_info_cache: PPDU info cache
  * @desc_count: reaped status desc count
  * @status: reaped status buffer per ppdu
  * @lite_mon_rx_config: rx litemon config
@@ -263,7 +257,6 @@ struct dp_mon_desc_pool {
  * @prev_rxmon_cookie: prev rxmon cookie
  * @prev_rxmon_pkt_desc: prev packet buff desc
  * @prev_rxmon_pkt_cookie: prev packet buff desc cookie
- * @ppdu_info_cache: PPDU info cache
  * @total_free_elem: total free element in queue
  * @rx_tlv_logger: Rx TLV logger struct
  */
@@ -273,9 +266,14 @@ struct dp_mon_pdev_be {
 #ifdef WLAN_PKT_CAPTURE_TX_2_0
 	uint8_t tx_mon_mode;
 	uint8_t tx_mon_filter_length;
+#ifdef FEATURE_ML_LOCAL_PKT_CAPTURE
+	struct dp_pdev_tx_monitor_be tx_monitor_be[MAX_NUM_LMAC_HW];
+#else
 	struct dp_pdev_tx_monitor_be tx_monitor_be;
+#endif
 	struct dp_tx_monitor_drop_stats tx_stats;
 #endif
+#if defined(WLAN_PKT_CAPTURE_RX_2_0) && defined(QCA_MONITOR_2_0_PKT_SUPPORT)
 	qdf_spinlock_t rx_mon_wq_lock;
 	qdf_workqueue_t *rx_mon_workqueue;
 	qdf_work_t rx_mon_work;
@@ -283,6 +281,8 @@ struct dp_mon_pdev_be {
 	TAILQ_HEAD(, hal_rx_ppdu_info) rx_mon_queue;
 	TAILQ_HEAD(, hal_rx_ppdu_info) rx_mon_free_queue;
 	qdf_spinlock_t ppdu_info_lock;
+	qdf_kmem_cache_t ppdu_info_cache;
+#endif
 	uint16_t rx_mon_queue_depth;
 	uint16_t desc_count;
 	struct dp_mon_desc *status[DP_MON_MAX_STATUS_BUF];
@@ -294,7 +294,6 @@ struct dp_mon_pdev_be {
 	uint32_t prev_rxmon_cookie;
 	void *prev_rxmon_pkt_desc;
 	uint32_t prev_rxmon_pkt_cookie;
-	qdf_kmem_cache_t ppdu_info_cache;
 	uint32_t total_free_elem;
 #ifdef MONITOR_TLV_RECORDING_ENABLE
 	struct dp_mon_tlv_logger *rx_tlv_log;
@@ -333,6 +332,62 @@ struct dp_mon_soc_be {
 
 	bool is_dp_mon_soc_initialized;
 };
+#endif
+
+#ifdef WLAN_PKT_CAPTURE_TX_2_0
+#ifdef FEATURE_ML_LOCAL_PKT_CAPTURE
+/**
+ * dp_tx_mon_get_pdev_mac_from_work_arg() - Get pdev and mac_id from work
+ *                                          argument
+ * @work_arg: pointer to work argument
+ * @p_dp_pdev: address of dp pdev object
+ * @p_mac_id: address of mac id
+ *
+ * Return: None
+ */
+static inline void dp_tx_mon_get_pdev_mac_from_work_arg(
+						void *work_arg,
+						struct dp_pdev **p_dp_pdev,
+						uint8_t *p_mac_id)
+{
+	struct dp_tx_mon_work_arg *tx_mon_arg =
+				(struct dp_tx_mon_work_arg *)work_arg;
+
+	*p_dp_pdev = tx_mon_arg->dp_pdev;
+	*p_mac_id = tx_mon_arg->mac_id;
+}
+
+/**
+ * dp_mon_pdev_get_tx_mon() - Get TX Mon object with given mac id
+ * @mon_pdev: monitor dp pdev object
+ * @mac_id: Mac ID
+ *
+ * Return: DP TX Mon object
+ */
+static inline
+struct dp_pdev_tx_monitor_be *dp_mon_pdev_get_tx_mon(
+					struct dp_mon_pdev_be *mon_pdev,
+					uint8_t mac_id)
+{
+	return &mon_pdev->tx_monitor_be[mac_id];
+}
+#else
+static inline void dp_tx_mon_get_pdev_mac_from_work_arg(
+						void *work_arg,
+						struct dp_pdev **p_dp_pdev,
+						uint8_t *p_mac_id)
+{
+	*p_dp_pdev = (struct dp_pdev *)work_arg;
+}
+
+static inline
+struct dp_pdev_tx_monitor_be *dp_mon_pdev_get_tx_mon(
+					struct dp_mon_pdev_be *mon_pdev,
+					uint8_t mac_id)
+{
+	return &mon_pdev->tx_monitor_be;
+}
+#endif
 #endif
 
 /**
@@ -406,6 +461,7 @@ void dp_mon_pool_frag_unmap_and_free(struct dp_soc *dp_soc,
  *	       interrupt.
  * @tail: tail of descs list
  * @replenish_cnt_ref: pointer to update replenish_cnt
+ * @ring_type: Ring type
  *
  * Return: return success or failure
  */
@@ -415,7 +471,8 @@ QDF_STATUS dp_mon_buffers_replenish(struct dp_soc *dp_soc,
 				uint32_t num_req_buffers,
 				union dp_mon_desc_list_elem_t **desc_list,
 				union dp_mon_desc_list_elem_t **tail,
-				uint32_t *replenish_cnt_ref);
+				uint32_t *replenish_cnt_ref,
+				int ring_type);
 
 /**
  * dp_mon_filter_show_tx_filter_be() - Show the set filters
@@ -619,7 +676,6 @@ QDF_STATUS
 dp_disable_enhanced_stats_2_0(struct cdp_soc_t *soc, uint8_t pdev_id);
 #endif /* QCA_ENHANCED_STATS_SUPPORT */
 
-#ifdef WLAN_PKT_CAPTURE_RX_2_0
 static inline unsigned long long
 dp_mon_get_debug_desc_addr(union dp_mon_desc_list_elem_t **desc_list)
 {
@@ -630,12 +686,22 @@ dp_mon_get_debug_desc_addr(union dp_mon_desc_list_elem_t **desc_list)
 	desc = (desc | ((unsigned long long)(*desc_list)->mon_desc.cookie_2 << DP_MON_DESC_ADDR_SHIFT));
 	return desc;
 }
-#else
-static inline unsigned long long
-dp_mon_get_debug_desc_addr(union dp_mon_desc_list_elem_t **desc_list)
+
+/**
+ * dp_mon_get_desc_addr() - Get desc addr from debug addr
+ * @desc: debug desc addr
+ *
+ * Return: SW desc addr
+ */
+static inline struct dp_mon_desc*
+dp_mon_get_desc_addr(unsigned long long desc)
 {
-	unsigned long long desc = (unsigned long long)&((*desc_list)->mon_desc);
-	return desc;
+	if (sizeof(void *) == DP_MON_DESC_64B_PTR_SZ) {
+		return ((struct dp_mon_desc *)(uintptr_t)(((unsigned long long)(desc) &
+						DP_MON_DESC_ADDR_MASK) | ((unsigned long long)DP_MON_DESC_FIXED_ADDR)));
+	} else {
+		return ((struct dp_mon_desc *)(uintptr_t)(((unsigned long)(desc) &
+						DP_MON_DESC_ADDR_MASK)));
+	}
 }
-#endif
 #endif /* _DP_MON_2_0_H_ */

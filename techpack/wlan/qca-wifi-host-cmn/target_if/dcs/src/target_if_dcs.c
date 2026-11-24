@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -178,6 +179,63 @@ target_if_dcs_cmd_send(struct wlan_objmgr_psoc *psoc, uint32_t pdev_id,
 	return ret;
 }
 
+#ifdef WLAN_FEATURE_VDEV_DCS
+/**
+ * target_if_send_dcs_cmd_for_vdev() - Send dcs command for vdev
+ * @psoc: psoc pointer
+ * @vdev_id: pdev_id
+ * @dcs_enable: dcs enable
+ *
+ * Return: QDF_STATUS_SUCCESS on success, QDF_STATUS_E_FAILURE on error
+ */
+static QDF_STATUS
+target_if_send_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+				uint32_t dcs_enable)
+{
+	QDF_STATUS ret;
+	struct wmi_unified *wmi_handle;
+
+	if (!psoc) {
+		target_if_err("psoc is null");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+	if (!wmi_handle) {
+		target_if_err("wmi_handle is null");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	ret = wmi_send_dcs_vdev_param(wmi_handle, vdev_id, dcs_enable);
+	if (QDF_IS_STATUS_ERROR(ret))
+		target_if_err("wmi dcs cmd send failed, ret: %d", ret);
+
+	return ret;
+}
+#else
+static QDF_STATUS
+target_if_send_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+				uint32_t dcs_enable)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
+bool
+target_if_vdev_level_dcs_is_supported(struct wlan_objmgr_psoc *psoc)
+{
+	struct wmi_unified *wmi_handle;
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+	if (!wmi_handle) {
+		target_if_err("Invalid WMI handle");
+		return false;
+	}
+
+	return wmi_service_enabled(wmi_handle,
+				   wmi_service_vdev_dcs_stats_support);
+}
+
 QDF_STATUS
 target_if_dcs_register_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 {
@@ -199,6 +257,8 @@ target_if_dcs_register_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 	dcs_tx_ops->dcs_detach =
 		target_if_dcs_unregister_event_handler;
 	dcs_tx_ops->dcs_cmd_send = target_if_dcs_cmd_send;
+	dcs_tx_ops->dcs_cmd_send_for_vdev = target_if_send_dcs_cmd_for_vdev;
+	dcs_tx_ops->dcs_vdev_support = target_if_vdev_level_dcs_is_supported;
 
 	return QDF_STATUS_SUCCESS;
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -46,10 +46,8 @@
 void hdd_update_tgt_eht_cap(struct hdd_context *hdd_ctx,
 			    struct wma_tgt_cfg *cfg)
 {
-	tDot11fIEeht_cap eht_cap_ini = {0};
-
+	sme_update_tgt_eht_cap(hdd_ctx->mac_handle, cfg);
 	ucfg_mlme_update_tgt_eht_cap(hdd_ctx->psoc, cfg);
-	sme_update_tgt_eht_cap(hdd_ctx->mac_handle, cfg, &eht_cap_ini);
 }
 
 /*
@@ -356,7 +354,6 @@ void wlan_hdd_fill_os_eht_rateflags(struct rate_info *os_rate,
 	}
 }
 
-#ifdef FEATURE_RX_LINKSPEED_ROAM_TRIGGER
 void
 wlan_hdd_refill_os_eht_rateflags(struct rate_info *os_rate, uint8_t preamble)
 {
@@ -372,5 +369,4 @@ wlan_hdd_refill_os_eht_bw(struct rate_info *os_rate, enum rx_tlv_bw bw)
 	else
 		os_rate->bw = RATE_INFO_BW_20; /* Invalid bw: set 20M */
 }
-#endif
 #endif

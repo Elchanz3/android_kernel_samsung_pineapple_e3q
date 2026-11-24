@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -43,7 +43,7 @@ static void wlan_hdd_pre_cac_failure(struct hdd_adapter *adapter)
 	if (wlan_hdd_validate_context(hdd_ctx))
 		return;
 
-	wlan_hdd_stop_sap(adapter);
+	wlan_hdd_stop_sap(adapter->deflink);
 	hdd_stop_adapter(hdd_ctx, adapter);
 
 	hdd_exit();
@@ -95,9 +95,9 @@ static void wlan_hdd_pre_cac_success(struct hdd_adapter *adapter)
 	wlan_hdd_set_sap_csa_reason(hdd_ctx->psoc, ap_adapter->deflink->vdev_id,
 				    CSA_REASON_PRE_CAC_SUCCESS);
 	chan_freq = ucfg_pre_cac_get_freq(ap_adapter->deflink->vdev);
-	i = hdd_softap_set_channel_change(ap_adapter->dev,
-					  chan_freq,
-					  pre_cac_ch_width, false);
+	i = hdd_softap_set_channel_change(ap_adapter->deflink, chan_freq, 0,
+					  pre_cac_ch_width, NO_SCHANS_PUNC,
+					  false, false);
 	if (i) {
 		hdd_err("failed to change channel");
 		ucfg_pre_cac_complete_set(ap_adapter->deflink->vdev, false);
@@ -267,13 +267,37 @@ static int __wlan_hdd_request_pre_cac(struct hdd_context *hdd_ctx,
 		return -EINVAL;
 	}
 
-	hdd_debug("channel: %d", chan_freq);
+	cac_ch_width = wlansap_get_max_bw_by_phymode(hdd_ap_ctx->sap_context);
+	if (cac_ch_width > DEFAULT_PRE_CAC_BANDWIDTH)
+		cac_ch_width = DEFAULT_PRE_CAC_BANDWIDTH;
+	if (chan_freq) {
+		qdf_mem_zero(&chandef, sizeof(struct cfg80211_chan_def));
+		if (wlan_set_def_pre_cac_chan(hdd_ctx, chan_freq, &chandef,
+					      &channel_type, &cac_ch_width)) {
+			hdd_err("failed to set pre_cac channel %d", chan_freq);
+			return -EINVAL;
+		}
+	}
+	hdd_debug("channel: %d bw: %d", chan_freq, cac_ch_width);
 
 	ret = ucfg_pre_cac_validate_and_get_freq(hdd_ctx->pdev, chan_freq,
-						 &pre_cac_chan_freq);
+						 &pre_cac_chan_freq,
+						 cac_ch_width);
 	if (ret != 0) {
 		hdd_err("can't validate pre-cac channel");
 		goto release_intf_addr_and_return_failure;
+	}
+
+	pre_cac_adapter = hdd_get_adapter_by_iface_name(hdd_ctx,
+							SAP_PRE_CAC_IFNAME);
+	if (pre_cac_adapter) {
+		hdd_debug("pre cac SAP adapter is present");
+		if (test_bit(SME_SESSION_OPENED,
+			     &pre_cac_adapter->deflink->link_flags)) {
+			hdd_debug("pre cac is on-going");
+			return 0;
+		}
+		goto pre_cac_adapter_created;
 	}
 
 	hdd_debug("starting pre cac SAP  adapter");
@@ -319,6 +343,7 @@ static int __wlan_hdd_request_pre_cac(struct hdd_context *hdd_ctx,
 		goto release_intf_addr_and_return_failure;
 	}
 
+pre_cac_adapter_created:
 	pre_cac_link_info = pre_cac_adapter->deflink;
 	pre_cac_ap_ctx = WLAN_HDD_GET_AP_CTX_PTR(pre_cac_link_info);
 	sap_clear_global_dfs_param(mac_handle, pre_cac_ap_ctx->sap_context);
@@ -392,7 +417,8 @@ static int __wlan_hdd_request_pre_cac(struct hdd_context *hdd_ctx,
 		goto stop_close_pre_cac_adapter;
 	}
 
-	ret = wlan_hdd_set_channel(wiphy, dev, &chandef, channel_type);
+	ret = wlan_hdd_set_channel(pre_cac_link_info, wiphy, dev,
+				   &chandef, channel_type);
 	if (ret != 0) {
 		hdd_err("failed to set channel");
 		goto stop_close_pre_cac_adapter;
@@ -419,6 +445,7 @@ static int __wlan_hdd_request_pre_cac(struct hdd_context *hdd_ctx,
 		goto stop_close_pre_cac_adapter;
 	}
 
+	ucfg_pre_cac_clear_work(hdd_ctx->psoc);
 	ucfg_pre_cac_set_freq_before_pre_cac(link_info->vdev,
 					     hdd_ap_ctx->operating_chan_freq);
 	ucfg_pre_cac_set_freq(link_info->vdev, pre_cac_chan_freq);

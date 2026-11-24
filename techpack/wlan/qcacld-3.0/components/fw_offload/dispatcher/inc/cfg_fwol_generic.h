@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -239,6 +239,29 @@
 
 /*
  * <ini>
+ * dynamic_bw_switch - Enable/Disable Dynamic BW Switch
+ * @Min: 0
+ * @Max: 1
+ * @Default: 1
+ *
+ * This ini enable/disable the Dynamic BW Switch feature for STA
+ * in FW. If this flag is set and there is no traffic running then
+ * firmware downgrades the bandwidth for those vdev whose bw
+ * is greater than 80Mhz(160Mhz/320 Mhz). If traffic comes up then
+ * fw will restore the original bandwidth
+ *
+ * Supported Feature: STA
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DYNAMIC_BW_SWITCH CFG_INI_BOOL( \
+		"dynamic_bw_switch", \
+		1, \
+		"Enable/Disable Dynamic BW Switch")
+/*
+ * <ini>
  * gEnableAlternativeChainmask - Enable Co-Ex Alternative Chainmask
  * @Min: 0
  * @Max: 1
@@ -475,6 +498,26 @@
 #else
 #define CFG_RA_FILTER_ENABLE
 #endif
+
+/* <ini>
+ * gRAPriority
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini will configure the RA filter to FW
+ * irrespective of APF configured or not.
+ *
+ * Related: None
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_RA_PRIORITY CFG_INI_BOOL( \
+		"gRAPriority", \
+		0, \
+		"Enable RA Priority")
 
 /* <ini>
  * gtsf_gpio_pin
@@ -972,6 +1015,7 @@
 	CFG(CFG_UPPER_BRSSI_THRESH) \
 	CFG(CFG_LOWER_BRSSI_THRESH) \
 	CFG(CFG_DTIM_1CHRX_ENABLE) \
+	CFG(CFG_DYNAMIC_BW_SWITCH) \
 	CFG(CFG_ENABLE_COEX_ALT_CHAINMASK) \
 	CFG(CFG_ENABLE_SMART_CHAINMASK) \
 	CFG(CFG_ENABLE_FW_RTS_PROFILE) \
@@ -979,6 +1023,7 @@
 	CFG(CFG_ENABLE_FW_LOG_TYPE) \
 	CFG(CFG_ENABLE_FW_MODULE_LOG_LEVEL) \
 	CFG(CFG_RA_FILTER_ENABLE) \
+	CFG(CFG_RA_PRIORITY) \
 	CFG(CFG_SET_TSF_GPIO_PIN) \
 	__CFG_SET_TSF_IRQ_HOST_GPIO_PIN \
 	__CFG_SET_TSF_SYNC_HOST_GPIO_PIN \

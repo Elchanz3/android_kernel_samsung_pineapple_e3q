@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2017, 2019, 2021 The Linux Foundation. All rights reserved. */
+/*
+ * Copyright (c) 2017, 2019, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ */
 
 #define pr_fmt(fmt) "cnss_utils: " fmt
 
@@ -13,6 +16,10 @@
 #include "cnss_utils.h"
 #else
 #include <net/cnss_utils.h>
+#endif
+
+#ifdef CONFIG_FEATURE_SMEM_MAILBOX
+#include <smem-mailbox.h>
 #endif
 
 #define CNSS_MAX_CH_NUM 157
@@ -38,6 +45,14 @@ enum mac_type {
 	CNSS_MAC_DERIVED,
 };
 
+#define CNSS_UTILS_NOTIFIER_MAX_USER	2
+struct cnss_utils_status_notifier {
+	cnss_utils_status_update
+	status_update_cb[CNSS_UTILS_NOTIFIER_MAX_USER];
+	void *cb_ctx[CNSS_UTILS_NOTIFIER_MAX_USER];
+	u32 num_user;
+};
+
 static struct cnss_utils_priv {
 	struct cnss_unsafe_channel_list unsafe_channel_list;
 	struct cnss_dfs_nol_info dfs_nol_info;
@@ -52,7 +67,13 @@ static struct cnss_utils_priv {
 	struct dentry *root_dentry;
 	/* generic mutex for device_id */
 	struct mutex cnss_device_id_lock;
+	struct cnss_utils_status_notifier
+			notifier_ctx[CNSS_UTILS_MAX_STATUS_TYPE];
 	enum cnss_utils_device_type cnss_device_type;
+#ifdef CONFIG_FEATURE_SMEM_MAILBOX
+	bool smem_mailbox_initialized;
+	int smem_mailbox_id;
+#endif
 } *cnss_utils_priv;
 
 int cnss_utils_set_wlan_unsafe_channel(struct device *dev,
@@ -136,6 +157,67 @@ enum cnss_utils_device_type cnss_utils_update_device_type(
 	return priv->cnss_device_type;
 }
 EXPORT_SYMBOL(cnss_utils_update_device_type);
+
+static void
+cnss_utils_status_update_user(enum cnss_status_type status_type,
+			      bool status)
+{
+	struct cnss_utils_priv *priv = cnss_utils_priv;
+	struct cnss_utils_status_notifier *notifier_ctx;
+	int i;
+
+	notifier_ctx = &priv->notifier_ctx[status_type];
+	for (i = 0; i < notifier_ctx->num_user; i++) {
+		if (notifier_ctx->status_update_cb[i])
+			notifier_ctx->status_update_cb[i]
+					(notifier_ctx->cb_ctx[i],
+					status);
+	}
+}
+
+int cnss_utils_fmd_status(int is_enabled)
+{
+	pr_info("cnss_utils: FMD status:%d\n", is_enabled);
+
+	if (is_enabled)
+		cnss_utils_status_update_user(CNSS_UTILS_FMD_STATUS,
+					      true);
+	else
+		cnss_utils_status_update_user(CNSS_UTILS_FMD_STATUS,
+					      false);
+
+	return 0;
+}
+EXPORT_SYMBOL(cnss_utils_fmd_status);
+
+int
+cnss_utils_register_status_notifier(enum cnss_status_type status_type,
+				    cnss_utils_status_update status_update_cb,
+				    void *cb_ctx)
+{
+	struct cnss_utils_priv *priv = cnss_utils_priv;
+	struct cnss_utils_status_notifier *notifier_ctx;
+	int num_user;
+
+	if (!priv)
+		return -EINVAL;
+
+	if (status_type >= CNSS_UTILS_MAX_STATUS_TYPE)
+		return -EINVAL;
+
+	notifier_ctx = &priv->notifier_ctx[status_type];
+	num_user = notifier_ctx->num_user;
+
+	if (num_user >= CNSS_UTILS_NOTIFIER_MAX_USER)
+		return -EINVAL;
+
+	notifier_ctx->status_update_cb[num_user] = status_update_cb;
+	notifier_ctx->cb_ctx[num_user] = cb_ctx;
+	notifier_ctx->num_user++;
+
+	return 0;
+}
+EXPORT_SYMBOL(cnss_utils_register_status_notifier);
 
 int cnss_utils_wlan_set_dfs_nol(struct device *dev,
 				const void *info, u16 info_len)
@@ -342,6 +424,27 @@ enum cnss_utils_cc_src cnss_utils_get_cc_source(struct device *dev)
 }
 EXPORT_SYMBOL(cnss_utils_get_cc_source);
 
+#ifdef CONFIG_FEATURE_SMEM_MAILBOX
+int cnss_utils_smem_mailbox_write(struct device *dev, int flags,
+				  const __u8 *data, uint32_t len)
+{
+	struct cnss_utils_priv *priv = cnss_utils_priv;
+
+	if (!priv)
+		return -EINVAL;
+	if (!priv->smem_mailbox_initialized) {
+		if (smem_mailbox_start(priv->smem_mailbox_id, NULL) != 1) {
+			pr_err("Didn't init smem mailbox properly\n");
+			return -EINVAL;
+		} else
+			priv->smem_mailbox_initialized = true;
+	}
+	return smem_mailbox_write(priv->smem_mailbox_id, flags, (__u8 *)data,
+				  len);
+}
+EXPORT_SYMBOL(cnss_utils_smem_mailbox_write);
+#endif
+
 static ssize_t cnss_utils_mac_write(struct file *fp,
 				    const char __user *user_buf,
 				    size_t count, loff_t *off)
@@ -496,13 +599,39 @@ static bool cnss_utils_is_valid_dt_node_found(void)
 	return false;
 }
 
+#ifdef CONFIG_FEATURE_SMEM_MAILBOX
+static void cnss_utils_smem_mailbox_init(void)
+{
+	struct cnss_utils_priv *priv = cnss_utils_priv;
+
+	priv->smem_mailbox_id = 0;
+	priv->smem_mailbox_initialized = false;
+}
+
+static void cnss_utils_smem_mailbox_deinit(void)
+{
+	struct cnss_utils_priv *priv = cnss_utils_priv;
+
+	smem_mailbox_stop(priv->smem_mailbox_id);
+}
+#else
+static void cnss_utils_smem_mailbox_init(void)
+{
+}
+
+static void cnss_utils_smem_mailbox_deinit(void)
+{
+}
+#endif
+
 static int __init cnss_utils_init(void)
 {
 	struct cnss_utils_priv *priv = NULL;
 
-	if (!cnss_utils_is_valid_dt_node_found())
+	if (!cnss_utils_is_valid_dt_node_found()) {
+		pr_err("device node not found!\n");
 		return -ENODEV;
-
+	}
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -515,12 +644,13 @@ static int __init cnss_utils_init(void)
 	spin_lock_init(&priv->dfs_nol_info_lock);
 	cnss_utils_debugfs_create(priv);
 	cnss_utils_priv = priv;
-
+	cnss_utils_smem_mailbox_init();
 	return 0;
 }
 
 static void __exit cnss_utils_exit(void)
 {
+	cnss_utils_smem_mailbox_deinit();
 	kfree(cnss_utils_priv);
 	cnss_utils_priv = NULL;
 }

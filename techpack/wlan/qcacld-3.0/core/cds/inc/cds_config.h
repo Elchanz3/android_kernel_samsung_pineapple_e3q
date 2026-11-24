@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -86,14 +86,14 @@ struct wlan_cds_feature_set {
  * @enable_dp_rx_threads: enable dp rx threads
  * @is_lpass_enabled: Indicate whether LPASS is enabled or not
  * @tx_chain_mask_cck: Tx chain mask enabled or not
- * @sub_20_channel_width: Sub 20 MHz ch width, ini intersected with fw cap
+ * @sub_20_support: Sub 20 MHz channel width support(fw cap)
+ * @sub_20_channel_width: Sub 20 MHz ch width
  * @max_msdus_per_rxinorderind:
  * @self_recovery_enabled:
  * @fw_timeout_crash: Indicate whether crash host when fw timesout or not
  * @ac_specs:
  * @ito_repeat_count: Indicates ito repeated count
  * @force_target_assert_enabled: Indicate whether target assert enabled or not
- * @bandcapability: Configured band by user
  * @rps_enabled: RPS enabled in SAP mode
  * Structure for holding cds ini parameters.
  * @num_vdevs: Configured max number of VDEVs can be supported in the stack.
@@ -101,6 +101,7 @@ struct wlan_cds_feature_set {
  * @cds_feature_set: CDS feature set structure.
  * @get_wifi_features: Get wifi features from fw
  * @exclude_selftx_from_cca_busy: Exclude selx tx time from cca busy time
+ * @is_pm_fw_debug_enable: flag to check FW debug is enabled or not
  */
 
 struct cds_config_info {
@@ -122,6 +123,7 @@ struct cds_config_info {
 #ifdef WLAN_FEATURE_LPSS
 	bool is_lpass_enabled;
 #endif
+	bool sub_20_support;
 	enum cfg_sub_20_channel_width sub_20_channel_width;
 	uint8_t max_msdus_per_rxinorderind;
 	bool self_recovery_enabled;
@@ -129,7 +131,6 @@ struct cds_config_info {
 	struct ol_tx_sched_wrr_ac_specs_t ac_specs[QCA_WLAN_AC_ALL];
 	uint8_t ito_repeat_count;
 	bool force_target_assert_enabled;
-	uint8_t bandcapability;
 	bool rps_enabled;
 	uint32_t num_vdevs;
 	bool enable_tx_compl_tsf64;
@@ -138,5 +139,6 @@ struct cds_config_info {
 	bool get_wifi_features;
 #endif
 	bool exclude_selftx_from_cca_busy;
+	bool is_pm_fw_debug_enable;
 };
 #endif /* !defined( __CDS_CONFIG_H ) */

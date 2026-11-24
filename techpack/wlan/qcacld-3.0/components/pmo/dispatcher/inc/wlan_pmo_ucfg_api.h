@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -200,6 +200,46 @@ ucfg_pmo_is_ns_offloaded(struct wlan_objmgr_psoc *psoc);
  */
 uint8_t
 ucfg_pmo_get_sta_dynamic_dtim(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_pmo_get_sta_teles_dtim() - Get telescopic dtim
+ * @psoc: pointer to psoc object
+ *
+ * Return: telescopic dtim
+ */
+uint8_t
+ucfg_pmo_get_sta_teles_dtim(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_pmo_set_sta_teles_dtim() - Set telescopic dtim
+ * @psoc: pointer to psoc object
+ * @val:  telescopic dtim
+ *
+ * Return: None
+ */
+void
+ucfg_pmo_set_sta_teles_dtim(struct wlan_objmgr_psoc *psoc,
+			    uint8_t val);
+
+/**
+ * ucfg_pmo_get_sta_min_teles_dtim() - Get minimum telescopic dtim level
+ * @psoc: pointer to psoc object
+ *
+ * Return: minimum telescopic dtim level
+ */
+uint8_t
+ucfg_pmo_get_sta_min_teles_dtim(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_pmo_set_sta_min_teles_dtim() - Set minimum telescopic dtim level
+ * @psoc: pointer to psoc object
+ * @val:  minimum telescopic dtim level
+ *
+ * Return: None
+ */
+void
+ucfg_pmo_set_sta_min_teles_dtim(struct wlan_objmgr_psoc *psoc,
+				uint8_t val);
 
 /**
  * ucfg_pmo_get_sta_mod_dtim() - Get modulated dtim
@@ -542,6 +582,15 @@ ucfg_pmo_enhanced_mc_filter_disable(struct wlan_objmgr_vdev *vdev)
 {
 	return pmo_core_enhanced_mc_filter_disable(vdev);
 }
+
+/**
+ * ucfg_pmo_tgt_psoc_get_runtime_pm_in_progress() - get runtime status
+ * @psoc: objmgr psoc
+ *
+ * Return: true if runtime pm is in progress else false
+ */
+bool
+ucfg_pmo_tgt_psoc_get_runtime_pm_in_progress(struct wlan_objmgr_psoc *psoc);
 
 #ifdef FEATURE_WLAN_DYNAMIC_ARP_NS_OFFLOAD
 /**
@@ -1309,8 +1358,24 @@ ucfg_pmo_get_active_mc_bc_apf_mode(struct wlan_objmgr_psoc *psoc);
  * Return: true if enabled, it is intersection of ini and target cap
  */
 bool ucfg_pmo_is_apf_enabled(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * ucfg_pmo_is_configure_apf_per_screen_state() - To get enable active mode apf
+ * configuration
+ * @psoc: objmgr psoc handle
+ *
+ * Return: true if enabled, else false
+ */
+bool ucfg_pmo_is_configure_apf_per_screen_state(
+					struct wlan_objmgr_psoc *psoc);
 #else
 static inline bool ucfg_pmo_is_apf_enabled(struct wlan_objmgr_psoc *psoc)
+{
+	return false;
+}
+
+static inline bool ucfg_pmo_is_configure_apf_per_screen_state(
+					struct wlan_objmgr_psoc *psoc)
 {
 	return false;
 }
@@ -2063,6 +2128,30 @@ ucfg_pmo_get_sta_dynamic_dtim(struct wlan_objmgr_psoc *psoc)
 }
 
 static inline uint8_t
+ucfg_pmo_get_sta_teles_dtim(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+
+static inline uint8_t
+ucfg_pmo_set_sta_teles_dtim(struct wlan_objmgr_psoc *psoc, uint8_t val)
+{
+	return 0;
+}
+
+static inline uint8_t
+ucfg_pmo_get_sta_min_teles_dtim(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+
+static inline uint8_t
+ucfg_pmo_set_sta_min_teles_dtim(struct wlan_objmgr_psoc *psoc, uint8_t val)
+{
+	return 0;
+}
+
+static inline uint8_t
 ucfg_pmo_get_sta_mod_dtim(struct wlan_objmgr_psoc *psoc)
 {
 	return 0;
@@ -2459,4 +2548,13 @@ QDF_STATUS ucfg_pmo_set_vdev_bridge_addr(struct wlan_objmgr_vdev *vdev,
  */
 QDF_STATUS ucfg_pmo_get_vdev_bridge_addr(struct wlan_objmgr_vdev *vdev,
 					 struct qdf_mac_addr *bridgeaddr);
+
+/**
+ * ucfg_pmo_is_fw_debug_enable() - This function tells if FW logging debug
+ * is enable or not.
+ * @psoc: pointer to psoc object
+ *
+ * Return: true if FW debug is enable otherwise false
+ */
+bool ucfg_pmo_is_fw_debug_enable(struct wlan_objmgr_psoc *psoc);
 #endif /* end  of _WLAN_PMO_UCFG_API_H_ */

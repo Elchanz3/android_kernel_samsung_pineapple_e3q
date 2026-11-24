@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -83,14 +83,6 @@ void
 wlan_get_320_center_freq(qdf_freq_t freq,
 			 qdf_freq_t *center_freq1,
 			 qdf_freq_t *center_freq2);
-
-/**
- * wlan_freq_to_chan() - converts frequency to channel
- * @freq: frequency
- *
- * Return: channel of frequency
- */
-uint8_t wlan_freq_to_chan(uint32_t freq);
 
 /**
  * wlan_is_ie_valid() - Determine if an IE sequence is valid
@@ -681,6 +673,23 @@ uint32_t wlan_get_pdev_id_from_vdev_id(struct wlan_objmgr_psoc *psoc,
 				 wlan_objmgr_ref_dbgid dbg_id);
 
 /**
+ * wlan_get_self_macaddr_from_vdev_id() - Fetch vdev mac address
+ * @psoc: psoc object
+ * @vdev_id: vdev identifier
+ * @dbg_id: object manager debug id
+ * @self_mac_addr: buffer to fetch and fill the mac addr
+ *
+ * This function is used to fetch the mac addr from the vdev
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS
+wlan_get_self_macaddr_from_vdev_id(struct wlan_objmgr_psoc *psoc,
+				   uint8_t vdev_id,
+				   wlan_objmgr_ref_dbgid dbg_id,
+				   struct qdf_mac_addr *self_mac_addr);
+
+/**
  * wlan_util_is_vdev_active() - Check for vdev active
  * @pdev: pdev pointer
  * @dbg_id: debug id for ref counting
@@ -940,10 +949,28 @@ uint16_t wlan_util_get_peer_count_for_mode(struct wlan_objmgr_pdev *pdev,
  * @WLAN_MD_CP_EXT_PSOC: ol_ath_soc_softc
  * @WLAN_MD_CP_EXT_VDEV: ieee80211vap
  * @WLAN_MD_CP_EXT_PEER: ieee80211_node
+ * @WLAN_MD_CP_MLO_DEV_CTX: wlan_mlo_dev_context
+ * @WLAN_MD_CP_MLO_AP: wlan_mlo_ap
+ * @WLAN_MD_CP_MLO_STA: wlan_mlo_sta
+ * @WLAN_MD_CP_MLO_BRG_STA: wlan_mlo_bridge_sta
+ * @WLAN_MD_CP_MLO_MGR_CTX: mlo_mgr_context
+ * @WLAN_MD_CP_MLO_PEER_CTX: wlan_mlo_peer_context
+ * @WLAN_MD_CP_MGMT_TXRX_PDEV_CTX: mgmt_txrx_priv_pdev_context
+ * @WLAN_MD_CP_MGMT_TXRX_STATS: mgmt_txrx_stats_t
+ * @WLAN_MD_CP_MGMT_RX_REO_PDEV: mgmt_rx_reo_pdev_info
+ * @WLAN_MD_DP_MON_SOC: dp_mon_soc
+ * @WLAN_MD_DP_MON_PDEV: dp_mon_pdev
+ * @WLAN_MD_DP_MON_VDEV: dp_mon_vdev
+ * @WLAN_MD_DP_MON_PEER: dp_mon_peer
+ * @WLAN_MD_DP_TXRX_PEER: dp_txrx_peer
+ * @WLAN_MD_DP_MLO_DEV_CTX: dp_mlo_dev_ctxt
+ * @WLAN_MD_DP_MLO_CTX: dp_mlo_ctxt
  * @WLAN_MD_DP_SOC: dp_soc
  * @WLAN_MD_DP_PDEV: dp_pdev
  * @WLAN_MD_DP_VDEV: dp_vdev
  * @WLAN_MD_DP_PEER: dp_peer
+ * @WLAN_MD_DP_CFG_PDEV_CTXT: wlan_cfg_dp_pdev_ctxt
+ * @WLAN_MD_DP_CFG_SOC_CTXT: wlan_cfg_dp_soc_ctxt
  * @WLAN_MD_DP_SRNG_REO_DEST: dp_srng type for reo dest
  * @WLAN_MD_DP_SRNG_REO_EXCEPTION: dp_srng type for reo exception
  * @WLAN_MD_DP_SRNG_REO_CMD: dp_srng type for reo cmd
@@ -963,13 +990,22 @@ uint16_t wlan_util_get_peer_count_for_mode(struct wlan_objmgr_pdev *pdev,
  * @WLAN_MD_DP_SRNG_RXDMA_MON_DESC: dp_srng type for rxdma mon desc
  * @WLAN_MD_DP_SRNG_RXDMA_ERR_DST: dp_srng type for rxdma err dst
  * @WLAN_MD_DP_HAL_SOC: hal_soc
+ * @WLAN_MD_OBJMGR_GLOBAL: wlan_objmgr_global
+ * @WLAN_MD_DP_GLOBAL_CTX: dp_global_context
  * @WLAN_MD_OBJMGR_PSOC: wlan_objmgr_psoc
  * @WLAN_MD_OBJMGR_PSOC_TGT_INFO: wlan_objmgr_tgt_psoc_info
+ * @WLAN_MD_OBJMGR_PSOC_MLME: psoc_mlme_obj
+ * @WLAN_MD_OBJMGR_PSOC_SER: wlan_ser_psoc_obj
  * @WLAN_MD_OBJMGR_PDEV: wlan_objmgr_pdev
  * @WLAN_MD_OBJMGR_PDEV_MLME: pdev_mlme
+ * @WLAN_MD_OBJMGR_PDEV_AFC_REG: wlan_regulatory_pdev_priv_obj
+ * @WLAN_MD_OBJMGR_PDEV_TGT_INFO: target_pdev_info
+ * @WLAN_MD_OBJMGR_PDEV_SER: wlan_ser_pdev_obj
  * @WLAN_MD_OBJMGR_VDEV: wlan_objmgr_vdev
  * @WLAN_MD_OBJMGR_VDEV_MLME: vdev mlme
  * @WLAN_MD_OBJMGR_VDEV_SM: wlan_sm
+ * @WLAN_MD_OBJMGR_VDEV_SER: wlan_ser_vdev_obj
+ * @WLAN_MD_OBJMGR_PEER: wlan_objmgr_peer
  * @WLAN_MD_DP_SRNG_REO2PPE: dp_srng type PPE rx ring
  * @WLAN_MD_DP_SRNG_PPE2TCL: dp_srng type for PPE tx ring
  * @WLAN_MD_DP_SRNG_PPE_RELEASE: dp_srng type for PPE tx com ring
@@ -982,10 +1018,28 @@ enum wlan_minidump_host_data {
 	WLAN_MD_CP_EXT_PSOC,
 	WLAN_MD_CP_EXT_VDEV,
 	WLAN_MD_CP_EXT_PEER,
+	WLAN_MD_CP_MLO_DEV_CTX,
+	WLAN_MD_CP_MLO_AP,
+	WLAN_MD_CP_MLO_STA,
+	WLAN_MD_CP_MLO_BRG_STA,
+	WLAN_MD_CP_MLO_MGR_CTX,
+	WLAN_MD_CP_MLO_PEER_CTX,
+	WLAN_MD_CP_MGMT_TXRX_PDEV_CTX,
+	WLAN_MD_CP_MGMT_TXRX_STATS,
+	WLAN_MD_CP_MGMT_RX_REO_PDEV,
+	WLAN_MD_DP_MON_SOC,
+	WLAN_MD_DP_MON_PDEV,
+	WLAN_MD_DP_MON_VDEV,
+	WLAN_MD_DP_MON_PEER,
+	WLAN_MD_DP_TXRX_PEER,
+	WLAN_MD_DP_MLO_DEV_CTX,
+	WLAN_MD_DP_MLO_CTX,
 	WLAN_MD_DP_SOC,
 	WLAN_MD_DP_PDEV,
 	WLAN_MD_DP_VDEV,
 	WLAN_MD_DP_PEER,
+	WLAN_MD_DP_CFG_PDEV_CTXT,
+	WLAN_MD_DP_CFG_SOC_CTXT,
 	WLAN_MD_DP_SRNG_REO_DEST,
 	WLAN_MD_DP_SRNG_REO_EXCEPTION,
 	WLAN_MD_DP_SRNG_REO_CMD,
@@ -1005,13 +1059,22 @@ enum wlan_minidump_host_data {
 	WLAN_MD_DP_SRNG_RXDMA_MON_DESC,
 	WLAN_MD_DP_SRNG_RXDMA_ERR_DST,
 	WLAN_MD_DP_HAL_SOC,
+	WLAN_MD_OBJMGR_GLOBAL,
+	WLAN_MD_DP_GLOBAL_CTX,
 	WLAN_MD_OBJMGR_PSOC,
 	WLAN_MD_OBJMGR_PSOC_TGT_INFO,
+	WLAN_MD_OBJMGR_PSOC_MLME,
+	WLAN_MD_OBJMGR_PSOC_SER,
 	WLAN_MD_OBJMGR_PDEV,
 	WLAN_MD_OBJMGR_PDEV_MLME,
+	WLAN_MD_OBJMGR_PDEV_AFC_REG,
+	WLAN_MD_OBJMGR_PDEV_TGT_INFO,
+	WLAN_MD_OBJMGR_PDEV_SER,
 	WLAN_MD_OBJMGR_VDEV,
 	WLAN_MD_OBJMGR_VDEV_MLME,
 	WLAN_MD_OBJMGR_VDEV_SM,
+	WLAN_MD_OBJMGR_VDEV_SER,
+	WLAN_MD_OBJMGR_PEER,
 	WLAN_MD_DP_SRNG_REO2PPE,
 	WLAN_MD_DP_SRNG_PPE2TCL,
 	WLAN_MD_DP_SRNG_PPE_RELEASE,
@@ -1070,4 +1133,55 @@ enum wlan_phymode
 wlan_eht_chan_phy_mode(uint32_t freq,
 		       uint16_t bw_val,
 		       enum phy_ch_width chan_width);
+
+/*
+ * wlan_get_rsn_data_from_ie_ptr() - Get the RSN IE data from the
+ * beacon/assoc IEs
+ * @ie_ptr: pointer to ies
+ * @ie_len: length of ies in ie_ptr
+ *
+ * Parse the beacon/assoc IEs and return the pointer to the RSN
+ * data. Prefer the vendor RSN IE over the legacy RSN IE if the
+ * override IE has non-zero data.
+ *
+ * Return: rsn ie data pointer
+ */
+const uint8_t *wlan_get_rsn_data_from_ie_ptr(const uint8_t *ie_ptr,
+					     int ie_len);
+
+/*
+ * wlan_get_rsnxe_data_from_ie_ptr() - Get the RSNXE IE data from the
+ * beacon/assoc IEs
+ * @ie_ptr: pointer to ies
+ * @ie_len: length of ies in ie_ptr
+ *
+ * Parse the beacon/assoc IEs and return the pointer to the RSNXE
+ * data. Prefer the vendor RSNXE IE over the legacy RSNXE IE if the
+ * override IE has non-zero data.
+ *
+ * Return: rsn ie data pointer
+ */
+const uint8_t *wlan_get_rsnxe_data_from_ie_ptr(const uint8_t *ie_ptr,
+					       int ie_len);
+
+/**
+ * wlan_is_rsn_override_present() - Is RSNO present in the IEs
+ * @ie: pointer to IEs
+ * @len: length of IEs
+ *
+ * Parse the IEs and return true if the RSNO element is present in the IEs.
+ *
+ * Return: RSNO generation if present
+ */
+uint8_t wlan_is_rsn_override_present(const uint8_t *ie, int len);
+
+/*
+ * wlan_get_rsn_sel_ie_from_ie_ptr() - Get RSN selector IE from the beacon/
+ * assoc IEs
+ * @ie_ptr: pointer to ies
+ * @ie_len: length of ies in ie_ptr
+ *
+ * Return: RSN selector IE if present
+ */
+const uint8_t *wlan_get_rsn_sel_ie_from_ie_ptr(const uint8_t *ie, int len);
 #endif /* _WLAN_UTILITY_H_ */

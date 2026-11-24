@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -32,6 +32,14 @@
  * Return: Success or Failure
  */
 QDF_STATUS tgt_if_regulatory_modify_freq_range(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * target_if_register_afc_tx_ops() - register afc tx ops
+ * @tx_ops: tx_ops pointer
+ *
+ * Return: Success or Failure
+ */
+QDF_STATUS target_if_register_afc_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops);
 
 /**
  * target_if_register_regulatory_tx_ops() - register regulatory tx ops
@@ -141,6 +149,17 @@ target_if_reg_set_lower_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc);
  */
 QDF_STATUS
 target_if_reg_set_disable_upper_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc);
+
+/**
+ * target_if_set_regulatory_is_both_psd_eirp_support_for_sp() - Check if for
+ * 6 GHz SP power mode both PSD and EIRP power are to be sent to the target.
+ * @psoc: Pointer to psoc
+ *
+ * Return: true if regdb if both PSD and EIRP are needed, else false.
+ */
+QDF_STATUS
+target_if_set_regulatory_is_both_psd_eirp_support_for_sp(
+						struct wlan_objmgr_psoc *psoc);
 #else
 static inline QDF_STATUS
 target_if_reg_set_lower_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc)
@@ -150,6 +169,13 @@ target_if_reg_set_lower_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc)
 
 static inline QDF_STATUS
 target_if_reg_set_disable_upper_6g_edge_ch_info(struct wlan_objmgr_psoc *psoc)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+static inline QDF_STATUS
+target_if_set_regulatory_is_both_psd_eirp_support_for_sp(
+						struct wlan_objmgr_psoc *psoc)
 {
 	return QDF_STATUS_E_FAILURE;
 }

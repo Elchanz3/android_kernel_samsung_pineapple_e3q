@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -493,7 +493,8 @@ hal_rx_populate_mu_user_info(void *rx_tlv, void *ppduinfo, uint32_t user_id,
 	mon_rx_user_status->vht_flags = ppdu_info->rx_status.vht_flags;
 	mon_rx_user_status->he_flags = ppdu_info->rx_status.he_flags;
 	mon_rx_user_status->rs_flags = ppdu_info->rx_status.rs_flags;
-
+	mon_rx_user_status->nss = ppdu_info->rx_status.nss;
+	mon_rx_user_status->mcs = ppdu_info->rx_status.mcs;
 	mon_rx_user_status->mpdu_cnt_fcs_ok =
 		ppdu_info->com_info.mpdu_cnt_fcs_ok;
 	mon_rx_user_status->mpdu_cnt_fcs_err =
@@ -586,7 +587,7 @@ hal_get_mac_addr1(uint8_t *rx_mpdu_start,
 				   MAC_ADDR_AD1_31_0);
 		if (ppdu_info->sw_frame_group_id ==
 		    HAL_MPDU_SW_FRAME_GROUP_CTRL_RTS) {
-			*(uint32_t *)&ppdu_info->rx_info.mac_addr1[4] =
+			*(uint16_t *)&ppdu_info->rx_info.mac_addr1[4] =
 				HAL_RX_GET(rx_mpdu_start,
 					   RX_MPDU_INFO_16,
 					   MAC_ADDR_AD1_47_32);
@@ -771,6 +772,11 @@ hal_rx_status_get_tlv_info_generic_li(void *rx_tlv_hdr, void *ppduinfo,
 	{
 		unsigned long tid = 0;
 		uint16_t seq = 0;
+
+		ppdu_info->rx_status.nss = HAL_RX_GET(rx_tlv, RX_PPDU_END_USER_STATS_1,
+					   NSS) + 1;
+		ppdu_info->rx_status.mcs = HAL_RX_GET(rx_tlv, RX_PPDU_END_USER_STATS_1,
+					   MCS);
 
 		ppdu_info->rx_status.ast_index =
 				HAL_RX_GET(rx_tlv, RX_PPDU_END_USER_STATS_4,
@@ -1693,6 +1699,9 @@ hal_rx_status_get_tlv_info_generic_li(void *rx_tlv_hdr, void *ppduinfo,
 
 		ppdu_info->rx_user_status[user_id].sw_peer_id =
 			HAL_RX_GET_SW_PEER_ID(rx_mpdu_start);
+
+		ppdu_info->rx_user_status[user_id].enc_type =
+			HAL_RX_GET_ENCRYPT_TYPE(rx_mpdu_start);
 
 		hal_update_rx_ctrl_frame_stats(ppdu_info, user_id);
 

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -645,11 +645,15 @@ void dp_rx_mon_init_tail_msdu(qdf_nbuf_t *head_msdu, qdf_nbuf_t msdu,
  * If feature is disabled, then removal happens in restitch logic.
  *
  * @soc: Datapath soc handle
+ * @mon_pdev: Monitor pdev
+ * @ppdu_info: PPDU info
  * @head_msdu: Head msdu
  * @tail_msdu: Tail msdu
  */
 static inline
 void dp_rx_mon_remove_raw_frame_fcs_len(struct dp_soc *soc,
+					struct dp_mon_pdev *mon_pdev,
+					struct hal_rx_ppdu_info *ppdu_info,
 					qdf_nbuf_t *head_msdu,
 					qdf_nbuf_t *tail_msdu)
 {
@@ -667,9 +671,31 @@ void dp_rx_mon_remove_raw_frame_fcs_len(struct dp_soc *soc,
 	addr -= soc->rx_mon_pkt_tlv_size;
 	if (hal_rx_tlv_decap_format_get(soc->hal_soc, addr) ==
 		HAL_HW_RX_DECAP_FORMAT_RAW) {
+		uint8_t fcs_len_left = HAL_RX_FCS_LEN;
+
+		if (qdf_nbuf_get_nr_frags(*tail_msdu) >= 2) {
+			uint8_t last_f = qdf_nbuf_get_nr_frags(*tail_msdu) - 1;
+			uint8_t last_frag_size =
+				qdf_nbuf_get_frag_size(*tail_msdu, last_f);
+
+			if (last_frag_size < HAL_RX_FCS_LEN) {
+				qdf_nbuf_remove_frag(*tail_msdu, last_f,
+						     RX_MONITOR_BUFFER_SIZE);
+				fcs_len_left -= last_frag_size;
+			}
+		}
+
+		/* if monitor FCS capture feature is enabled,
+		 * skip removing FCS header
+		 */
+		if (mon_pdev->mon_fcs_cap) {
+			dp_rx_mon_fcs_cap_debug(mon_pdev, *tail_msdu);
+			ppdu_info->rx_status.mon_fcs_cap = true;
+			return;
+		}
 		qdf_nbuf_trim_add_frag_size(*tail_msdu,
-			qdf_nbuf_get_nr_frags(*tail_msdu) - 1,
-					-HAL_RX_FCS_LEN, 0);
+					    qdf_nbuf_get_nr_frags(*tail_msdu) -
+					    1, -fcs_len_left, 0);
 	}
 }
 
@@ -684,6 +710,9 @@ uint8_t *dp_rx_mon_get_buffer_data(struct dp_rx_desc *rx_desc)
 {
 	return rx_desc->rx_buf_start;
 }
+
+#define DP_RX_MON_FIRST_RX_MSDU_IN_LIST(_head_msdu) \
+	(_head_msdu)
 
 #else
 
@@ -733,11 +762,42 @@ dp_rx_mon_buffer_unmap(struct dp_soc *soc, struct dp_rx_desc *rx_desc,
 				     QDF_DMA_FROM_DEVICE, size);
 }
 
+#ifdef CONFIG_WORD_BASED_TLV
+/*
+ * Get the first msdu received from HW, the head msdu
+ * is added by host sw to accommodate radiotap header if
+ * Qword based TLV is enabled.
+ */
+#define DP_RX_MON_FIRST_RX_MSDU_IN_LIST(_head_msdu) \
+	qdf_nbuf_next((_head_msdu))
+
+static inline
+QDF_STATUS dp_rx_mon_alloc_parent_buffer(qdf_nbuf_t *head_msdu)
+{
+	/* reserve 256 bytes for radiotap header */
+	*head_msdu = qdf_nbuf_alloc(NULL, 2 * DP_RX_MON_MAX_RADIO_TAP_HDR,
+				    2 * DP_RX_MON_MAX_RADIO_TAP_HDR,
+				    4, false);
+
+	if (!(*head_msdu))
+		return QDF_STATUS_E_FAILURE;
+
+	qdf_mem_zero(qdf_nbuf_head(*head_msdu), qdf_nbuf_headroom(*head_msdu));
+
+	qdf_nbuf_set_next(*head_msdu, NULL);
+
+	return QDF_STATUS_SUCCESS;
+}
+#else
+#define DP_RX_MON_FIRST_RX_MSDU_IN_LIST(_head_msdu) \
+	 (_head_msdu)
+
 static inline
 QDF_STATUS dp_rx_mon_alloc_parent_buffer(qdf_nbuf_t *head_msdu)
 {
 	return QDF_STATUS_SUCCESS;
 }
+#endif
 
 #ifdef QCA_WIFI_MONITOR_MODE_NO_MSDU_START_TLV_SUPPORT
 
@@ -868,6 +928,8 @@ QDF_STATUS dp_rx_mon_add_msdu_to_list(struct dp_soc *soc, qdf_nbuf_t *head_msdu,
 	} else {
 		if (*last)
 			qdf_nbuf_set_next(*last, msdu);
+		else if (head_msdu)
+			qdf_nbuf_set_next(*head_msdu, msdu);
 	}
 	*last = msdu;
 	return QDF_STATUS_SUCCESS;
@@ -885,6 +947,8 @@ void dp_rx_mon_init_tail_msdu(qdf_nbuf_t *head_msdu, qdf_nbuf_t msdu,
 
 static inline
 void dp_rx_mon_remove_raw_frame_fcs_len(struct dp_soc *soc,
+					struct dp_mon_pdev *mon_pdev,
+					struct hal_rx_ppdu_info *ppdu_info,
 					qdf_nbuf_t *head_msdu,
 					qdf_nbuf_t *tail_msdu)
 {

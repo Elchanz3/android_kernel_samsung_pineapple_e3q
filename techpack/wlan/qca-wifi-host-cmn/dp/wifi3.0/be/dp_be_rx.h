@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -26,17 +26,6 @@
 #include <dp_rx.h>
 #include "hal_be_rx.h"
 #include "hal_be_rx_tlv.h"
-
-/*
- * dp_be_intrabss_params
- *
- * @dest_soc: dest soc to forward the packet to
- * @tx_vdev_id: vdev id retrieved from dest peer
- */
-struct dp_be_intrabss_params {
-	struct dp_soc *dest_soc;
-	uint8_t tx_vdev_id;
-};
 
 #ifndef QCA_HOST_MODE_WIFI_DISABLED
 
@@ -275,6 +264,124 @@ dp_soc_get_num_soc_be(struct dp_soc *soc)
 }
 #endif
 
+static inline QDF_STATUS
+dp_peer_rx_reorder_q_setup_per_tid(struct dp_peer *peer,
+				   uint32_t tid_bitmap,
+				   uint32_t ba_window_size)
+{
+	int tid;
+	struct dp_rx_tid *rx_tid;
+	struct dp_soc *soc = peer->vdev->pdev->soc;
+
+	if (!soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup) {
+		dp_peer_debug("%pK: rx_reorder_queue_setup NULL bitmap 0x%x",
+			      soc, tid_bitmap);
+		return QDF_STATUS_SUCCESS;
+	}
+
+	for (tid = 0; tid < DP_MAX_TIDS; tid++) {
+		if (!(BIT(tid) & tid_bitmap))
+			continue;
+
+		rx_tid = &peer->rx_tid[tid];
+		if (!rx_tid->hw_qdesc_paddr) {
+			tid_bitmap &= ~BIT(tid);
+			continue;
+		}
+
+		if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup(
+		    soc->ctrl_psoc,
+		    peer->vdev->pdev->pdev_id,
+		    peer->vdev->vdev_id,
+		    peer->mac_addr.raw,
+		    rx_tid->hw_qdesc_paddr,
+		    tid, tid,
+		    1, ba_window_size)) {
+			dp_peer_err("%pK: Fail to send reo q to FW. tid %d",
+				    soc, tid);
+			return QDF_STATUS_E_FAILURE;
+		}
+	}
+
+	if (!tid_bitmap) {
+		dp_peer_err("tid_bitmap=0. All tids setup fail");
+		return QDF_STATUS_E_FAILURE;
+	}
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+dp_peer_multi_tid_params_setup(struct dp_peer *peer,
+		uint32_t tid_bitmap,
+		uint32_t ba_window_size,
+		struct multi_rx_reorder_queue_setup_params *tid_params)
+{
+	struct dp_rx_tid *rx_tid;
+	int tid;
+
+	tid_params->peer_macaddr = peer->mac_addr.raw;
+	tid_params->tid_bitmap = tid_bitmap;
+	tid_params->vdev_id = peer->vdev->vdev_id;
+
+	for (tid = 0; tid < DP_MAX_TIDS; tid++) {
+		if (!(BIT(tid) & tid_bitmap))
+			continue;
+
+		rx_tid = &peer->rx_tid[tid];
+		if (!rx_tid->hw_qdesc_paddr) {
+			tid_params->tid_bitmap &= ~BIT(tid);
+			continue;
+		}
+
+		tid_params->tid_num++;
+		tid_params->queue_params_list[tid].hw_qdesc_paddr =
+			rx_tid->hw_qdesc_paddr;
+		tid_params->queue_params_list[tid].queue_no = tid;
+		tid_params->queue_params_list[tid].ba_window_size_valid = 1;
+		tid_params->queue_params_list[tid].ba_window_size =
+			ba_window_size;
+	}
+
+	if (!tid_params->tid_bitmap) {
+		dp_peer_err("tid_bitmap=0. All tids setup fail");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+dp_peer_rx_reorder_multi_q_setup(struct dp_peer *peer,
+				 uint32_t tid_bitmap,
+				 uint32_t ba_window_size)
+{
+	QDF_STATUS status;
+	struct dp_soc *soc = peer->vdev->pdev->soc;
+	struct multi_rx_reorder_queue_setup_params tid_params = {0};
+
+	if (!soc->cdp_soc.ol_ops->peer_multi_rx_reorder_queue_setup) {
+		dp_peer_debug("%pK: callback NULL", soc);
+		return QDF_STATUS_SUCCESS;
+	}
+
+	status = dp_peer_multi_tid_params_setup(peer, tid_bitmap,
+						ba_window_size,
+						&tid_params);
+	if (qdf_unlikely(QDF_IS_STATUS_ERROR(status)))
+		return status;
+
+	if (soc->cdp_soc.ol_ops->peer_multi_rx_reorder_queue_setup(
+	    soc->ctrl_psoc,
+	    peer->vdev->pdev->pdev_id,
+	    &tid_params)) {
+		dp_peer_err("%pK: multi_reorder_q_setup fail. tid_bitmap 0x%x",
+			    soc, tid_bitmap);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
 #ifdef WLAN_FEATURE_11BE_MLO
 /**
  * dp_rx_mlo_igmp_handler() - Rx handler for Mcast packets
@@ -293,11 +400,11 @@ bool dp_rx_mlo_igmp_handler(struct dp_soc *soc,
 			    uint8_t link_id);
 
 /**
- * dp_peer_rx_reorder_queue_setup_be() - Send reo queue setup wmi cmd to FW
- *					 per peer type
+ * dp_peer_rx_reorder_queue_setup_be() - Send reo queue
+ *        setup wmi cmd to FW per peer type
  * @soc: DP Soc handle
  * @peer: dp peer to operate on
- * @tid: TID
+ * @tid_bitmap: TIDs to be set up
  * @ba_window_size: BlockAck window size
  *
  * Return: 0 - success, others - failure
@@ -305,70 +412,17 @@ bool dp_rx_mlo_igmp_handler(struct dp_soc *soc,
 static inline
 QDF_STATUS dp_peer_rx_reorder_queue_setup_be(struct dp_soc *soc,
 					     struct dp_peer *peer,
-					     int tid,
+					     uint32_t tid_bitmap,
 					     uint32_t ba_window_size)
 {
 	uint8_t i;
 	struct dp_mld_link_peers link_peers_info;
 	struct dp_peer *link_peer;
 	struct dp_rx_tid *rx_tid;
-	struct dp_soc *link_peer_soc;
+	int tid;
+	QDF_STATUS status;
 
-	rx_tid = &peer->rx_tid[tid];
-	if (!rx_tid->hw_qdesc_paddr)
-		return QDF_STATUS_E_INVAL;
-
-	if (!hal_reo_shared_qaddr_is_enable(soc->hal_soc)) {
-		if (IS_MLO_DP_MLD_PEER(peer)) {
-			/* get link peers with reference */
-			dp_get_link_peers_ref_from_mld_peer(soc, peer,
-							    &link_peers_info,
-							    DP_MOD_ID_CDP);
-			/* send WMI cmd to each link peers */
-			for (i = 0; i < link_peers_info.num_links; i++) {
-				link_peer = link_peers_info.link_peers[i];
-				link_peer_soc = link_peer->vdev->pdev->soc;
-				if (link_peer_soc->cdp_soc.ol_ops->
-						peer_rx_reorder_queue_setup) {
-					if (link_peer_soc->cdp_soc.ol_ops->
-						peer_rx_reorder_queue_setup(
-					    link_peer_soc->ctrl_psoc,
-					    link_peer->vdev->pdev->pdev_id,
-					    link_peer->vdev->vdev_id,
-					    link_peer->mac_addr.raw,
-					    rx_tid->hw_qdesc_paddr,
-					    tid, tid,
-					    1, ba_window_size)) {
-						dp_peer_err("%pK: Failed to send reo queue setup to FW - tid %d\n",
-							    link_peer_soc, tid);
-						return QDF_STATUS_E_FAILURE;
-					}
-				}
-			}
-			/* release link peers reference */
-			dp_release_link_peers_ref(&link_peers_info,
-						  DP_MOD_ID_CDP);
-		} else if (peer->peer_type == CDP_LINK_PEER_TYPE) {
-			if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup) {
-				if (soc->cdp_soc.ol_ops->
-					peer_rx_reorder_queue_setup(
-				    soc->ctrl_psoc,
-				    peer->vdev->pdev->pdev_id,
-				    peer->vdev->vdev_id,
-				    peer->mac_addr.raw,
-				    rx_tid->hw_qdesc_paddr,
-				    tid, tid,
-				    1, ba_window_size)) {
-					dp_peer_err("%pK: Failed to send reo queue setup to FW - tid %d\n",
-						    soc, tid);
-					return QDF_STATUS_E_FAILURE;
-				}
-			}
-		} else {
-			dp_peer_err("invalid peer type %d", peer->peer_type);
-			return QDF_STATUS_E_FAILURE;
-		}
-	} else {
+	if (hal_reo_shared_qaddr_is_enable(soc->hal_soc)) {
 		/* Some BE targets dont require WMI and use shared
 		 * table managed by host for storing Reo queue ref structs
 		 */
@@ -388,38 +442,122 @@ QDF_STATUS dp_peer_rx_reorder_queue_setup_be(struct dp_soc *soc,
 			return QDF_STATUS_SUCCESS;
 		}
 
-		hal_reo_shared_qaddr_write(soc->hal_soc,
-					   peer->peer_id,
-					   tid, peer->rx_tid[tid].hw_qdesc_paddr);
+		for (tid = 0; tid < DP_MAX_TIDS; tid++) {
+			if (!((1 << tid) & tid_bitmap))
+				continue;
+
+			rx_tid = &peer->rx_tid[tid];
+			if (!rx_tid->hw_qdesc_paddr) {
+				tid_bitmap &= ~BIT(tid);
+				continue;
+			}
+
+			hal_reo_shared_qaddr_write(soc->hal_soc,
+						   peer->peer_id,
+						   tid, peer->rx_tid[tid].
+							hw_qdesc_paddr);
+
+			if (!tid_bitmap) {
+				dp_peer_err("tid_bitmap=0. All tids setup fail");
+				return QDF_STATUS_E_FAILURE;
+			}
+		}
+
+		return QDF_STATUS_SUCCESS;
 	}
+
+	/* when (!hal_reo_shared_qaddr_is_enable(soc->hal_soc)) is true: */
+	if (IS_MLO_DP_MLD_PEER(peer)) {
+		/* get link peers with reference */
+		dp_get_link_peers_ref_from_mld_peer(soc, peer,
+						    &link_peers_info,
+						    DP_MOD_ID_CDP);
+		/* send WMI cmd to each link peers */
+		for (i = 0; i < link_peers_info.num_links; i++) {
+			link_peer = link_peers_info.link_peers[i];
+			if (soc->features.multi_rx_reorder_q_setup_support)
+				status = dp_peer_rx_reorder_multi_q_setup(
+					link_peer, tid_bitmap, ba_window_size);
+			else
+				status = dp_peer_rx_reorder_q_setup_per_tid(
+							link_peer,
+							tid_bitmap,
+							ba_window_size);
+			if (QDF_IS_STATUS_ERROR(status)) {
+				dp_release_link_peers_ref(&link_peers_info, DP_MOD_ID_CDP);
+				return status;
+			}
+		}
+		/* release link peers reference */
+		dp_release_link_peers_ref(&link_peers_info, DP_MOD_ID_CDP);
+	} else if (peer->peer_type == CDP_LINK_PEER_TYPE) {
+		if (soc->features.multi_rx_reorder_q_setup_support)
+			return dp_peer_rx_reorder_multi_q_setup(peer,
+								tid_bitmap,
+								ba_window_size);
+		else
+			return dp_peer_rx_reorder_q_setup_per_tid(peer,
+							tid_bitmap,
+							ba_window_size);
+	} else {
+		dp_peer_err("invalid peer type %d", peer->peer_type);
+
+		return QDF_STATUS_E_FAILURE;
+	}
+
 	return QDF_STATUS_SUCCESS;
 }
 #else
 static inline
 QDF_STATUS dp_peer_rx_reorder_queue_setup_be(struct dp_soc *soc,
 					     struct dp_peer *peer,
-					     int tid,
+					     uint32_t tid_bitmap,
 					     uint32_t ba_window_size)
 {
-	struct dp_rx_tid *rx_tid = &peer->rx_tid[tid];
+	struct dp_rx_tid *rx_tid;
+	int tid;
 
-	if (!rx_tid->hw_qdesc_paddr)
-		return QDF_STATUS_E_INVAL;
-
-	if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup) {
-		if (soc->cdp_soc.ol_ops->peer_rx_reorder_queue_setup(
-		    soc->ctrl_psoc,
-		    peer->vdev->pdev->pdev_id,
-		    peer->vdev->vdev_id,
-		    peer->mac_addr.raw, rx_tid->hw_qdesc_paddr, tid, tid,
-		    1, ba_window_size)) {
-			dp_peer_err("%pK: Failed to send reo queue setup to FW - tid %d\n",
-				    soc, tid);
-			return QDF_STATUS_E_FAILURE;
+	if (hal_reo_shared_qaddr_is_enable(soc->hal_soc)) {
+		/* Some BE targets dont require WMI and use shared
+		 * table managed by host for storing Reo queue ref structs
+		 */
+		if (peer->peer_id == HTT_INVALID_PEER) {
+			dp_peer_debug("Invalid peer id for dp_peer:%pK", peer);
+			return QDF_STATUS_SUCCESS;
 		}
+
+		for (tid = 0; tid < DP_MAX_TIDS; tid++) {
+			if (!((1 << tid) & tid_bitmap))
+				continue;
+
+			rx_tid = &peer->rx_tid[tid];
+			if (!rx_tid->hw_qdesc_paddr) {
+				tid_bitmap &= ~BIT(tid);
+				continue;
+			}
+
+			hal_reo_shared_qaddr_write(soc->hal_soc,
+						   peer->peer_id,
+						   tid, peer->rx_tid[tid].
+							hw_qdesc_paddr);
+
+			if (!tid_bitmap) {
+				dp_peer_err("tid_bitmap=0. All tids setup fail");
+				return QDF_STATUS_E_FAILURE;
+			}
+		}
+
+		return QDF_STATUS_SUCCESS;
 	}
 
-	return QDF_STATUS_SUCCESS;
+	if (soc->features.multi_rx_reorder_q_setup_support)
+		return dp_peer_rx_reorder_multi_q_setup(peer,
+							tid_bitmap,
+							ba_window_size);
+	else
+		return dp_peer_rx_reorder_q_setup_per_tid(peer,
+							  tid_bitmap,
+							  ba_window_size);
 }
 #endif /* WLAN_FEATURE_11BE_MLO */
 
@@ -586,6 +724,50 @@ dp_rx_wbm_err_reap_desc_be(struct dp_intr *int_ctx, struct dp_soc *soc,
 			   uint32_t *rx_bufs_used);
 
 /**
+ * dp_rx_intrabss_get_params_be() - Function to get destination soc and vdev id
+ *                                  parameters to forward the intrabss traffic
+ * @soc: pointer to soc structure
+ * @vdev: DP vdev handle
+ * @ta_peer: transmitter DP peer handle
+ * @params_in: Input parameters peer id , chip id, pmac id and module id
+ * @params_out: Output parameters having destination soc and vdev id
+ *
+ * Return: bool: false in case of error, else true
+ */
+bool dp_rx_intrabss_get_params_be(struct dp_soc *soc, struct dp_vdev *vdev,
+				  struct dp_txrx_peer *ta_peer,
+				  struct dp_be_intrabss_in_params params_in,
+				  struct dp_be_intrabss_params *params_out);
+
+/*
+ * dp_rx_intrabss_get_mcbc_params_be - Get intrabss multicast soc and vdev id
+ * @soc: Handle to DP Soc structure
+ * @vdev: DP vdev handle
+ * @params: parameters having destination soc and vdev id
+ *
+ * Return: bool: false in case of error, else true
+ */
+bool dp_rx_intrabss_get_mcbc_params_be(struct dp_soc *soc, struct dp_vdev *vdev,
+				       struct dp_be_intrabss_params *params);
+
+/**
+ * dp_rx_intrabss_mlo_mcbc_fwd_be() - Function to forward the multicast and
+ *                                    broadcast packets
+ * @params: parameters having destination soc and vdev id
+ * @nbuf_copy: nbuf that has to be intrabss forwarded
+ * @link_id: link id on which the packet is received
+ * @len: Length
+ * @ta_txrx_peer: source txrx_peer entry
+ * @tid_stats: tid_stats structure
+ *
+ * Return: bool: false in case of error, else true
+ */
+bool dp_rx_intrabss_mlo_mcbc_fwd_be(struct dp_be_intrabss_params params,
+				    qdf_nbuf_t nbuf_copy, uint8_t link_id,
+				    uint16_t len,
+				    struct dp_txrx_peer *ta_txrx_peer,
+				    struct cdp_tid_rx_stats *tid_stats);
+/**
  * dp_rx_null_q_desc_handle_be() - Function to handle NULL Queue
  *                                 descriptor violation on either a
  *                                 REO or WBM ring
@@ -668,6 +850,22 @@ dp_rx_set_link_id_be(qdf_nbuf_t nbuf, uint32_t peer_mdata)
 	QDF_NBUF_CB_RX_LOGICAL_LINK_ID(nbuf) = logical_link_id;
 }
 
+#ifdef IPA_OPT_WIFI_DP_CTRL
+static inline void
+dp_rx_set_refill_opt_dp_ctrl(uint8_t *is_ctrl_refill,
+			     uint32_t peer_mdata)
+{
+	*is_ctrl_refill =
+		HTT_RX_PEER_META_DATA_V1A_QDATA_REFILL_GET(peer_mdata);
+}
+#else
+static inline void
+dp_rx_set_refill_opt_dp_ctrl(uint8_t *is_ctrl_refill,
+			     uint32_t peer_mdata)
+{
+}
+#endif
+
 static inline uint16_t
 dp_rx_get_peer_id_be(qdf_nbuf_t nbuf)
 {
@@ -685,7 +883,8 @@ dp_rx_set_mpdu_msdu_desc_info_in_nbuf(qdf_nbuf_t nbuf,
 static inline uint8_t dp_rx_copy_desc_info_in_nbuf_cb(struct dp_soc *soc,
 						      hal_ring_desc_t ring_desc,
 						      qdf_nbuf_t nbuf,
-						      uint8_t reo_ring_num)
+						      uint8_t reo_ring_num,
+						      uint8_t *is_ctrl_refill)
 {
 	struct hal_rx_mpdu_desc_info mpdu_desc_info;
 	struct hal_rx_msdu_desc_info msdu_desc_info;
@@ -718,6 +917,7 @@ static inline uint8_t dp_rx_copy_desc_info_in_nbuf_cb(struct dp_soc *soc,
 		dp_rx_peer_metadata_vdev_id_get_be(soc, peer_mdata);
 	dp_rx_set_msdu_lmac_id(nbuf, peer_mdata);
 	dp_rx_set_link_id_be(nbuf, peer_mdata);
+	dp_rx_set_refill_opt_dp_ctrl(is_ctrl_refill, peer_mdata);
 
 	/* to indicate whether this msdu is rx offload */
 	pkt_capture_offload =
@@ -813,11 +1013,13 @@ dp_rx_set_mpdu_msdu_desc_info_in_nbuf(qdf_nbuf_t nbuf,
 static inline uint8_t dp_rx_copy_desc_info_in_nbuf_cb(struct dp_soc *soc,
 						      hal_ring_desc_t ring_desc,
 						      qdf_nbuf_t nbuf,
-						      uint8_t reo_ring_num)
+						      uint8_t reo_ring_num,
+						      uint8_t *is_ctrl_refill)
 {
 	uint32_t mpdu_desc_info = 0;
 	uint32_t msdu_desc_info = 0;
 	uint32_t peer_mdata = 0;
+	bool is_frag = qdf_nbuf_is_frag(nbuf);
 
 	/* get REO mpdu & msdu desc info */
 	hal_rx_get_mpdu_msdu_desc_info_be(ring_desc,
@@ -830,7 +1032,8 @@ static inline uint8_t dp_rx_copy_desc_info_in_nbuf_cb(struct dp_soc *soc,
 					      peer_mdata,
 					      msdu_desc_info);
 
-		return 0;
+	qdf_nbuf_set_is_frag(nbuf, is_frag);
+	return 0;
 }
 
 static inline uint8_t hal_rx_get_l3_pad_bytes_be(qdf_nbuf_t nbuf,

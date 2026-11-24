@@ -145,3 +145,85 @@ QDF_STATUS wlan_p2p_abort_scan(struct wlan_objmgr_pdev *pdev)
 						 wlan_p2p_abort_vdev_scan,
 						 NULL, 0, WLAN_P2P_ID);
 }
+
+const uint8_t *wlan_p2p_parse_assoc_ie_for_device_info(const uint8_t *assoc_ie,
+						       uint32_t assoc_ie_len)
+{
+	if (!assoc_ie || !assoc_ie_len)
+		return NULL;
+
+	return p2p_parse_assoc_ie_for_device_info(assoc_ie, assoc_ie_len);
+}
+
+bool wlan_p2p_is_vdev_wfd_r2_mode(struct wlan_objmgr_vdev *vdev)
+{
+	return p2p_is_vdev_wfd_r2_mode(vdev);
+}
+
+QDF_STATUS
+wlan_p2p_extract_ap_assist_dfs_params(struct wlan_objmgr_vdev *vdev,
+				      const uint8_t *ie, uint16_t ie_len,
+				      bool is_connected, qdf_freq_t freq,
+				      bool is_self)
+{
+	if (!ie || !ie_len)
+		return QDF_STATUS_SUCCESS;
+
+	return p2p_extract_ap_assist_dfs_params(vdev, ie, ie_len, is_connected,
+						freq, is_self);
+}
+
+bool wlan_p2p_fw_support_ap_assist_dfs_group(struct wlan_objmgr_psoc *psoc)
+{
+	return p2p_fw_support_ap_assist_dfs_group(psoc);
+}
+
+QDF_STATUS wlan_p2p_get_ap_assist_dfs_params(struct wlan_objmgr_vdev *vdev,
+					     bool *is_dfs_owner,
+					     bool *is_valid_ap_assist,
+					     bool *is_usr_restrict_csa,
+					     struct qdf_mac_addr *ap_bssid,
+					     uint8_t *opclass, uint8_t *chan)
+{
+	return p2p_get_ap_assist_dfs_params(vdev, is_dfs_owner,
+					    is_valid_ap_assist,
+					    is_usr_restrict_csa, ap_bssid,
+					    opclass, chan);
+}
+
+QDF_STATUS wlan_p2p_check_ap_assist_dfs_group_go(struct wlan_objmgr_vdev *vdev)
+{
+	return p2p_check_ap_assist_dfs_group_go(vdev);
+}
+
+QDF_STATUS wlan_p2p_validate_ap_assist_dfs_group(struct wlan_objmgr_vdev *vdev)
+{
+	return p2p_validate_ap_assist_dfs_group(vdev);
+}
+
+void wlan_p2p_psoc_priv_set_sta_vdev_id(struct wlan_objmgr_psoc *psoc,
+					uint8_t vdev_id)
+{
+	p2p_psoc_priv_set_sta_vdev_id(psoc, vdev_id);
+}
+
+uint8_t wlan_p2p_psoc_priv_get_sta_vdev_id(struct wlan_objmgr_psoc *psoc)
+{
+	return p2p_psoc_priv_get_sta_vdev_id(psoc);
+}
+
+QDF_STATUS
+wlan_p2p_del_random_mac(struct wlan_objmgr_psoc *soc, uint32_t vdev_id,
+			uint64_t rnd_cookie)
+{
+	return p2p_del_random_mac(soc, vdev_id, rnd_cookie);
+}
+
+QDF_STATUS
+wlan_p2p_set_rand_mac_for_p2p_dev(struct wlan_objmgr_psoc *soc,
+				  uint32_t vdev_id, uint32_t freq,
+				  uint64_t rnd_cookie, uint32_t duration)
+{
+	return p2p_set_rand_mac_for_p2p_dev(soc, vdev_id, freq, rnd_cookie,
+					    duration);
+}

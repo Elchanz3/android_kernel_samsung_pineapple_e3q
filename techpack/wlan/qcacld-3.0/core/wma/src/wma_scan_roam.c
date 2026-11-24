@@ -1,6 +1,6 @@
  /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -90,7 +90,9 @@
 #include <../../core/src/wlan_cm_roam_i.h>
 #include "wlan_cm_roam_api.h"
 #include "wlan_mlo_mgr_roam.h"
+#include "wlan_mlo_mgr_sta.h"
 #include "lim_mlo.h"
+#include "wlan_dp_api.h"
 #ifdef FEATURE_WLAN_EXTSCAN
 #define WMA_EXTSCAN_CYCLE_WAKE_LOCK_DURATION WAKELOCK_DURATION_RECOMMENDED
 
@@ -224,7 +226,7 @@ QDF_STATUS wma_update_channel_list(WMA_HANDLE handle,
 		/*TODO: Set WMI_SET_CHANNEL_ANTENNA_MAX */
 		/*TODO: WMI_SET_CHANNEL_REG_CLASSID */
 		chan_p->maxregpower = chan_list->chanParam[i].pwr;
-
+		qdf_mem_zero(&ch_params, sizeof(ch_params));
 		wma_update_ch_list_11be_params(&ch_params);
 
 		wlan_reg_set_channel_params_for_pwrmode(wma_handle->pdev,
@@ -688,9 +690,9 @@ wma_delete_all_peers(tp_wma_handle wma,
  * respect to the self sta and the peer after roaming and completes
  * the roam synch propagation with respect to WMA layer.
  *
- * Return: None
+ * Return: QDF_STATUS
  */
-static void
+static QDF_STATUS
 wma_roam_update_vdev(tp_wma_handle wma,
 		     struct roam_offload_synch_ind *roam_synch_ind_ptr,
 		     uint8_t roamed_vdev_id)
@@ -706,8 +708,7 @@ wma_roam_update_vdev(tp_wma_handle wma,
 	wma->interfaces[vdev_id].nss = roam_synch_ind_ptr->nss;
 
 	/* update channel width */
-	wma->interfaces[vdev_id].chan_width =
-		roam_synch_ind_ptr->chan_width;
+	wma->interfaces[vdev_id].chan_width = roam_synch_ind_ptr->chan_width;
 	/* Fill link freq from roam_synch_ind */
 	if (is_multi_link_roam(roam_synch_ind_ptr))
 		wma->interfaces[vdev_id].ch_freq =
@@ -717,9 +718,8 @@ wma_roam_update_vdev(tp_wma_handle wma,
 			roam_synch_ind_ptr->chan_freq;
 
 	add_sta_params = qdf_mem_malloc(sizeof(*add_sta_params));
-	if (!add_sta_params) {
-		return;
-	}
+	if (!add_sta_params)
+		return QDF_STATUS_E_INVAL;
 
 	if (is_multi_link_roam(roam_synch_ind_ptr))
 		mlo_get_sta_link_mac_addr(vdev_id, roam_synch_ind_ptr,
@@ -736,7 +736,8 @@ wma_roam_update_vdev(tp_wma_handle wma,
 	 */
 	if (!is_multi_link_roam(roam_synch_ind_ptr) ||
 	    wlan_vdev_mlme_get_is_mlo_link(wma->psoc, vdev_id) ||
-	    mlo_get_single_link_ml_roaming(wma->psoc, vdev_id)) {
+	    mlo_get_single_link_ml_roaming(wma->psoc, vdev_id) ||
+	    mlo_is_offload_roam_in_progress(wma->interfaces[vdev_id].vdev)) {
 		status = wma_delete_all_peers(wma, vdev_id);
 		if (QDF_IS_STATUS_ERROR(status))
 			goto end;
@@ -744,35 +745,45 @@ wma_roam_update_vdev(tp_wma_handle wma,
 
 	add_sta_params->staType = STA_ENTRY_SELF;
 	add_sta_params->smesessionId = vdev_id;
-	qdf_mem_copy(&add_sta_params->bssId, &mac_addr,
-			 QDF_MAC_ADDR_SIZE);
+	qdf_mem_copy(&add_sta_params->bssId, &mac_addr, QDF_MAC_ADDR_SIZE);
 	add_sta_params->assocId = roam_synch_ind_ptr->aid;
 
 	bssid = wma_get_vdev_bssid(wma->interfaces[vdev_id].vdev);
 	if (!bssid) {
 		wma_err("Failed to get bssid for vdev_%d", vdev_id);
-		return;
+		return QDF_STATUS_E_INVAL;
 	}
 
 	is_assoc_peer = wlan_vdev_mlme_get_is_mlo_vdev(wma->psoc, vdev_id);
 	if (is_multi_link_roam(roam_synch_ind_ptr)) {
-		wma_create_peer(wma, mac_addr.bytes,
-				WMI_PEER_TYPE_DEFAULT, vdev_id,
-				roam_synch_ind_ptr->bssid.bytes,
-				is_assoc_peer);
+		status = wma_create_peer(wma, mac_addr.bytes, NULL,
+					 WMI_PEER_TYPE_DEFAULT, vdev_id,
+					 roam_synch_ind_ptr->bssid.bytes,
+					 is_assoc_peer);
 	} else {
-		wma_create_peer(wma, mac_addr.bytes,
-				WMI_PEER_TYPE_DEFAULT,
-				vdev_id,
-				NULL,
-				is_assoc_peer);
+		status = wma_create_peer(wma, mac_addr.bytes, NULL,
+					 WMI_PEER_TYPE_DEFAULT, vdev_id, NULL,
+					 is_assoc_peer);
 	}
 
-	if (is_multi_link_roam(roam_synch_ind_ptr))
-		lim_roam_mlo_create_peer(wma->mac_context,
-					 roam_synch_ind_ptr,
-					 vdev_id,
-					 mac_addr.bytes);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_err("Failed to create peer " QDF_MAC_ADDR_FMT,
+			QDF_MAC_ADDR_REF(mac_addr.bytes));
+		goto end;
+	}
+
+	if (is_multi_link_roam(roam_synch_ind_ptr)) {
+		status = lim_roam_mlo_create_peer(wma->mac_context,
+						  roam_synch_ind_ptr, vdev_id,
+						  mac_addr.bytes);
+
+		/* The created peer will be destroyed on HO failure cleanup */
+		if (QDF_IS_STATUS_ERROR(status)) {
+			wma_err("Failed to attach MLO peer " QDF_MAC_ADDR_FMT,
+				QDF_MAC_ADDR_REF(mac_addr.bytes));
+			goto end;
+		}
+	}
 
 	if (wlan_vdev_mlme_get_opmode(wma->interfaces[vdev_id].vdev) ==
 								QDF_STA_MODE)
@@ -795,6 +806,7 @@ wma_roam_update_vdev(tp_wma_handle wma,
 				      roam_synch_ind_ptr);
 end:
 	qdf_mem_free(add_sta_params);
+	return status;
 }
 
 static void wma_update_phymode_on_roam(tp_wma_handle wma,
@@ -1048,13 +1060,11 @@ QDF_STATUS wma_post_chan_switch_setup(uint8_t vdev_id)
 	 */
 	if (intr->type == WMI_VDEV_TYPE_MONITOR) {
 		des_chan = intr->vdev->vdev_mlme.des_chan;
-		val.cdp_pdev_param_monitor_chan = des_chan->ch_ieee;
-		cdp_txrx_set_pdev_param(soc,
-					wlan_objmgr_pdev_get_pdev_id(wma->pdev),
+		val.cdp_vdev_param_monitor_chan = des_chan->ch_ieee;
+		cdp_txrx_set_vdev_param(soc, vdev_id,
 					CDP_MONITOR_CHANNEL, val);
-		val.cdp_pdev_param_mon_freq = des_chan->ch_freq;
-		cdp_txrx_set_pdev_param(soc,
-					wlan_objmgr_pdev_get_pdev_id(wma->pdev),
+		val.cdp_vdev_param_mon_freq = des_chan->ch_freq;
+		cdp_txrx_set_vdev_param(soc, vdev_id,
 					CDP_MONITOR_FREQUENCY, val);
 	}
 	return QDF_STATUS_SUCCESS;
@@ -2652,6 +2662,76 @@ void wma_roam_better_ap_handler(tp_wma_handle wma, uint32_t vdev_id)
 }
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
+#ifdef WLAN_FEATURE_11BE_MLO
+static inline uint32_t
+wma_convert_link_bitmap_to_link_ids(uint32_t link_bitmap, uint8_t link_id_sz,
+				    uint8_t *link_ids)
+{
+	uint32_t i = 0;
+	uint8_t id = 0;
+
+	while (link_bitmap) {
+		if (link_bitmap & 1) {
+			if (id >= 15) {
+				/* warning */
+				wma_err("linkid invalid %d 0x%x",
+					id, link_bitmap);
+				break;
+			}
+			if (link_ids) {
+				if (i >= link_id_sz) {
+					/* warning */
+					wma_err("linkid buff overflow 0x%x",
+						link_bitmap);
+					break;
+				}
+				link_ids[i] = id;
+			}
+			i++;
+		}
+		link_bitmap >>= 1;
+		id++;
+	}
+
+	return i;
+}
+
+static uint32_t
+wma_validate_roam_abort_bitmap(struct wlan_objmgr_vdev *vdev,
+			       uint32_t abort_bmap)
+{
+	uint32_t num_ids;
+	uint8_t link_ids[MAX_MLO_LINK_ID] = {0};
+
+	num_ids = wma_convert_link_bitmap_to_link_ids(abort_bmap,
+						      QDF_ARRAY_SIZE(link_ids),
+						      link_ids);
+	if (num_ids > 1) {
+		wma_err("More than 1 link got deleted in firmware %x",
+			abort_bmap);
+		QDF_ASSERT(0);
+		return MLO_INVALID_LINK_IDX;
+	}
+
+	wma_debug("Partner link %d is deleted in firmware", link_ids[0]);
+	return link_ids[0];
+}
+
+static void wma_handle_mlo_roam_abort(struct wlan_objmgr_vdev *vdev,
+				      uint32_t aborted_bmap)
+{
+	uint32_t aborted_link_id;
+
+	aborted_link_id = wma_validate_roam_abort_bitmap(vdev, aborted_bmap);
+	if (aborted_link_id == MLO_INVALID_LINK_IDX)
+		return;
+	cm_roam_handle_mlo_roam_abort(vdev, aborted_link_id);
+}
+#else
+static inline void wma_handle_mlo_roam_abort(struct wlan_objmgr_vdev *vdev,
+					     uint32_t aborted_bmap)
+{}
+#endif
 /**
  * wma_invalid_roam_reason_handler() - Handle Invalid roam notification
  * @wma: wma handle
@@ -2662,12 +2742,15 @@ void wma_roam_better_ap_handler(tp_wma_handle wma, uint32_t vdev_id)
  *
  * Return: None
  */
-static void wma_invalid_roam_reason_handler(tp_wma_handle wma_handle,
-					    uint32_t vdev_id,
-					    enum cm_roam_notif notif)
+static void
+wma_invalid_roam_reason_handler(tp_wma_handle wma_handle,
+				struct roam_offload_roam_event *roam_event)
 {
 	struct roam_offload_synch_ind *roam_synch_data;
 	enum sir_roam_op_code op_code;
+	struct wlan_objmgr_vdev *vdev;
+	uint32_t vdev_id = roam_event->vdev_id;
+	enum cm_roam_notif notif = roam_event->notif;
 
 	if (notif == CM_ROAM_NOTIF_ROAM_START) {
 		op_code = SIR_ROAMING_START;
@@ -2693,18 +2776,22 @@ static void wma_invalid_roam_reason_handler(tp_wma_handle wma_handle,
 	else
 		cm_fw_roam_abort_req(wma_handle->psoc, vdev_id);
 
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(wma_handle->psoc, vdev_id,
+						    WLAN_MLME_OBJMGR_ID);
+	if (!vdev)
+		goto free_mem;
+
+	if (roam_event->is_mlo_roam_aborted &&
+	    roam_event->roam_abort_link_bitmap)
+		wma_handle_mlo_roam_abort(vdev,
+					  roam_event->roam_abort_link_bitmap);
+
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_OBJMGR_ID);
+free_mem:
 	qdf_mem_free(roam_synch_data);
 }
 
-void wma_handle_roam_sync_timeout(tp_wma_handle wma_handle,
-				  struct roam_sync_timeout_timer_info *info)
-{
-	wma_invalid_roam_reason_handler(wma_handle, info->vdev_id,
-					CM_ROAM_NOTIF_ROAM_ABORT);
-}
-
-void cm_invalid_roam_reason_handler(uint32_t vdev_id, enum cm_roam_notif notif,
-				    uint32_t reason)
+void cm_invalid_roam_reason_handler(struct roam_offload_roam_event *roam_event)
 {
 	tp_wma_handle wma_handle = cds_get_context(QDF_MODULE_ID_WMA);
 
@@ -2712,13 +2799,14 @@ void cm_invalid_roam_reason_handler(uint32_t vdev_id, enum cm_roam_notif notif,
 		QDF_ASSERT(0);
 		return;
 	}
-	wma_invalid_roam_reason_handler(wma_handle, vdev_id, notif);
+	wma_invalid_roam_reason_handler(wma_handle, roam_event);
 
-	if (notif == CM_ROAM_NOTIF_SCAN_START ||
-	    notif == CM_ROAM_NOTIF_SCAN_END)
-		cm_report_roam_rt_stats(wma_handle->psoc, vdev_id,
+	if (roam_event->notif == CM_ROAM_NOTIF_SCAN_START ||
+	    roam_event->notif == CM_ROAM_NOTIF_SCAN_END)
+		cm_report_roam_rt_stats(wma_handle->psoc, roam_event->vdev_id,
 					ROAM_RT_STATS_TYPE_SCAN_STATE,
-					NULL, notif, 0, reason);
+					NULL, roam_event->notif, 0,
+					roam_event->notif_params);
 }
 #endif
 
@@ -2820,6 +2908,12 @@ wma_update_pdev_hw_mode_trans_ind(tp_wma_handle wma,
 				  struct cm_hw_mode_trans_ind *trans_ind)
 {
 	uint32_t i;
+
+	if (!trans_ind ||
+	    trans_ind->num_vdev_mac_entries > MAX_VDEV_SUPPORTED) {
+		wma_err("Inval trans_ind param");
+		return;
+	}
 
 	/* Store the vdev-mac map in WMA and send to policy manager */
 	for (i = 0; i < trans_ind->num_vdev_mac_entries; i++)
@@ -3147,15 +3241,42 @@ QDF_STATUS wma_send_ht40_obss_scanind(tp_wma_handle wma,
 }
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
-void cm_roam_update_vdev(struct roam_offload_synch_ind *sync_ind,
-			 uint8_t vdev_id)
+QDF_STATUS cm_roam_update_vdev(struct wlan_objmgr_vdev *vdev,
+			       struct roam_offload_synch_ind *sync_ind)
 {
+	QDF_STATUS status;
 	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+	struct qdf_mac_addr *self_mac_addr;
+	uint8_t vdev_id;
 
 	if (!wma)
-		return;
+		return QDF_STATUS_E_INVAL;
 
-	wma_roam_update_vdev(wma, sync_ind, vdev_id);
+	vdev_id = wlan_vdev_get_id(vdev);
+
+	status = wma_roam_update_vdev(wma, sync_ind, vdev_id);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_debug("VDEV update failed for roam on %d", vdev_id);
+		return status;
+	}
+
+	if (!wlan_vdev_mlme_is_mlo_vdev(vdev)) {
+		self_mac_addr =
+			(struct qdf_mac_addr *)wlan_vdev_mlme_get_macaddr(vdev);
+		goto update_deflink;
+	}
+
+	if (wlan_vdev_mlme_is_mlo_vdev(vdev) &&
+	    wlan_vdev_mlme_is_mlo_link_vdev(vdev))
+		return QDF_STATUS_SUCCESS;
+
+	self_mac_addr = (struct qdf_mac_addr *)wlan_vdev_mlme_get_mldaddr(vdev);
+
+update_deflink:
+	/* Set the assoc vdev as DP deflink after roaming */
+	wlan_dp_update_def_link(wma->psoc, self_mac_addr, vdev);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 QDF_STATUS

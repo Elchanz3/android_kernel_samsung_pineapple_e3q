@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,18 +32,11 @@ void cm_free_roam_req_mem(struct cm_roam_req *roam_req)
 		wlan_scan_purge_results(roam_req->candidate_list);
 }
 
-#ifndef CONN_MGR_ADV_FEATURE
 static void cm_fill_roam_vdev_crypto_params(struct cnx_mgr *cm_ctx,
 					    struct wlan_cm_connect_req *req)
 {
 	cm_fill_vdev_crypto_params(cm_ctx, req);
 }
-#else
-static void cm_fill_roam_vdev_crypto_params(struct cnx_mgr *cm_ctx,
-					    struct wlan_cm_connect_req *req)
-{
-}
-#endif /* CONN_MGR_ADV_FEATURE */
 
 #if defined(WLAN_FEATURE_HOST_ROAM) || defined(WLAN_FEATURE_ROAM_OFFLOAD)
 QDF_STATUS cm_check_and_prepare_roam_req(struct cnx_mgr *cm_ctx,
@@ -52,7 +45,8 @@ QDF_STATUS cm_check_and_prepare_roam_req(struct cnx_mgr *cm_ctx,
 {
 	QDF_STATUS status;
 	struct wlan_cm_connect_req *req;
-	struct qdf_mac_addr bssid, bss_mld_addr;
+	struct qdf_mac_addr bssid;
+	struct qdf_mac_addr bss_mld_addr = {0};
 	struct wlan_ssid ssid;
 	struct cm_req *cm_req, *req_ptr;
 	qdf_freq_t freq = 0;
@@ -123,6 +117,8 @@ QDF_STATUS cm_check_and_prepare_roam_req(struct cnx_mgr *cm_ctx,
 	cm_fill_roam_vdev_crypto_params(cm_ctx, &connect_req->req);
 	req_ptr->roam_req.req.chan_freq = freq;
 	req_ptr->roam_req.req.source = CM_ROAMING_HOST;
+	qdf_mem_copy(&req_ptr->roam_req.req.crypto, &req->crypto,
+		     sizeof(struct wlan_cm_connect_crypto_info));
 
 	/* Free the connect req, as reassoc is tried */
 	cm_free_connect_req_mem(connect_req);

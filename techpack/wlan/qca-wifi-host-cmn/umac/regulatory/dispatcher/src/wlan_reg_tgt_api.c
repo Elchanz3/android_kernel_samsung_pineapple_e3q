@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -75,6 +75,22 @@ QDF_STATUS tgt_reg_process_master_chan_list_ext(struct cur_regulatory_info
 		return QDF_STATUS_SUCCESS;
 
 	return reg_process_master_chan_list_ext(reg_info);
+}
+
+QDF_STATUS
+tgt_reg_set_both_psd_eirp_preferred_support(struct wlan_objmgr_psoc *psoc,
+					    bool reg_is_both_psd_eirp_support)
+{
+	return reg_set_both_psd_eirp_preferred_support(psoc,
+						reg_is_both_psd_eirp_support);
+}
+
+QDF_STATUS
+tgt_reg_get_both_psd_eirp_preferred_support(struct wlan_objmgr_psoc *psoc,
+					    bool *reg_is_both_psd_eirp_support)
+{
+	return reg_get_both_psd_eirp_preferred_support(psoc,
+						reg_is_both_psd_eirp_support);
 }
 
 #ifdef CONFIG_AFC_SUPPORT

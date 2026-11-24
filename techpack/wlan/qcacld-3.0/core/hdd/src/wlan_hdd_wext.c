@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -3053,7 +3053,7 @@ static void wlan_get_wlm_stats_cb(void *cookie, const char *data)
 		return;
 	}
 	priv = osif_request_priv(request);
-	strlcpy(priv, data, WE_MAX_STR_LEN);
+	strscpy(priv, data, WE_MAX_STR_LEN);
 	osif_request_complete(request);
 	osif_request_put(request);
 }
@@ -3093,7 +3093,7 @@ static int wlan_get_wlm_stats(struct hdd_adapter *adapter, uint32_t bitmask,
 		goto cleanup;
 	}
 	priv = osif_request_priv(request);
-	strlcpy(response, priv, params.priv_size);
+	strscpy(response, priv, params.priv_size);
 
 cleanup:
 	osif_request_put(request);
@@ -8542,7 +8542,9 @@ static int __iw_set_two_ints_getnone(struct net_device *dev,
 	int ret;
 	uint8_t dual_mac_feature = DISABLE_DBS_CXN_AND_SCAN;
 	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	struct hdd_monitor_ctx mon_ctx[MAX_MAC] = { 0 };
 	QDF_STATUS status;
+	uint8_t index = 0;
 
 	hdd_enter_dev(dev);
 
@@ -8602,14 +8604,17 @@ static int __iw_set_two_ints_getnone(struct net_device *dev,
 		break;
 	case WE_SET_MON_MODE_CHAN:
 		if (value[1] > 256)
-			ret = wlan_hdd_set_mon_chan(adapter, value[1],
-						    value[2]);
+			mon_ctx[index].freq = value[1];
 		else
-			ret = wlan_hdd_set_mon_chan(
-						adapter,
-						wlan_reg_legacy_chan_to_freq(
-						hdd_ctx->pdev, value[1]),
-						value[2]);
+			mon_ctx[index].freq = wlan_reg_legacy_chan_to_freq(
+						hdd_ctx->pdev, value[1]);
+		mon_ctx[index].bandwidth = value[2];
+
+		ret = wlan_hdd_validate_mon_params(adapter, mon_ctx, MAX_MAC);
+		if (ret)
+			return ret;
+
+		ret = wlan_hdd_set_mon_chan(adapter);
 		break;
 	case WE_SET_WLAN_SUSPEND:
 		ret = hdd_wlan_fake_apps_suspend(hdd_ctx->wiphy, dev,

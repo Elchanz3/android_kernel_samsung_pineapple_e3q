@@ -25,10 +25,12 @@
 #include "qdf_mc_timer.h"
 #include "qdf_lock.h"
 #include "qdf_defer.h"
+#include "qdf_threads.h"
 #include "wlan_reg_services_api.h"
 #include "cds_ieee80211_common_i.h"
 #include "qdf_delayed_work.h"
 #define DBS_OPPORTUNISTIC_TIME   5
+#define EMLSR_OPPORTUNISTIC_TIME   5
 
 #define POLICY_MGR_SER_CMD_TIMEOUT 4000
 
@@ -199,6 +201,8 @@
 
 #define policy_mgr_rl_debug(params...) \
 	QDF_TRACE_DEBUG_RL(QDF_MODULE_ID_POLICY_MGR, params)
+#define policy_mgr_rl_nofl_debug(params...) \
+	QDF_TRACE_DEBUG_RL_NO_FL(QDF_MODULE_ID_POLICY_MGR, params)
 
 #define PM_CONC_CONNECTION_LIST_VALID_INDEX(index) \
 		((MAX_NUMBER_OF_CONC_CONNECTIONS > index) && \
@@ -231,11 +235,22 @@ extern policy_mgr_next_action_two_connection_table_type
 		*next_action_two_connection_table;
 extern policy_mgr_next_action_three_connection_table_type
 		*next_action_three_connection_table;
+#ifdef FEATURE_FOURTH_CONNECTION
+extern policy_mgr_next_action_four_connection_table_type
+		*next_action_four_connection_table;
+#endif
 
 #ifdef FEATURE_FOURTH_CONNECTION
 extern const enum policy_mgr_pcl_type
 	fourth_connection_pcl_dbs_sbs_table
 	[PM_MAX_THREE_CONNECTION_MODE][PM_MAX_NUM_OF_MODE]
+	[PM_MAX_CONC_PRIORITY_MODE];
+#endif
+
+#ifdef FEATURE_FIFTH_CONNECTION
+extern const enum policy_mgr_pcl_type
+	fifth_connection_pcl_dbs_sbs_table
+	[PM_MAX_FOUR_CONNECTION_MODE][PM_MAX_NUM_OF_MODE]
 	[PM_MAX_CONC_PRIORITY_MODE];
 #endif
 
@@ -360,6 +375,10 @@ struct policy_mgr_cfg {
  *              scan & connections
  * @radio_comb_num: radio combination number
  * @radio_combinations: radio combination list
+ * @rd_type: policy mgr rd type
+ * @low_high_cut_off_freq: 5G Low and high cut frequency, it will
+ * only be used to decide the frequency low or high when driver
+ * index the disallow mlo mode.
  * @hw_mode_change_in_progress: This is to track if HW mode
  *                            change is in progress
  * @enable_mcc_adaptive_scheduler: Enable MCC adaptive scheduler
@@ -367,6 +386,7 @@ struct policy_mgr_cfg {
  * @user_cfg:
  * @unsafe_channel_list: LTE coex channel freq avoidance list
  * @unsafe_channel_count: LTE coex channel avoidance list count
+ * @defer_thread: the current sta_ap_intf_check_work thread object ptr
  * @sta_ap_intf_check_work_info: Info related to sta_ap_intf_check_work
  * @cur_conc_system_pref:
  * @opportunistic_update_done_evt: qdf event to synchronize host
@@ -380,6 +400,8 @@ struct policy_mgr_cfg {
  * @dynamic_dfs_master_disabled: current state of dynamic dfs master
  * @link_in_progress: To track if set link is in progress
  * @set_link_update_done_evt: qdf event to synchronize set link
+ * @emlsr_opportunistic_timer: Timer to restore eMLSR mode
+ * which were previously disabled by AP start/STA start/CSA.
  * @active_vdev_bitmap: Active vdev id bitmap
  * @inactive_vdev_bitmap: Inactive vdev id bitmap
  * @restriction_mask:
@@ -392,7 +414,6 @@ struct policy_mgr_psoc_priv_obj {
 	qdf_mc_timer_t dbs_opportunistic_timer;
 	struct policy_mgr_hdd_cbacks hdd_cbacks;
 	struct policy_mgr_sme_cbacks sme_cbacks;
-	struct policy_mgr_wma_cbacks wma_cbacks;
 	struct policy_mgr_tdls_cbacks tdls_cbacks;
 	struct policy_mgr_cdp_cbacks cdp_cbacks;
 	struct policy_mgr_dp_cbacks dp_cbacks;
@@ -413,10 +434,13 @@ struct policy_mgr_psoc_priv_obj {
 	struct dual_mac_config dual_mac_cfg;
 	uint32_t radio_comb_num;
 	struct radio_combination radio_combinations[MAX_RADIO_COMBINATION];
+	enum pm_rd_type rd_type;
+	qdf_freq_t low_high_cut_off_freq;
 	uint32_t hw_mode_change_in_progress;
 	struct policy_mgr_user_cfg user_cfg;
 	uint32_t unsafe_channel_list[NUM_CHANNELS];
 	uint16_t unsafe_channel_count;
+	qdf_thread_t *defer_thread;
 	struct sta_ap_intf_check_work_ctx *sta_ap_intf_check_work_info;
 	uint8_t cur_conc_system_pref;
 	qdf_event_t opportunistic_update_done_evt;
@@ -430,6 +454,7 @@ struct policy_mgr_psoc_priv_obj {
 #ifdef WLAN_FEATURE_11BE_MLO
 	qdf_atomic_t link_in_progress;
 	qdf_event_t set_link_update_done_evt;
+	qdf_mc_timer_t emlsr_opportunistic_timer;
 #endif
 	uint32_t active_vdev_bitmap;
 	uint32_t inactive_vdev_bitmap;
@@ -787,6 +812,25 @@ void policy_mgr_pdev_set_hw_mode_cb(uint32_t status,
 				uint32_t request_id);
 
 #ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * policy_mgr_allow_non_force_link_bitmap() - Check non force
+ * link bitmap are allowed or not.
+ * @psoc: PSOC object information
+ * @vdev: vdev object
+ * @no_forced_bitmap: no force link bitmap
+ * @force_inactive_bitmap: force inactive link bimap
+ *
+ * Check the non force link bitmap are allowed or not.
+ *
+ * Return: true if allow to "no force" and force inactive links.
+ */
+bool
+policy_mgr_allow_non_force_link_bitmap(
+		struct wlan_objmgr_psoc *psoc,
+		struct wlan_objmgr_vdev *vdev,
+		uint16_t no_forced_bitmap,
+		uint16_t force_inactive_bitmap);
+
 void
 policy_mgr_dump_disabled_ml_links(struct policy_mgr_psoc_priv_obj *pm_ctx);
 
@@ -1036,14 +1080,11 @@ void policy_mgr_reg_chan_change_callback(struct wlan_objmgr_psoc *psoc,
  * policy_mgr_update_nss_req() - wrapper API to update nss
  * @psoc: psoc object
  * @vdev_id: vdev id
- * @tx_nss: Tx nss to set
- * @rx_nss: Rx nss to set
  *
  * Return: QDF_STATUS_SUCCESS
  */
 QDF_STATUS policy_mgr_update_nss_req(struct wlan_objmgr_psoc *psoc,
-				     uint8_t vdev_id, uint8_t tx_nss,
-				     uint8_t rx_nss);
+				     uint8_t vdev_id);
 
 /**
  * policy_mgr_nss_update() - update nss for AP vdev
@@ -1126,7 +1167,7 @@ policy_mgr_sbs_24_shared_with_low_5(struct policy_mgr_psoc_priv_obj *pm_ctx);
  * policy_mgr_2_freq_same_mac_in_dbs() - to check provided frequencies are
  * in dbs freq range or not
  *
- * @pm_ctx: policy mgr psoc priv object
+ * @psoc: PSOC object information
  * @freq_1: first frequency
  * @freq_2: second frequency
  *
@@ -1135,7 +1176,7 @@ policy_mgr_sbs_24_shared_with_low_5(struct policy_mgr_psoc_priv_obj *pm_ctx);
  * Return: true/false.
  */
 bool
-policy_mgr_2_freq_same_mac_in_dbs(struct policy_mgr_psoc_priv_obj *pm_ctx,
+policy_mgr_2_freq_same_mac_in_dbs(struct wlan_objmgr_psoc *psoc,
 				  qdf_freq_t freq_1, qdf_freq_t freq_2);
 
 /**
@@ -1198,6 +1239,14 @@ policy_mgr_set_freq_restriction_mask(struct policy_mgr_psoc_priv_obj *pm_ctx,
 {
 }
 #endif
+
+/**
+ * policy_mgr_dump_sap_mandatory() - Dump mandatory freq list
+ * @pm_ctx: pm_ctx
+ *
+ * Return: None
+ */
+void policy_mgr_dump_sap_mandatory(struct policy_mgr_psoc_priv_obj *pm_ctx);
 
 /**
  * policy_mgr_get_connection_max_channel_width() - Get max channel width

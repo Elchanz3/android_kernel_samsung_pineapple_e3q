@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -29,6 +29,7 @@
 #include <qdf_types.h>
 #include <qdf_util.h>
 #include <linux/netdevice.h>
+#include <linux/if_vlan.h>
 
 struct qdf_net_if;
 
@@ -40,15 +41,25 @@ struct qdf_net_if;
  *
  * Return: QDF_STATUS_SUCCESS on success
  */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
 static inline QDF_STATUS
 __qdf_net_if_create_dummy_if(struct qdf_net_if *nif)
 {
-	int ret;
+	nif = (struct qdf_net_if *)alloc_netdev_dummy(0);
 
-	ret = init_dummy_netdev((struct net_device *)nif);
-
-	return qdf_status_from_os_return(ret);
+	if (!nif)
+		return QDF_STATUS_E_NOMEM;
+	return QDF_STATUS_SUCCESS;
 }
+#else
+static inline QDF_STATUS
+__qdf_net_if_create_dummy_if(struct qdf_net_if *nif)
+{
+	init_dummy_netdev((struct net_device *)nif);
+
+	return qdf_status_from_os_return(0);
+}
+#endif
 
 /**
  * __qdf_net_if_get_dev_by_name() - Find a network device by its name
@@ -103,6 +114,21 @@ __qdf_net_if_hold_dev(struct qdf_net_if  *nif)
 	dev_hold((struct net_device *)nif);
 
 	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * __qdf_net_if_is_vlan_dev() - Abstraction of is_vlan_dev API
+ * @nif: network device
+ *
+ * Return: true if network device is vlan else false
+ */
+static inline bool
+__qdf_net_if_is_vlan_dev(struct qdf_net_if  *nif)
+{
+	if (!nif)
+		return QDF_STATUS_E_INVAL;
+
+	return is_vlan_dev((struct net_device *)nif);
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0))

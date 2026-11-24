@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -450,7 +450,7 @@ hal_get_mac_addr1(uint8_t *rx_mpdu_start,
 				   MAC_ADDR_AD1_31_0);
 		if (ppdu_info->sw_frame_group_id ==
 		    HAL_MPDU_SW_FRAME_GROUP_CTRL_RTS) {
-			*(uint32_t *)&ppdu_info->rx_info.mac_addr1[4] =
+			*(uint16_t *)&ppdu_info->rx_info.mac_addr1[4] =
 				HAL_RX_GET(rx_mpdu_start,
 					   RX_MPDU_INFO_16,
 					   MAC_ADDR_AD1_47_32);
@@ -2348,12 +2348,12 @@ static uint16_t hal_rx_get_frame_ctrl_field_rh(uint8_t *buf)
 	return frame_ctrl;
 }
 
-#if defined(WLAN_FEATURE_TSF_UPLINK_DELAY) || defined(WLAN_CONFIG_TX_DELAY)
+#if defined(WLAN_FEATURE_TSF_AUTO_REPORT) || defined(WLAN_CONFIG_TX_DELAY)
 static inline void
 hal_tx_comp_get_buffer_timestamp_rh(void *desc,
 				    struct hal_tx_completion_status *ts)
 {
-	uint32_t *msg_word = (struct uint32_t *)desc;
+	uint32_t *msg_word = (uint32_t *)desc;
 
 	ts->buffer_timestamp =
 		HTT_TX_MSDU_INFO_BUFFER_TIMESTAMP_GET(*(msg_word + 4));

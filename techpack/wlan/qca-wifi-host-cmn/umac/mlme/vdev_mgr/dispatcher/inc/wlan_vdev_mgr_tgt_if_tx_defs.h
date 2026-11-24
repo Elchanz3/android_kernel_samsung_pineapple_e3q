@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -513,10 +513,12 @@ struct peer_flush_params {
  * @vdev_id: vdev id
  * @hw_link_id_bitmap: logical link id bitmap for peers
  * not getting created
+ * @is_mlo_link_switch: Is peer delete due to link switch
  */
 struct peer_delete_cmd_params {
 	uint8_t vdev_id;
 	uint32_t hw_link_id_bitmap;
+	bool is_mlo_link_switch;
 };
 
 /* Default FILS DISCOVERY/probe response sent in period of 20TU */
@@ -640,6 +642,7 @@ struct vdev_scan_nac_rssi_params {
  * @mlo_mcast_vdev: MLO cast vdev
  * @emlsr_support: indicate non AP MLD STA supports eMLSR mode
  * @mlo_link_add: Dynamic link addition
+ * @is_bridge_vdev: Indicate the vdev is a bridge vdev
  * @rsvd: reserved bits
  */
 struct mlo_vdev_start_flags {
@@ -648,7 +651,8 @@ struct mlo_vdev_start_flags {
 		 mlo_mcast_vdev:1,
 		 emlsr_support:1,
 		 mlo_link_add:1,
-		 rsvd:27;
+		 is_bridge_vdev:1,
+		 rsvd:26;
 };
 
 /**
@@ -656,11 +660,13 @@ struct mlo_vdev_start_flags {
  * @vdev_id: vdev id
  * @hw_mld_link_id: unique hw link id across SoCs
  * @mac_addr: Partner mac address
+ * @is_bridge_vdev: Indicate the vdev is bridge vdev
  */
 struct ml_vdev_start_partner_info {
 	uint32_t vdev_id;
 	uint32_t hw_mld_link_id;
 	uint8_t mac_addr[QDF_MAC_ADDR_SIZE];
+	bool is_bridge_vdev;
 };
 
 /**
@@ -703,6 +709,8 @@ struct mlo_vdev_start_partner_links {
  * @mlo_partner: Partner links for multi-link operation
  * @mbssid_multi_group_flag: Flag to identify multi group mbssid support
  * @mbssid_multi_group_id: Group id of current vdev
+ * @target_tsf_us_lo: Target TSF value of current vdev from bits 31:0
+ * @target_tsf_us_hi: Target TSF value of current vdev from bits 63:32
  */
 struct vdev_start_params {
 	uint8_t vdev_id;
@@ -733,6 +741,20 @@ struct vdev_start_params {
 #endif
 	uint8_t mbssid_multi_group_flag;
 	uint32_t mbssid_multi_group_id;
+	uint32_t target_tsf_us_lo;
+	uint32_t target_tsf_us_hi;
+};
+
+/**
+ * struct twt_vdev_config_params - twt vdev config cmd parameter
+ * @pdev_id: pdev id
+ * @vdev_id: vdev id
+ * @twt_value: twt value
+ */
+struct twt_vdev_config_params {
+	uint32_t pdev_id;
+	uint32_t vdev_id;
+	uint32_t twt_value;
 };
 
 /**
@@ -745,6 +767,18 @@ struct vdev_set_params {
 	uint32_t vdev_id;
 	uint32_t param_id;
 	uint32_t param_value;
+};
+
+/**
+ * struct vdev_suspend_params - vdev suspend cmd parameter
+ * @vdev_id: vdev id
+ * @mac_addr: mac address, MLD mac where vdev belongs to MLO SAP
+ * @suspend: suspend flag
+ */
+struct vdev_suspend_params {
+	uint32_t vdev_id;
+	uint8_t mac_addr[QDF_MAC_ADDR_SIZE];
+	uint32_t suspend;
 };
 
 /**
@@ -833,6 +867,7 @@ struct vdev_set_mu_snif_param {
  * @vdevid_trans: id of transmitting vdev for MBSS IE
  * @special_vdev_mode: indicates special vdev mode
  * @mlo_mac: Multilink Operation MAC address
+ * @wfd_mode: WFD mode
  */
 struct vdev_create_params {
 	uint8_t vdev_id;
@@ -849,6 +884,10 @@ struct vdev_create_params {
 #ifdef WLAN_FEATURE_11BE_MLO
 	uint8_t mlo_mac[QDF_MAC_ADDR_SIZE];
 #endif
+#ifdef FEATURE_WLAN_SUPPORT_USD
+	uint32_t wfd_mode;
+#endif
+
 };
 
 /**
@@ -862,9 +901,11 @@ struct vdev_delete_params {
 /**
  * struct vdev_stop_params - vdev stop cmd parameter
  * @vdev_id: vdev id
+ * @is_mlo_link_switch: Is VDEV stop due to link switch
  */
 struct vdev_stop_params {
 	uint8_t vdev_id;
+	bool is_mlo_link_switch;
 };
 
 /**
@@ -967,5 +1008,20 @@ struct rtt_channel_info {
 struct sr_prohibit_param {
 	uint8_t vdev_id;
 	bool sr_he_siga_val15_allowed;
+};
+
+/**
+ * struct wlan_host_sched_mode_probe_resp_event - structure to hold probe resp
+ * values returned by FW
+ * @vdev_id: Vdev_id
+ * @hw_link_id: Hw link ID
+ * @tput_mbps_on: tput in mbps for on duration
+ * @tput_mbps_off: tput in mbps for off duration
+ */
+struct wlan_host_sched_mode_probe_resp_event {
+	uint8_t vdev_id;
+	uint8_t hw_link_id;
+	uint32_t tput_mbps_on;
+	uint32_t tput_mbps_off;
 };
 #endif /* __WLAN_VDEV_MGR_TX_OPS_DEFS_H__ */

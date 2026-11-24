@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -54,12 +54,16 @@ struct scan_dbs {
  * @frm_type: frame type
  * @rx_data: mgmt rx data
  * @psoc: psoc pointer
+ * @save_rnr_info: save the RNR entries into RNR db
+ * @is_gen_entry: is generated scan entry
  * @buf: rx frame
  */
 struct scan_bcn_probe_event {
 	uint32_t frm_type;
 	struct mgmt_rx_event_params *rx_data;
 	struct wlan_objmgr_psoc *psoc;
+	bool save_rnr_info;
+	bool is_gen_entry;
 	qdf_nbuf_t buf;
 };
 
@@ -195,6 +199,15 @@ QDF_STATUS scm_scan_register_mbssid_cb(struct wlan_objmgr_psoc *psoc,
 				       update_mbssid_bcn_prb_rsp cb);
 
 /**
+ * scm_reset_scan_chan_info() - API to reset the scan channel info
+ * @psoc: psoc object
+ * @pdev_id: pdev id of which info need to be reset
+ *
+ * Return: void
+ */
+void scm_reset_scan_chan_info(struct wlan_objmgr_psoc *psoc, uint8_t pdev_id);
+
+/**
  * scm_db_init() - API to init scan db
  * @psoc: psoc
  *
@@ -224,6 +237,9 @@ struct channel_list_db *scm_get_rnr_channel_db(struct wlan_objmgr_psoc *psoc);
  * scm_get_chan_meta() - API to return channel meta
  * @psoc: psoc
  * @chan_freq: channel frequency
+ *
+ * This API needs to be called while holding the mutex lock "rnr_db_lock"
+ * defined in the struct channel_list_db.
  *
  * Return: channel meta information
  */
@@ -281,6 +297,12 @@ scm_filter_rnr_flag_pno(struct wlan_objmgr_vdev *vdev,
 			struct chan_list *chan_list);
 
 #else
+static inline struct channel_list_db *
+scm_get_rnr_channel_db(struct wlan_objmgr_psoc *psoc)
+{
+	return NULL;
+}
+
 static inline QDF_STATUS scm_channel_list_db_init(struct wlan_objmgr_psoc *psoc)
 {
 	return QDF_STATUS_SUCCESS;
@@ -357,6 +379,22 @@ struct scan_cache_entry *
 scm_scan_get_entry_by_bssid(struct wlan_objmgr_pdev *pdev,
 			    struct qdf_mac_addr *bssid);
 
+/*
+ * scm_scan_get_entry_by_bssid_and_security() - function to get scan entry
+ * from bssid and the crypto params of the vdev
+ * @pdev: pdev object
+ * @bssid: bssid to be fetched from scan db
+ * @vdev_id: vdev id
+ *
+ * This API returns the scan entry with proper security_info.
+ *
+ * Return : scan entry if found, else NULL
+ */
+struct scan_cache_entry *
+scm_scan_get_entry_by_bssid_and_security(struct wlan_objmgr_pdev *pdev,
+					 struct qdf_mac_addr *bssid,
+					 uint8_t vdev_id);
+
 #ifdef WLAN_FEATURE_11BE_MLO
 /**
  * scm_get_mld_addr_by_link_addr() - function to fetch the peer mld address from
@@ -380,4 +418,18 @@ scm_get_mld_addr_by_link_addr(struct wlan_objmgr_pdev *pdev,
 	return QDF_STATUS_E_NOSUPPORT;
 }
 #endif
+
+/**
+ * scm_scan_entries_contain_cmn_akm() - Check if two entries have common
+ * RSN capabilities.
+ * @entry1: Primary scan entry for comparison
+ * @entry2: Secondary scan entry for comparison
+ *
+ * Checks various RSN parameters of two scan entries to determine
+ * whether both have similar capabilities or not.
+ *
+ * Return: bool
+ */
+bool scm_scan_entries_contain_cmn_akm(struct scan_cache_entry *entry1,
+				      struct scan_cache_entry *entry2);
 #endif

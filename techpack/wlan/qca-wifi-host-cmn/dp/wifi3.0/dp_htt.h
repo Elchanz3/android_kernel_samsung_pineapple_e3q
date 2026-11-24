@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -219,7 +219,6 @@ struct dp_htt_htc_pkt {
 	qdf_dma_addr_t nbuf_paddr;
 	HTC_PACKET htc_pkt;
 };
-
 struct dp_htt_htc_pkt_union {
 	union {
 		struct dp_htt_htc_pkt pkt;
@@ -269,6 +268,12 @@ struct htt_soc {
 		int htt_ver_req_put_skip;
 		int reserve_fail_cnt;
 		int abort_count;
+#ifdef WLAN_SOFTUMAC_SUPPORT
+		struct {
+			uint64_t rx_data_ind;
+			uint64_t tx_completion_ind;
+		} htt_msg_stats[CE_COUNT_MAX];
+#endif /* WLAN_SOFTUMAC_SUPPORT */
 	} stats;
 
 	HTT_TX_MUTEX_TYPE htt_tx_mutex;
@@ -618,6 +623,11 @@ struct htt_tx_ring_tlv_filter {
  * @enable_fp: enable/disable FP packet
  * @enable_md: enable/disable MD packet
  * @enable_mo: enable/disable MO packet
+ * @enable_fp_packet: enable/disable FP packet config
+ * @enable_md_packet: enable/disable MD packet config
+ * @enable_mo_packet: enable/disable MO packet config
+ * @enable_fpmo_packet: enable/disable FPMO packet config
+ * @offset_valid: Flag to indicate if below offsets are valid
  * @fp_mgmt_filter:
  * @mo_mgmt_filter:
  * @fp_ctrl_filter:
@@ -627,7 +637,18 @@ struct htt_tx_ring_tlv_filter {
  * @md_data_filter:
  * @md_mgmt_filter:
  * @md_ctrl_filter:
- * @offset_valid: Flag to indicate if below offsets are valid
+ * @fp_packet_mgmt_filter:
+ * @mo_packet_mgmt_filter:
+ * @fp_packet_ctrl_filter:
+ * @mo_packet_ctrl_filter:
+ * @fp_packet_data_filter:
+ * @mo_packet_data_filter:
+ * @md_packet_data_filter:
+ * @md_packet_mgmt_filter:
+ * @md_packet_ctrl_filter:
+ * @fpmo_packet_data_filter:
+ * @fpmo_packet_mgmt_filter:
+ * @fpmo_packet_ctrl_filter:
  * @rx_packet_offset: Offset of packet payload
  * @rx_header_offset: Offset of rx_header tlv
  * @rx_mpdu_end_offset: Offset of rx_mpdu_end tlv
@@ -680,7 +701,12 @@ struct htt_rx_ring_tlv_filter {
 		header_per_msdu:1,
 		enable_fp:1,
 		enable_md:1,
-		enable_mo:1;
+		enable_mo:1,
+		enable_fp_packet:1,
+		enable_md_packet:1,
+		enable_mo_packet:1,
+		enable_fpmo_packet:1,
+		offset_valid:1;
 	u_int32_t fp_mgmt_filter:16,
 		mo_mgmt_filter:16;
 	u_int32_t fp_ctrl_filter:16,
@@ -689,8 +715,27 @@ struct htt_rx_ring_tlv_filter {
 		mo_data_filter:16;
 	u_int16_t md_data_filter;
 	u_int16_t md_mgmt_filter;
+
 	u_int16_t md_ctrl_filter;
-	bool offset_valid;
+	u_int16_t fp_packet_mgmt_filter;
+
+	u_int16_t mo_packet_mgmt_filter;
+	u_int16_t fp_packet_ctrl_filter;
+
+	u_int16_t mo_packet_ctrl_filter;
+	u_int16_t fp_packet_data_filter;
+
+	u_int16_t mo_packet_data_filter;
+	u_int16_t md_packet_data_filter;
+
+	u_int16_t md_packet_mgmt_filter;
+	u_int16_t md_packet_ctrl_filter;
+
+	u_int16_t fpmo_packet_data_filter;
+	u_int16_t fpmo_packet_mgmt_filter;
+
+	u_int16_t fpmo_packet_ctrl_filter;
+
 	uint16_t rx_packet_offset;
 	uint16_t rx_header_offset;
 	uint16_t rx_mpdu_end_offset;
@@ -1201,6 +1246,19 @@ dp_htt_get_mon_htt_ring_id(struct dp_soc *soc,
  */
 QDF_STATUS htt_h2t_rx_cce_super_rule_setup(struct htt_soc *htt_soc,
 					   void *flt_params);
+
+#ifdef IPA_OPT_WIFI_DP_CTRL
+/**
+ * htt_h2t_tx_super_rule_setup() - htt message to set tx super rules
+ *
+ * @htt_soc: HTT Soc handle
+ * @flt_params: Filter tuple
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS htt_h2t_tx_super_rule_setup(struct htt_soc *htt_soc,
+				       void *flt_params);
+#endif
 #endif
 
 #ifdef QCA_SUPPORT_PRIMARY_LINK_MIGRATE
@@ -1253,4 +1311,30 @@ QDF_STATUS dp_htt_reo_migration(struct dp_soc *soc, uint16_t peer_id,
 				uint16_t ml_peer_id, uint16_t vdev_id,
 				uint8_t pdev_id, uint8_t chip_id);
 #endif
+
+#ifdef CONFIG_WORD_BASED_TLV
+/**
+ * dp_htt_rxdma_ring_wmask_cfg() - Setup RXDMA ring word mask config
+ * @soc: Common DP soc handle
+ * @htt_tlv_filter: Rx SRNG TLV and filter setting
+ *
+ * Return: none
+ */
+static inline void
+dp_htt_rxdma_ring_wmask_cfg(struct dp_soc *soc,
+			    struct htt_rx_ring_tlv_filter *htt_tlv_filter)
+{
+	htt_tlv_filter->rx_msdu_end_wmask =
+				 hal_rx_msdu_end_wmask_get(soc->hal_soc);
+	htt_tlv_filter->rx_mpdu_start_wmask =
+				 hal_rx_mpdu_start_wmask_get(soc->hal_soc);
+}
+#else
+static inline void
+dp_htt_rxdma_ring_wmask_cfg(struct dp_soc *soc,
+			    struct htt_rx_ring_tlv_filter *htt_tlv_filter)
+{
+}
+#endif
+
 #endif /* _DP_HTT_H_ */

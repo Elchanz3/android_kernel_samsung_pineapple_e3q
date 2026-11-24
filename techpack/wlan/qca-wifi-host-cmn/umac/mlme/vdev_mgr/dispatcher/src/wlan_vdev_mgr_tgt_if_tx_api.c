@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -704,12 +704,11 @@ QDF_STATUS tgt_vdev_mgr_sta_ps_param_send(
 }
 
 QDF_STATUS tgt_vdev_mgr_peer_delete_all_send(
-				struct vdev_mlme_obj *mlme_obj,
+				struct wlan_objmgr_vdev *vdev,
 				struct peer_delete_all_params *param)
 {
 	QDF_STATUS status;
 	struct wlan_lmac_if_mlme_tx_ops *txops;
-	struct wlan_objmgr_vdev *vdev;
 	uint8_t vdev_id;
 
 	if (!param) {
@@ -717,7 +716,6 @@ QDF_STATUS tgt_vdev_mgr_peer_delete_all_send(
 		return QDF_STATUS_E_INVAL;
 	}
 
-	vdev = mlme_obj->vdev;
 	vdev_id = wlan_vdev_get_id(vdev);
 	txops = wlan_vdev_mlme_get_lmac_txops(vdev);
 	if (!txops || !txops->peer_delete_all_send) {
@@ -844,3 +842,55 @@ QDF_STATUS tgt_vdev_peer_set_param_send(struct wlan_objmgr_vdev *vdev,
 
 	return status;
 }
+
+bool tgt_sap_is_suspend_supported(struct wlan_objmgr_vdev *vdev)
+{
+	struct wlan_lmac_if_mlme_tx_ops *txops;
+
+	if (!vdev) {
+		mlme_err("vdev not found");
+		return false;
+	}
+	txops = wlan_vdev_mlme_get_lmac_txops(vdev);
+	if (!txops || !txops->is_sap_suspend_support_enabled) {
+		mlme_err("VDEV: No Tx Ops");
+		return false;
+	}
+
+	return txops->is_sap_suspend_support_enabled(vdev);
+}
+
+QDF_STATUS tgt_sap_suspend_param_send(struct wlan_objmgr_psoc *psoc,
+				      struct vdev_suspend_params *param)
+{
+	QDF_STATUS status;
+	struct wlan_lmac_if_mlme_tx_ops *txops;
+	struct wlan_objmgr_vdev *vdev;
+
+	if (!param) {
+		mlme_err("Invalid input");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, param->vdev_id,
+						    WLAN_MLME_OBJMGR_ID);
+	if (!vdev) {
+		mlme_err("vdev %d: vdev not found", param->vdev_id);
+		return QDF_STATUS_E_FAILURE;
+	}
+	txops = wlan_vdev_mlme_get_lmac_txops(vdev);
+	if (!txops || !txops->vdev_set_param_send) {
+		mlme_err("VDEV: No Tx Ops");
+		status = QDF_STATUS_E_INVAL;
+		goto end;
+	}
+
+	status = txops->sap_suspend_param_send(vdev, param);
+	if (QDF_IS_STATUS_ERROR(status))
+		mlme_err("VDEV_%d: Tx Ops Error : %d", param->vdev_id, status);
+
+end:
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_OBJMGR_ID);
+	return status;
+}
+

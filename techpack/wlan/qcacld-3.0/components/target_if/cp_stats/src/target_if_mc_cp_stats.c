@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -431,7 +431,8 @@ static QDF_STATUS target_if_cp_stats_extract_pdev_stats(
 		 * It's 0.5 db unit from halphy. so correct the value here
 		 */
 		ev->pdev_stats[i].max_pwr = pdev_stats->chan_tx_pwr >> 1;
-
+		if (ev->pdev_stats[i].max_pwr == TARGET_MAX_TX_POWER)
+			ev->pdev_stats[i].max_pwr = 0;
 		ev->pdev_stats[i].pdev_id = pdev_stats->pdev_id;
 		ev->pdev_stats[i].rx_clear_count = pdev_stats->rx_clear_count;
 		ev->pdev_stats[i].tx_frame_count = pdev_stats->tx_frame_count;
@@ -489,6 +490,13 @@ target_if_cp_stats_extract_pdev_extd_stats(struct wmi_unified *wmi_hdl,
 
 	if (!(stats_param->stats_id & WMI_REQUEST_PDEV_EXTD_STAT))
 		return QDF_STATUS_SUCCESS;
+
+	if (stats_param->num_pdev_ext_stats > WLAN_UMAC_MAX_RP_PID) {
+		cp_stats_err("Invalid PDEV stats received from FW: received=%u, max=%u",
+			     stats_param->num_pdev_ext_stats,
+			     WLAN_UMAC_MAX_RP_PID);
+		return QDF_STATUS_E_INVAL;
+	}
 
 	ev->pdev_extd_stats = qdf_mem_malloc(sizeof(*ev->pdev_extd_stats) *
 					     WLAN_UMAC_MAX_RP_PID);
@@ -843,7 +851,9 @@ static QDF_STATUS target_if_cp_stats_extract_vdev_chain_rssi_stats(
 		for (j = 0; j < MAX_NUM_CHAINS; j++) {
 			dat_snr = rssi_stats.rssi_avg_data[j];
 			bcn_snr = rssi_stats.rssi_avg_beacon[j];
-			cp_stats_nofl_debug("Chain %d SNR bcn: %d data: %d", j,
+			cp_stats_nofl_debug("vdev %d Chain %d %s bcn: %d data: %d",
+					    rssi_stats.vdev_id, j,
+					    db2dbm_enabled ? "RSSI" : "SNR",
 					    bcn_snr, dat_snr);
 			/*
 			 * Get the absolute rssi value from the current rssi
@@ -904,7 +914,7 @@ target_if_cp_stats_extract_vdev_extd_stats(struct wmi_unified *wmi_hdl,
 		ev->vdev_extd_stats[i].vdev_id = stats[0].vdev_id;
 		ev->vdev_extd_stats[i].is_mlo_vdev_active =
 						stats[0].is_mlo_vdev_active;
-		ev->vdev_extd_stats[i].vdev_tx_power = stats[i].vdev_tx_power;
+		ev->vdev_extd_stats[i].vdev_tx_power = stats[0].vdev_tx_power;
 	}
 
 	qdf_mem_free(stats);
@@ -1161,7 +1171,7 @@ target_if_cp_stats_extract_peer_stats_event(struct wmi_unified *wmi_hdl,
 	QDF_STATUS status;
 	wmi_host_stats_event stats_param = {0};
 	struct peer_stats_info_ext_event *peer_stats_info;
-	wmi_host_peer_stats_info stats_info;
+	wmi_host_peer_stats_info stats_info = {0};
 	uint32_t peer_stats_info_size;
 	int i, j;
 	uint32_t tx_rate_count_idx = 0, rx_rate_count_idx = 0;
@@ -1674,6 +1684,36 @@ static QDF_STATUS target_if_cp_stats_send_stats_req(
 }
 
 /**
+ * target_if_set_pdev_stats_update_period(): API to set pdev stats update
+ * period to FW
+ * @psoc: pointer to psoc object
+ * @pdev_id: pdev id
+ * @val: pdev stats update period, 0: disabled periodical stats report.
+ *
+ * Return: status of operation
+ */
+static QDF_STATUS
+target_if_set_pdev_stats_update_period(struct wlan_objmgr_psoc *psoc,
+				       uint8_t pdev_id, uint32_t val)
+{
+	struct wmi_unified *wmi_handle;
+	struct pdev_params pdev_param = {0};
+
+	wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+
+	if (!wmi_handle) {
+		cp_stats_err("wmi_handle is null");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	pdev_param.param_id = wmi_pdev_param_pdev_stats_update_period;
+	pdev_param.param_value = val;
+	return wmi_unified_pdev_param_send(wmi_handle,
+					   &pdev_param,
+					   pdev_id);
+}
+
+/**
  * target_if_mc_cp_stats_unregister_handlers() - Unregisters wmi event handlers
  * of control plane stats & twt session stats info
  * @psoc: PSOC object
@@ -1765,6 +1805,8 @@ target_if_mc_cp_stats_register_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 	cp_stats_tx_ops->inc_wake_lock_stats =
 		target_if_cp_stats_inc_wake_lock_stats;
 	cp_stats_tx_ops->send_req_stats = target_if_cp_stats_send_stats_req;
+	cp_stats_tx_ops->set_pdev_stats_update_period =
+			target_if_set_pdev_stats_update_period;
 	cp_stats_tx_ops->send_req_peer_stats =
 		target_if_cp_stats_send_peer_stats_req;
 
@@ -1792,6 +1834,7 @@ target_if_mc_cp_stats_unregister_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 	target_if_big_data_stats_unregister_tx_ops(cp_stats_tx_ops);
 	cp_stats_tx_ops->inc_wake_lock_stats = NULL;
 	cp_stats_tx_ops->send_req_stats = NULL;
+	cp_stats_tx_ops->set_pdev_stats_update_period = NULL;
 	cp_stats_tx_ops->send_req_peer_stats = NULL;
 
 	return QDF_STATUS_SUCCESS;

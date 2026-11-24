@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,6 +38,8 @@
 #include <../../core/src/wlan_cm_vdev_api.h>
 #include <wlan_mlo_mgr_public_structs.h>
 #include "wlan_objmgr_vdev_obj.h"
+#include "wlan_policy_mgr_ll_sap.h"
+#include "wlan_ll_sap_api.h"
 
 #define CASE_RETURN_STR(n) {\
 	case (n): return (# n);\
@@ -66,8 +68,10 @@ const char *get_e_roam_cmd_status_str(eRoamCmdStatus val)
 		CASE_RETURN_STR(eCSR_ROAM_STA_CHANNEL_SWITCH);
 		CASE_RETURN_STR(eCSR_ROAM_NDP_STATUS_UPDATE);
 		CASE_RETURN_STR(eCSR_ROAM_CHANNEL_COMPLETE_IND);
+		CASE_RETURN_STR(eCSR_ROAM_CAC_COMPLETE_IND);
 		CASE_RETURN_STR(eCSR_ROAM_SAE_COMPUTE);
 		CASE_RETURN_STR(eCSR_ROAM_CHANNEL_INFO_EVENT_IND);
+		CASE_RETURN_STR(eCSR_ROAM_CHANNEL_SWITCH_STARTED_IND);
 	default:
 		return "unknown";
 	}
@@ -78,42 +82,18 @@ const char *get_e_csr_roam_result_str(eCsrRoamResult val)
 	switch (val) {
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_NONE);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_FAILURE);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_ASSOCIATED);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NOT_ASSOCIATED);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_MIC_FAILURE);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_FORCED);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_DISASSOC_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_DEAUTH_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_CAP_CHANGED);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_LOSTLINK);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_MIC_ERROR_UNICAST);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_MIC_ERROR_GROUP);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_AUTHENTICATED);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NEW_RSN_BSS);
- #ifdef FEATURE_WLAN_WAPI
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NEW_WAPI_BSS);
- #endif /* FEATURE_WLAN_WAPI */
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_STARTED);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_START_FAILED);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_STOPPED);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_ASSOCIATION_IND);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_ASSOCIATION_CNF);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_INFRA_DISASSOCIATED);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_WPS_PBC_PROBE_REQ_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_SEND_ACTION_FAIL);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_MAX_ASSOC_EXCEEDED);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_ASSOC_FAIL_CON_CHANNEL);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_ADD_TDLS_PEER);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_UPDATE_TDLS_PEER);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_DELETE_TDLS_PEER);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_TEARDOWN_TDLS_PEER_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_DELETE_ALL_TDLS_PEER_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_LINK_ESTABLISH_REQ_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_TDLS_SHOULD_DISCOVER);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_TDLS_SHOULD_TEARDOWN);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_TDLS_SHOULD_PEER_DISCONNECTED);
-		CASE_RETURN_STR
-			(eCSR_ROAM_RESULT_TDLS_CONNECTION_TRACKER_NOTIFICATION);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_DFS_RADAR_FOUND_IND);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_CHANNEL_CHANGE_SUCCESS);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_CHANNEL_CHANGE_FAILURE);
@@ -122,16 +102,8 @@ const char *get_e_csr_roam_result_str(eCsrRoamResult val)
 		CASE_RETURN_STR(eCSR_ROAM_EXT_CHG_CHNL_UPDATE_IND);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDI_CREATE_RSP);
 		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDI_DELETE_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_INITIATOR_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_NEW_PEER_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_CONFIRM_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_INDICATION);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_SCHED_UPDATE_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_RESPONDER_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_END_RSP);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_PEER_DEPARTED_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_NDP_END_IND);
-		CASE_RETURN_STR(eCSR_ROAM_RESULT_SCAN_FOR_SSID_FAILURE);
+		CASE_RETURN_STR(eCSR_ROAM_RESULT_CAC_END_IND);
+		CASE_RETURN_STR(eCSR_ROAM_RESULT_CHANNEL_SWITCH_STARTED_NOTIFY);
 	default:
 		return "unknown";
 	}
@@ -268,12 +240,7 @@ static bool csr_is_conn_state(struct mac_context *mac_ctx, uint32_t session_id,
 	return mac_ctx->roam.roamSession[session_id].connectState == state;
 }
 
-bool csr_is_conn_state_connected(struct mac_context *mac, uint32_t sessionId)
-{
-	return cm_is_vdevid_connected(mac->pdev, sessionId) ||
-	       csr_is_conn_state_connected_wds(mac, sessionId);
-}
-
+static inline
 bool csr_is_conn_state_connected_wds(struct mac_context *mac_ctx,
 				     uint32_t session_id)
 {
@@ -281,37 +248,38 @@ bool csr_is_conn_state_connected_wds(struct mac_context *mac_ctx,
 				 eCSR_ASSOC_STATE_TYPE_WDS_CONNECTED);
 }
 
-bool csr_is_conn_state_connected_infra_ap(struct mac_context *mac_ctx,
-					  uint32_t session_id)
+bool csr_is_conn_state_connected(struct mac_context *mac, uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_INFRA_CONNECTED) ||
-		csr_is_conn_state(mac_ctx, session_id,
-				  eCSR_ASSOC_STATE_TYPE_INFRA_DISCONNECTED);
+	return cm_is_vdevid_connected(mac->pdev, sessionId) ||
+	       csr_is_conn_state_connected_wds(mac, sessionId);
 }
 
-bool csr_is_conn_state_disconnected_wds(struct mac_context *mac_ctx,
-					uint32_t session_id)
+uint16_t cm_csr_get_vdev_dot11_mode(uint8_t vdev_id)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_WDS_DISCONNECTED);
+	mac_handle_t mac_handle;
+	struct mac_context *mac_ctx;
+	enum mlme_dot11_mode curr_dot11_mode;
+
+	mac_handle = cds_get_context(QDF_MODULE_ID_SME);
+	mac_ctx = MAC_CONTEXT(mac_handle);
+	if (!mac_ctx)
+		return eCSR_CFG_DOT11_MODE_AUTO;
+
+	curr_dot11_mode = (uint8_t)csr_translate_to_wni_cfg_dot11_mode(mac_ctx,
+				mac_ctx->roam.configParam.uCfgDot11Mode);
+
+	return csr_get_vdev_dot11_mode(mac_ctx, vdev_id, curr_dot11_mode);
 }
 
-bool csr_is_conn_state_wds(struct mac_context *mac, uint32_t sessionId)
-{
-	return csr_is_conn_state_connected_wds(mac, sessionId) ||
-	       csr_is_conn_state_disconnected_wds(mac, sessionId);
-}
-
-enum csr_cfgdot11mode
+enum mlme_dot11_mode
 csr_get_vdev_dot11_mode(struct mac_context *mac,
 			uint8_t vdev_id,
-			enum csr_cfgdot11mode curr_dot11_mode)
+			enum mlme_dot11_mode curr_dot11_mode)
 {
 	struct wlan_objmgr_vdev *vdev;
 	struct vdev_mlme_obj *vdev_mlme;
 	enum mlme_vdev_dot11_mode vdev_dot11_mode;
-	enum csr_cfgdot11mode dot11_mode = curr_dot11_mode;
+	enum mlme_dot11_mode dot11_mode = curr_dot11_mode;
 
 	vdev = wlan_objmgr_get_vdev_by_id_from_pdev(mac->pdev, vdev_id,
 						    WLAN_MLME_OBJMGR_ID);
@@ -330,21 +298,21 @@ csr_get_vdev_dot11_mode(struct mac_context *mac,
 	if (vdev_dot11_mode == MLME_VDEV_DOT11_MODE_AUTO)
 		dot11_mode = curr_dot11_mode;
 
-	if (CSR_IS_DOT11_MODE_11N(curr_dot11_mode) &&
+	if (IS_DOT11_MODE_HT(curr_dot11_mode) &&
 	    vdev_dot11_mode == MLME_VDEV_DOT11_MODE_11N)
-		dot11_mode = eCSR_CFG_DOT11_MODE_11N;
+		dot11_mode = MLME_DOT11_MODE_11N;
 
-	if (CSR_IS_DOT11_MODE_11AC(curr_dot11_mode) &&
+	if (IS_DOT11_MODE_VHT(curr_dot11_mode) &&
 	    vdev_dot11_mode == MLME_VDEV_DOT11_MODE_11AC)
-		dot11_mode = eCSR_CFG_DOT11_MODE_11AC;
+		dot11_mode = MLME_DOT11_MODE_11AC;
 
-	if (CSR_IS_DOT11_MODE_11AX(curr_dot11_mode) &&
+	if (IS_DOT11_MODE_HE(curr_dot11_mode) &&
 	    vdev_dot11_mode == MLME_VDEV_DOT11_MODE_11AX)
-		dot11_mode = eCSR_CFG_DOT11_MODE_11AX;
+		dot11_mode = MLME_DOT11_MODE_11AX;
 #ifdef WLAN_FEATURE_11BE
-	if (CSR_IS_DOT11_MODE_11BE(curr_dot11_mode) &&
+	if (IS_DOT11_MODE_EHT(curr_dot11_mode) &&
 	    vdev_dot11_mode == MLME_VDEV_DOT11_MODE_11BE)
-		dot11_mode = eCSR_CFG_DOT11_MODE_11BE;
+		dot11_mode = MLME_DOT11_MODE_11BE;
 #endif
 	sme_debug("INI vdev_dot11_mode %d new dot11_mode %d",
 		  vdev_dot11_mode, dot11_mode);
@@ -544,6 +512,7 @@ static eCSR_BW_Val csr_get_half_bw(enum phy_ch_width ch_width)
  * @intf_hbw: concurrent SAP/GO half bw
  * @intf_cfreq: concurrent SAP/GO channel frequency
  * @op_mode: opmode
+ * @cc_switch_mode: channel switch mode
  *
  * This routine is called to check if one SAP/GO channel is overlapping with
  * other SAP/GO channel
@@ -605,13 +574,42 @@ uint16_t csr_check_concurrent_channel_overlap(struct mac_context *mac_ctx,
 	QDF_STATUS status;
 	enum QDF_OPMODE op_mode;
 	enum phy_ch_width ch_width;
+	enum channel_state state;
+	qdf_freq_t new_sap_freq = 0;
+	qdf_freq_t ll_lt_sap_freq = 0;
+	bool force_mcc_required = false;
+	enum sap_csa_reason_code csa_reason;
 
 	if (mac_ctx->roam.configParam.cc_switch_mode ==
 			QDF_MCC_TO_SCC_SWITCH_DISABLE)
 		return 0;
 
-	if (policy_mgr_is_vdev_ll_lt_sap(mac_ctx->psoc, vdev_id))
-		return 0;
+	if (policy_mgr_is_vdev_ll_lt_sap(mac_ctx->psoc, vdev_id)) {
+		new_sap_freq = wlan_get_ll_lt_sap_restart_freq(mac_ctx->pdev,
+								sap_ch_freq,
+								vdev_id,
+								&csa_reason);
+		/*
+		 * If ll_lt_sap is present, then it has already updated the freq
+		 * according to current concurrency, so, return from here
+		 */
+		if (new_sap_freq == sap_ch_freq)
+			return 0;
+
+		sme_debug("LL_LT_SAP concurrency updated freq %d for vdev %d",
+			  new_sap_freq, vdev_id);
+		return new_sap_freq;
+	}
+
+	ll_lt_sap_freq = policy_mgr_get_ll_lt_sap_freq(mac_ctx->psoc);
+	op_mode = wlan_get_opmode_from_vdev_id(mac_ctx->pdev, vdev_id);
+
+	/* check if force MCC is required for LL LT SAP */
+	if (ll_lt_sap_freq && ((sap_ch_freq == ll_lt_sap_freq) ||
+	    (op_mode == QDF_SAP_MODE &&
+	     policy_mgr_are_2_freq_on_same_mac(mac_ctx->psoc, sap_ch_freq,
+					       ll_lt_sap_freq))))
+		force_mcc_required = true;
 
 	if (sap_ch_freq != 0) {
 		sap_cfreq = sap_ch_freq;
@@ -634,7 +632,9 @@ uint16_t csr_check_concurrent_channel_overlap(struct mac_context *mac_ctx,
 	for (i = 0; i < WLAN_MAX_VDEVS; i++) {
 		if (!CSR_IS_SESSION_VALID(mac_ctx, i))
 			continue;
-
+		/* Skip LL SAP freq for SCC */
+		if (policy_mgr_is_vdev_ll_lt_sap(mac_ctx->psoc, i))
+			continue;
 		session = CSR_GET_SESSION(mac_ctx, i);
 		op_mode = wlan_get_opmode_from_vdev_id(mac_ctx->pdev, i);
 		if ((op_mode == QDF_STA_MODE ||
@@ -672,6 +672,20 @@ uint16_t csr_check_concurrent_channel_overlap(struct mac_context *mac_ctx,
 					&intf_cfreq, op_mode,
 					cc_switch_mode);
 		}
+
+		if (intf_ch_freq) {
+			state = wlan_reg_get_channel_state_for_pwrmode(
+					mac_ctx->pdev, intf_ch_freq,
+					REG_CURRENT_PWR_MODE);
+			if (state == CHANNEL_STATE_DISABLE ||
+			    state == CHANNEL_STATE_INVALID) {
+				sme_debug("skip vdev %d for intf_ch:%d",
+					  i, intf_ch_freq);
+				intf_ch_freq = 0;
+				continue;
+			}
+		}
+
 		if (intf_ch_freq &&
 		    ((intf_ch_freq <= wlan_reg_ch_to_freq(CHAN_ENUM_2484) &&
 		     sap_ch_freq <= wlan_reg_ch_to_freq(CHAN_ENUM_2484)) ||
@@ -701,8 +715,9 @@ uint16_t csr_check_concurrent_channel_overlap(struct mac_context *mac_ctx,
 			((intf_lfreq > sap_lfreq && intf_lfreq < sap_hfreq) ||
 			(intf_hfreq > sap_lfreq && intf_hfreq < sap_hfreq))))
 			intf_ch_freq = 0;
-	} else if (intf_ch_freq && sap_ch_freq != intf_ch_freq &&
-		   (policy_mgr_is_force_scc(mac_ctx->psoc))) {
+	} else if (((intf_ch_freq && sap_ch_freq != intf_ch_freq) ||
+		    force_mcc_required) &&
+		    policy_mgr_is_force_scc(mac_ctx->psoc)) {
 		policy_mgr_check_scc_channel(mac_ctx->psoc, &intf_ch_freq,
 					     sap_ch_freq, vdev_id,
 					     cc_switch_mode);
@@ -751,24 +766,6 @@ bool csr_is_all_session_disconnected(struct mac_context *mac)
 	}
 
 	return fRc;
-}
-
-bool csr_is_infra_ap_started(struct mac_context *mac)
-{
-	uint32_t sessionId;
-	bool fRc = false;
-
-	for (sessionId = 0; sessionId < WLAN_MAX_VDEVS; sessionId++) {
-		if (CSR_IS_SESSION_VALID(mac, sessionId) &&
-				(csr_is_conn_state_connected_infra_ap(mac,
-					sessionId))) {
-			fRc = true;
-			break;
-		}
-	}
-
-	return fRc;
-
 }
 
 bool csr_is_conn_state_disconnected(struct mac_context *mac, uint8_t vdev_id)
@@ -906,12 +903,12 @@ uint32_t csr_translate_to_wni_cfg_dot11_mode(struct mac_context *mac,
 			ret = MLME_DOT11_MODE_11N;
 		break;
 #endif
+	case eCSR_CFG_DOT11_MODE_ABG:
+		ret = MLME_DOT11_MODE_ABG;
+		break;
 	default:
 		sme_warn("doesn't expect %d as csrDo11Mode", csrDot11Mode);
-		if (BAND_2G == mac->mlme_cfg->gen.band)
-			ret = MLME_DOT11_MODE_11G;
-		else
-			ret = MLME_DOT11_MODE_11A;
+		ret = MLME_DOT11_MODE_ALL;
 		break;
 	}
 

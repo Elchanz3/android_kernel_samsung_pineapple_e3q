@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -451,6 +451,20 @@ pld_pcie_qmi_send(struct device *dev, int type, void *cmd,
 	return -EINVAL;
 }
 
+static inline int
+pld_pcie_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return -EINVAL;
+}
+
+static inline int
+pld_pcie_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EINVAL;
+}
+
 static inline int pld_pcie_get_user_msi_assignment(struct device *dev,
 						   char *user_name,
 						   int *num_vectors,
@@ -492,6 +506,27 @@ static inline bool pld_pcie_is_direct_link_supported(struct device *dev)
 	return false;
 }
 
+static inline bool pld_pcie_audio_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline int pld_pcie_get_direct_link_sid(struct device *dev,
+					       uint16_t *sid)
+{
+	return 0;
+}
+
+static inline bool pld_pcie_is_audio_shared_iommu_group(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_pcie_is_ipa_shared_smmu_enable(struct device *dev)
+{
+	return false;
+}
+
 static inline
 int pld_pcie_audio_smmu_map(struct device *dev, phys_addr_t paddr,
 			    dma_addr_t iova, size_t size)
@@ -502,6 +537,13 @@ int pld_pcie_audio_smmu_map(struct device *dev, phys_addr_t paddr,
 static inline
 void pld_pcie_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
 {
+}
+
+static inline
+int pld_pcie_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return -EINVAL;
 }
 
 static inline int pld_pcie_set_wfc_mode(struct device *dev,
@@ -529,6 +571,17 @@ static inline int pld_pci_get_thermal_state(struct device *dev,
 	return 0;
 }
 
+static inline void
+pld_pcie_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+}
+
+static inline void
+pld_pcie_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+}
 #else
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 int pld_pcie_set_wfc_mode(struct device *dev,
@@ -622,6 +675,46 @@ pld_pcie_qmi_send(struct device *dev, int type, void *cmd,
 {
 	return cnss_qmi_send(dev, type, cmd, cmd_len, cb_ctx, cb);
 }
+
+#if defined(WLAN_CHIPSET_STATS) && \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || \
+	 defined(CNSS_QMI_ASYNC_EVENT_SUPPORT))
+static inline int
+pld_pcie_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return cnss_register_driver_async_data_cb(dev, cb_ctx, cb);
+}
+
+#if defined(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS)
+static inline int
+pld_pcie_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return cnss_get_dump_inprogress(dev, val);
+}
+#else
+static inline int
+pld_pcie_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EPERM;
+}
+#endif
+#else
+static inline int
+pld_pcie_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return 0;
+}
+
+static inline int
+pld_pcie_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EINVAL;
+}
+#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
 static inline void *pld_pcie_smmu_get_domain(struct device *dev)
@@ -831,7 +924,8 @@ static inline int pld_pcie_get_pci_slot(struct device *dev)
 }
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || \
+	defined(CNSS_PLAT_WIFI_KOBJ_SUPPORT))
 static inline struct kobject *pld_pcie_get_wifi_kobj(struct device *dev)
 {
 	return cnss_get_wifi_kobj(dev);
@@ -938,6 +1032,21 @@ static inline bool pld_pcie_is_direct_link_supported(struct device *dev)
 	return cnss_get_fw_cap(dev, CNSS_FW_CAP_DIRECT_LINK_SUPPORT);
 }
 
+static inline bool pld_pcie_audio_is_direct_link_supported(struct device *dev)
+{
+	return cnss_audio_is_direct_link_supported(dev);
+}
+
+static inline bool pld_pcie_is_audio_shared_iommu_group(struct device *dev)
+{
+	return cnss_get_audio_shared_iommu_group_cap(dev);
+}
+
+static inline bool pld_pcie_is_ipa_shared_smmu_enable(struct device *dev)
+{
+	return cnss_ipa_wlan_shared_smmu_supported(dev);
+}
+
 static inline
 int pld_pcie_audio_smmu_map(struct device *dev, phys_addr_t paddr,
 			    dma_addr_t iova, size_t size)
@@ -950,8 +1059,30 @@ void pld_pcie_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
 {
 	cnss_audio_smmu_unmap(dev, iova, size);
 }
+
+static inline
+int pld_pcie_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return cnss_get_fw_lpass_shared_mem(dev, iova, size);
+}
 #else
 static inline bool pld_pcie_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_pcie_audio_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_pcie_is_audio_shared_iommu_group(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_pcie_is_ipa_shared_smmu_enable(struct device *dev)
 {
 	return false;
 }
@@ -967,6 +1098,55 @@ static inline
 void pld_pcie_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
 {
 }
+
+static inline
+int pld_pcie_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return -EINVAL;
+}
 #endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static inline int pld_pcie_get_direct_link_sid(struct device *dev,
+						uint16_t *sid)
+{
+	return cnss_get_direct_link_sid(dev, sid);
+}
+#else
+static inline int pld_pcie_get_direct_link_sid(struct device *dev,
+						uint16_t *sid)
+{
+	return -EINVAL;
+}
+#endif
+
+#ifdef CONFIG_DT_CPU_MASK_DP_INTR
+static inline void
+pld_pcie_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+	cnss_get_cpumask_for_wlan_rx_interrupts(dev, cpumask);
+}
+
+static inline void
+pld_pcie_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+	cnss_get_cpumask_for_wlan_tx_comp_interrupts(dev, cpumask);
+}
+#else
+static inline void
+pld_pcie_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+}
+
+static inline void
+pld_pcie_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+}
+#endif /* CONFIG_DT_CPU_MASK_DP_INTR */
 #endif
 #endif

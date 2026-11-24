@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -62,6 +62,13 @@ ucfg_dcs_register_user_cb(struct wlan_objmgr_psoc *psoc,
 	dcs_pdev_priv->user_cb = cb;
 }
 
+uint32_t
+wlan_dcs_get_trnsprt_switch_rjt_th_cu(struct wlan_objmgr_psoc *psoc,
+				      uint8_t pdev_id)
+{
+	return dcs_get_trnsprt_switch_rjt_th_cu(psoc, pdev_id);
+}
+
 QDF_STATUS ucfg_dcs_register_awgn_cb(struct wlan_objmgr_psoc *psoc,
 				     dcs_switch_chan_cb cb)
 {
@@ -102,6 +109,20 @@ ucfg_wlan_dcs_cmd(struct wlan_objmgr_psoc *psoc,
 		  bool is_host_pdev_id)
 {
 	return wlan_dcs_cmd_send(psoc, mac_id, is_host_pdev_id);
+}
+
+#ifdef WLAN_FEATURE_VDEV_DCS
+QDF_STATUS
+ucfg_wlan_dcs_cmd_for_vdev(struct wlan_objmgr_psoc *psoc, uint32_t mac_id,
+			   uint8_t vdev_id)
+{
+	return wlan_send_dcs_cmd_for_vdev(psoc, mac_id, vdev_id);
+}
+#endif
+
+bool ucfg_is_vdev_level_dcs_supported(struct wlan_objmgr_psoc *psoc)
+{
+	return wlan_is_vdev_level_dcs_supported(psoc);
 }
 
 void ucfg_config_dcs_enable(struct wlan_objmgr_psoc *psoc,
@@ -223,6 +244,13 @@ QDF_STATUS ucfg_dcs_get_ch_util(struct wlan_objmgr_psoc *psoc, uint8_t mac_id,
 }
 
 #ifdef DCS_INTERFERENCE_DETECTION
+void
+ucfg_dcs_trigger_dcs(struct wlan_objmgr_psoc *psoc, uint8_t pdev_id,
+		     uint8_t vdev_id, enum wlan_host_dcs_type dcs_type)
+{
+	wlan_dcs_trigger_dcs(psoc, pdev_id, vdev_id, dcs_type);
+}
+
 QDF_STATUS
 ucfg_dcs_switch_chan(struct wlan_objmgr_vdev *vdev, qdf_freq_t tgt_freq,
 		     enum phy_ch_width tgt_width)

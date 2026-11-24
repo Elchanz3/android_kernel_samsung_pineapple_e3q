@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -168,6 +168,20 @@ pld_ipci_qmi_send(struct device *dev, int type, void *cmd,
 	return 0;
 }
 
+static inline int
+pld_ipci_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return -EINVAL;
+}
+
+static inline int
+pld_ipci_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EINVAL;
+}
+
 static inline int pld_ipci_thermal_register(struct device *dev,
 					    unsigned long max_state,
 					    int mon_id)
@@ -185,6 +199,11 @@ static inline int pld_ipci_get_thermal_state(struct device *dev,
 					     int mon_id)
 {
 	return 0;
+}
+
+static inline bool pld_ipci_ce_cmn_cfg_supported(struct device *dev)
+{
+	return false;
 }
 
 static inline int pld_ipci_exit_power_save(struct device *dev)
@@ -214,6 +233,64 @@ static inline int pld_ipci_is_pci_ep_awake(struct device *dev)
 static inline int pld_ipci_get_irq(struct device *dev, int ce_id)
 {
 	return 0;
+}
+
+static inline void
+pld_ipci_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+}
+
+static inline void
+pld_ipci_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+}
+
+static inline
+int pld_ipci_request_bus_bandwidth(struct device *dev, int bandwidth)
+{
+	return 0;
+}
+
+static inline bool pld_ipci_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_ipci_audio_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline int pld_ipci_get_direct_link_sid(struct device *dev,
+					       uint16_t *sid)
+{
+	return -EINVAL;
+}
+
+static inline bool pld_ipci_is_audio_shared_iommu_group(struct device *dev)
+{
+	return false;
+}
+
+static inline
+int pld_ipci_audio_smmu_map(struct device *dev, phys_addr_t paddr,
+			    dma_addr_t iova, size_t size)
+{
+	return 0;
+}
+
+static inline
+void pld_ipci_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
+{
+}
+
+static inline
+int pld_ipci_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return -EINVAL;
 }
 #else
 /**
@@ -392,6 +469,44 @@ pld_ipci_qmi_send(struct device *dev, int type, void *cmd,
 	return icnss_qmi_send(dev, type, cmd, cmd_len, cb_ctx, cb);
 }
 
+#if defined(WLAN_CHIPSET_STATS) && defined(CNSS_QMI_ASYNC_EVENT_SUPPORT)
+static inline int
+pld_ipci_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return icnss_register_driver_async_data_cb(dev, cb_ctx, cb);
+}
+
+#if defined(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS)
+static inline int
+pld_ipci_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return icnss_get_dump_inprogress(dev, val);
+}
+#else
+static inline int
+pld_ipci_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EPERM;
+}
+#endif
+#else
+static inline int
+pld_ipci_register_qmi_ind(struct device *dev, void *cb_ctx,
+			  int (*cb)(void *ctx, uint16_t type,
+				    void *event, int event_len))
+{
+	return 0;
+}
+
+static inline int
+pld_ipci_get_dump_inprogress(struct device *dev, uint8_t *val)
+{
+	return -EINVAL;
+}
+#endif
+
 static inline int pld_ipci_thermal_register(struct device *dev,
 					    unsigned long max_state,
 					    int mon_id)
@@ -411,6 +526,18 @@ static inline int pld_ipci_get_thermal_state(struct device *dev,
 {
 	return icnss_get_curr_therm_cdev_state(dev, thermal_state, mon_id);
 }
+
+#ifdef CE_CMN_REG_CFG_QMI
+static inline bool pld_ipci_ce_cmn_cfg_supported(struct device *dev)
+{
+	return icnss_get_fw_cap(dev, ICNSS_FW_CAP_CE_CMN_CFG_SUPPORT);
+}
+#else
+static inline bool pld_ipci_ce_cmn_cfg_supported(struct device *dev)
+{
+	return false;
+}
+#endif
 
 static inline int pld_ipci_exit_power_save(struct device *dev)
 {
@@ -436,5 +563,125 @@ static inline int pld_ipci_mhi_state(struct device *dev)
 {
 	return icnss_get_mhi_state(dev);
 }
+
+#ifdef CONFIG_DT_CPU_MASK_DP_INTR
+static inline void
+pld_ipci_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+	icnss_get_cpumask_for_wlan_rx_interrupts(dev, cpumask);
+}
+
+static inline void
+pld_ipci_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+	icnss_get_cpumask_for_wlan_tx_comp_interrupts(dev, cpumask);
+}
+#else
+static inline void
+pld_ipci_get_cpumask_for_wlan_rx_interrupts(struct device *dev,
+					    unsigned int *cpumask)
+{
+}
+
+static inline void
+pld_ipci_get_cpumask_for_wlan_tx_comp_interrupts(struct device *dev,
+						 unsigned int *cpumask)
+{
+}
+#endif /* CONFIG_DT_CPU_MASK_DP_INTR */
+
+static inline
+int pld_ipci_request_bus_bandwidth(struct device *dev, int bandwidth)
+{
+	return icnss_request_bus_bandwidth(dev, bandwidth);
+}
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+static inline bool pld_ipci_is_direct_link_supported(struct device *dev)
+{
+	return icnss_get_fw_direct_link_cap(dev);
+}
+
+static inline bool pld_ipci_audio_is_direct_link_supported(struct device *dev)
+{
+	return icnss_audio_is_direct_link_supported(dev);
+}
+
+static inline bool pld_ipci_is_audio_shared_iommu_group(struct device *dev)
+{
+	return icnss_get_audio_shared_iommu_group_cap(dev);
+}
+
+static inline
+int pld_ipci_audio_smmu_map(struct device *dev, phys_addr_t paddr,
+			    dma_addr_t iova, size_t size)
+{
+	return icnss_audio_smmu_map(dev, paddr, iova, size);
+}
+
+static inline
+void pld_ipci_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
+{
+	icnss_audio_smmu_unmap(dev, iova, size);
+}
+
+static inline
+int pld_ipci_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return icnss_get_fw_lpass_shared_mem(dev, iova, size);
+}
+#else
+static inline bool pld_ipci_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_ipci_audio_is_direct_link_supported(struct device *dev)
+{
+	return false;
+}
+
+static inline bool pld_ipci_is_audio_shared_iommu_group(struct device *dev)
+{
+	return false;
+}
+
+static inline
+int pld_ipci_audio_smmu_map(struct device *dev, phys_addr_t paddr,
+			    dma_addr_t iova, size_t size)
+{
+	return 0;
+}
+
+static inline
+void pld_ipci_audio_smmu_unmap(struct device *dev, dma_addr_t iova, size_t size)
+{
+}
+
+static inline
+int pld_ipci_get_fw_lpass_shared_mem(struct device *dev, dma_addr_t *iova,
+				     size_t *size)
+{
+	return -EINVAL;
+}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+static inline int pld_ipci_get_direct_link_sid(struct device *dev,
+					       uint16_t *sid)
+{
+	return icnss_get_direct_link_sid(dev, sid);
+}
+#else
+static inline int pld_ipci_get_direct_link_sid(struct device *dev,
+					       uint16_t *sid)
+{
+	return -EINVAL;
+}
+#endif
+
 #endif
 #endif

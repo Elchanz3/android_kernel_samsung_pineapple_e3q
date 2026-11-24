@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -21,6 +21,30 @@
 
 #include <cdp_txrx_cmn_struct.h>
 #include <cdp_txrx_cmn.h>
+
+enum cdp_sawf_peer_msduq_event {
+	SAWF_PEER_MSDUQ_ADD_EVENT,
+	SAWF_PEER_MSDUQ_DELETE_EVENT,
+	SAWF_PEER_MSDUQ_UPDATE_EVENT,
+};
+
+struct cdp_sawf_peer_msduq_event_intf {
+	enum cdp_sawf_peer_msduq_event event_type;
+	uint16_t hw_link_id;
+	uint8_t peer_mac[QDF_MAC_ADDR_SIZE];
+	uint8_t vdev_id;
+	uint8_t queue_id;
+	uint8_t svc_id;
+	uint8_t tid;
+	uint8_t ac;
+	uint8_t priority;
+	uint8_t type;
+	uint32_t mark_metadata;
+	uint32_t service_interval;
+	uint32_t min_throughput;
+	uint32_t burst_size;
+	uint32_t delay_bound;
+};
 
 static inline QDF_STATUS
 cdp_sawf_peer_svcid_map(ol_txrx_soc_handle soc,
@@ -77,7 +101,8 @@ cdp_sawf_peer_get_map_conf(ol_txrx_soc_handle soc,
 }
 
 static inline QDF_STATUS
-cdp_sawf_peer_get_msduq_info(ol_txrx_soc_handle soc, uint8_t *mac)
+cdp_sawf_peer_get_msduq_info(ol_txrx_soc_handle soc, char *mac, uint8_t svc_id,
+			     uint8_t debug_level)
 {
 	if (!soc || !soc->ops) {
 		dp_cdp_debug("Invalid Instance");
@@ -90,7 +115,8 @@ cdp_sawf_peer_get_msduq_info(ol_txrx_soc_handle soc, uint8_t *mac)
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	return soc->ops->sawf_ops->sawf_get_peer_msduq_info(soc, mac);
+	return soc->ops->sawf_ops->sawf_get_peer_msduq_info(soc, mac, svc_id,
+							    debug_level);
 }
 
 #ifdef CONFIG_SAWF
@@ -146,6 +172,33 @@ cdp_get_peer_sawf_tx_stats(ol_txrx_soc_handle soc, uint32_t svc_id,
 
 	return soc->ops->sawf_ops->txrx_get_peer_sawf_tx_stats(soc, svc_id,
 							       mac, data);
+}
+
+/**
+ * cdp_get_peer_sawf_msduq_svc_params() - Call to get Peer MSDUQ SVC Info
+ * @soc: soc handle
+ * @mac: peer mac address
+ * @data: opaque pointer
+ *
+ * return: status Success/Failure
+ */
+static inline QDF_STATUS
+cdp_get_peer_sawf_msduq_svc_params(ol_txrx_soc_handle soc, uint8_t *mac,
+				   void *data)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (!soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->txrx_get_peer_sawf_msduq_svc_params)
+		return QDF_STATUS_E_FAILURE;
+
+	return soc->ops->sawf_ops->txrx_get_peer_sawf_msduq_svc_params(soc,
+								       mac,
+								       data);
 }
 
 /**
@@ -292,6 +345,25 @@ cdp_get_throughput_stats(ol_txrx_soc_handle soc, void *arg,
 }
 
 static inline QDF_STATUS
+cdp_get_msduq_tx_stats(ol_txrx_soc_handle soc, void *arg,
+		       void *msduq_tx_stats,
+		       uint8_t msduq)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (!soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->telemetry_get_msduq_tx_stats)
+		return QDF_STATUS_E_FAILURE;
+
+	return soc->ops->sawf_ops->telemetry_get_msduq_tx_stats(
+			arg, msduq_tx_stats, msduq);
+}
+
+static inline QDF_STATUS
 cdp_get_mpdu_stats(ol_txrx_soc_handle soc, void *arg,
 		   uint64_t *svc_int_pass, uint64_t *svc_int_fail,
 		   uint64_t *burst_pass, uint64_t *burst_fail,
@@ -374,6 +446,7 @@ cdp_sawf_peer_config_ul(ol_txrx_soc_handle soc, uint8_t *mac_addr, uint8_t tid,
  * @start_or_stop: Indication of start or stop
  * @peer_mac: Peer MAC address
  * @peer_id: peer id
+ * @flow_count: flow count
  *
  * Return: QDF_STATUS
  */
@@ -381,7 +454,7 @@ static inline QDF_STATUS
 cdp_sawf_peer_flow_count(ol_txrx_soc_handle soc, uint8_t *mac_addr,
 			 uint8_t svc_id, uint8_t direction,
 			 uint8_t start_or_stop, uint8_t *peer_mac,
-			 uint16_t peer_id)
+			 uint16_t peer_id, uint16_t flow_count)
 {
 	if (!soc || !soc->ops || !soc->ops->sawf_ops ||
 	    !soc->ops->sawf_ops->sawf_peer_flow_count) {
@@ -392,7 +465,7 @@ cdp_sawf_peer_flow_count(ol_txrx_soc_handle soc, uint8_t *mac_addr,
 
 	return soc->ops->sawf_ops->sawf_peer_flow_count
 		(soc, mac_addr, svc_id, direction, start_or_stop, peer_mac,
-								peer_id);
+		 peer_id, flow_count);
 }
 
 /**
@@ -417,6 +490,33 @@ cdp_swaf_peer_sla_configuration(ol_txrx_soc_handle soc, uint8_t *mac_addr,
 							       sla_mask);
 }
 
+/**
+ * cdp_get_peer_sawf_admctrl_stats() - Call to get Peer SAWF AdmCtrl stats
+ * @soc: soc handle
+ * @mac: peer mac address
+ * @data: opaque pointer
+ * @peer_type: peer type
+ *
+ * return: status Success/Failure
+ */
+static inline QDF_STATUS
+cdp_get_peer_sawf_admctrl_stats(ol_txrx_soc_handle soc, uint8_t *mac,
+				void *data, enum cdp_peer_type peer_type)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (!soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->txrx_get_peer_sawf_admctrl_stats)
+		return QDF_STATUS_E_FAILURE;
+
+	return soc->ops->sawf_ops->txrx_get_peer_sawf_admctrl_stats(soc, mac,
+								    data,
+								    peer_type);
+}
 #else
 static inline QDF_STATUS
 cdp_sawf_mpdu_stats_req(ol_txrx_soc_handle soc, uint8_t enable)
@@ -449,6 +549,62 @@ cdp_swaf_peer_sla_configuration(ol_txrx_soc_handle soc, uint8_t *mac_addr,
 				uint16_t *sla_mask)
 {
 	return QDF_STATUS_E_FAILURE;
+}
+
+static inline QDF_STATUS
+cdp_get_peer_sawf_admctrl_stats(ol_txrx_soc_handle soc, uint8_t *mac,
+				void *data, enum cdp_peer_type peer_type)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+#endif
+
+#ifdef WLAN_FEATURE_11BE_MLO_3_LINK_TX
+static inline
+uint16_t cdp_sawf_get_peer_msduq(ol_txrx_soc_handle soc,
+				 struct net_device *netdev, uint8_t *dest_mac,
+				 uint32_t dscp_pcp, bool pcp)
+{
+	if (!soc || !soc->ops || !soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->get_peer_msduq) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return false;
+	}
+
+	return soc->ops->sawf_ops->get_peer_msduq
+		(netdev, dest_mac, dscp_pcp, pcp);
+}
+
+static inline QDF_STATUS
+cdp_sawf_3_link_peer_flow_count(ol_txrx_soc_handle soc, uint8_t *mac_addr,
+				uint16_t peer_id, uint32_t mark_metadata)
+{
+	if (!soc || !soc->ops || !soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->sawf_3_link_peer_flow_count) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return false;
+	}
+
+	return soc->ops->sawf_ops->sawf_3_link_peer_flow_count
+		(soc, mac_addr, peer_id, mark_metadata);
+}
+
+static inline QDF_STATUS
+cdp_sawf_3_link_peer_set_tid_weight(ol_txrx_soc_handle soc,
+				    uint8_t *mac_addr,
+				    uint16_t peer_id,
+				    uint8_t tid_weight[])
+{
+	if (!soc || !soc->ops || !soc->ops->sawf_ops ||
+	    !soc->ops->sawf_ops->sawf_3_link_peer_set_tid_weight) {
+		dp_cdp_debug("Invalid Instance");
+		return false;
+	}
+
+	return soc->ops->sawf_ops->sawf_3_link_peer_set_tid_weight
+		(soc, mac_addr, peer_id, tid_weight);
 }
 #endif
 #endif /* _CDP_TXRX_SAWF_H_ */

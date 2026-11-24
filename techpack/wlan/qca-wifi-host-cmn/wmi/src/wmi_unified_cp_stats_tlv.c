@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -118,6 +118,8 @@ void wmi_extract_ctrl_path_twt_stats_tlv(void *tag_buf,
 	param->rx_mpdu_per_sp = wmi_stats_buf->rx_mpdu_per_sp;
 	param->tx_bytes_per_sp = wmi_stats_buf->tx_bytes_per_sp;
 	param->rx_bytes_per_sp = wmi_stats_buf->rx_bytes_per_sp;
+	param->avg_eosp_sp_dur_us = wmi_stats_buf->avg_eosp_sp_dur_us;
+	param->eosp_sp_count = wmi_stats_buf->eosp_sp_count;
 
 	wmi_debug("dialog_id = %u status = %u", wmi_stats_buf->dialog_id,
 		  wmi_stats_buf->status);
@@ -126,10 +128,13 @@ void wmi_extract_ctrl_path_twt_stats_tlv(void *tag_buf,
 		  wmi_stats_buf->num_sp_cycles, wmi_stats_buf->avg_sp_dur_us,
 		  wmi_stats_buf->min_sp_dur_us, wmi_stats_buf->max_sp_dur_us);
 	wmi_debug("tx_mpdu_per_sp 0x%x, rx_mpdu_per_sp = 0x%x, \
-		  tx_bytes_per_sp = 0x%x, rx_bytes_per_sp = 0x%x",
+		  tx_bytes_per_sp = 0x%x, rx_bytes_per_sp = 0x%x, \
+		  avg_eosp_sp_dur_us = 0x%x, eosp_sp_count = 0x%x",
 		  wmi_stats_buf->tx_mpdu_per_sp, wmi_stats_buf->rx_mpdu_per_sp,
 		  wmi_stats_buf->tx_bytes_per_sp,
-		  wmi_stats_buf->rx_bytes_per_sp);
+		  wmi_stats_buf->rx_bytes_per_sp,
+		  wmi_stats_buf->avg_eosp_sp_dur_us,
+		  wmi_stats_buf->eosp_sp_count);
 }
 
 static void wmi_twt_extract_stats_struct(void *tag_buf,
@@ -316,9 +321,34 @@ wmi_extract_ctrl_path_pmlo_stats_tlv(wmi_unified_t wmi_handle, void *tag_buf,
 		WMI_PMLO_UL_AIRTIME_NON_AC_GET(wmi_stats_buf->ul_dl_obss_free_aa_word32);
 	param->dl_inbss_airtime_non_ac =
 		WMI_PMLO_DL_AIRTIME_NON_AC_GET(wmi_stats_buf->ul_dl_obss_free_aa_word32);
+	param->payload_ratio_dl_ac_be =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_BE(wmi_stats_buf->payload_ratio_dl_per_ac);
+	param->payload_ratio_dl_ac_bk =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_BK(wmi_stats_buf->payload_ratio_dl_per_ac);
+	param->payload_ratio_dl_ac_vi =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_VI(wmi_stats_buf->payload_ratio_dl_per_ac);
+	param->payload_ratio_dl_ac_vo =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_VO(wmi_stats_buf->payload_ratio_dl_per_ac);
+	param->payload_ratio_ul_ac_be =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_BE(wmi_stats_buf->payload_ratio_ul_per_ac);
+	param->payload_ratio_ul_ac_bk =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_BK(wmi_stats_buf->payload_ratio_ul_per_ac);
+	param->payload_ratio_ul_ac_vi =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_VI(wmi_stats_buf->payload_ratio_ul_per_ac);
+	param->payload_ratio_ul_ac_vo =
+		WMI_PMLO_UL_DL_PAYLOAD_RATIO_GET_VO(wmi_stats_buf->payload_ratio_ul_per_ac);
 	for (idx = 0; idx < WMI_AC_MAX; idx++) {
 		param->avg_chan_lat_per_ac[idx] =
 				wmi_stats_buf->avg_chan_lat_per_ac[idx];
+		param->traffic_condition_used_per_ac[idx] =
+				wmi_stats_buf->traffic_condition_used_per_ac[idx];
+		param->error_margin_per_ac[idx] =
+				wmi_stats_buf->error_margin_per_ac[idx];
+		param->num_of_dl_asymmetric_clients_per_ac[idx] =
+				wmi_stats_buf->num_of_dl_asymmetric_clients_per_ac[idx];
+		param->num_of_ul_asymmetric_clients_per_ac[idx] =
+				wmi_stats_buf->num_of_ul_asymmetric_clients_per_ac[idx];
+
 	}
 
 	wmi_debug("pdev_id = %u", wmi_stats_buf->pdev_id);
@@ -327,11 +357,21 @@ wmi_extract_ctrl_path_pmlo_stats_tlv(wmi_unified_t wmi_handle, void *tag_buf,
 		  wmi_stats_buf->ul_inbss_airtime_per_ac,
 		  wmi_stats_buf->estimated_air_time_per_ac,
 		  wmi_stats_buf->ul_dl_obss_free_aa_word32);
-
+	wmi_debug("payload_ratio_dl_per_ac = %u, payload_ratio_ul_per_ac = %u",
+		  wmi_stats_buf->payload_ratio_dl_per_ac,
+		  wmi_stats_buf->payload_ratio_ul_per_ac);
 	for (idx = 0; idx < WMI_AC_MAX; idx++) {
-		wmi_debug("avg_chan_lat_per_ac_sample-%u: avg_chan_lat_per_ac=%u",
+		wmi_debug("per_ac_sample-%u: avg_chan_lat_per_ac=%u, "
+			  "traffic_condition_used_per_ac=%u, "
+			  "error_margin_per_ac=%u, "
+			  "num_of_dl_asymmetric_clients_per_ac=%u, "
+			  "num_of_ul_asymmetric_clients_per_ac=%u, ",
 			  idx,
-			  wmi_stats_buf->avg_chan_lat_per_ac[idx]);
+			  wmi_stats_buf->avg_chan_lat_per_ac[idx],
+			  wmi_stats_buf->traffic_condition_used_per_ac[idx],
+			  wmi_stats_buf->error_margin_per_ac[idx],
+			  wmi_stats_buf->num_of_dl_asymmetric_clients_per_ac[idx],
+			  wmi_stats_buf->num_of_ul_asymmetric_clients_per_ac[idx]);
 	}
 }
 

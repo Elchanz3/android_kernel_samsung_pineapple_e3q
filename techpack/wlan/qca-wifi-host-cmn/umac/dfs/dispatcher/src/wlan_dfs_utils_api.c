@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -204,6 +204,33 @@ QDF_STATUS utils_dfs_start_cac_timer(struct wlan_objmgr_pdev *pdev)
 	return QDF_STATUS_SUCCESS;
 }
 qdf_export_symbol(utils_dfs_start_cac_timer);
+
+QDF_STATUS utils_dfs_deliver_cac_state_events(struct wlan_objmgr_pdev *pdev)
+{
+	struct wlan_dfs *dfs;
+
+	dfs = wlan_pdev_get_dfs_obj(pdev);
+	if (!dfs)
+		return  QDF_STATUS_E_FAILURE;
+
+	dfs_deliver_cac_state_events(dfs);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+utils_dfs_deliver_cac_state_events_for_prevchan(struct wlan_objmgr_pdev *pdev)
+{
+	struct wlan_dfs *dfs;
+
+	dfs = wlan_pdev_get_dfs_obj(pdev);
+	if (!dfs)
+		return  QDF_STATUS_E_FAILURE;
+
+	dfs_deliver_cac_state_events_for_prevchan(dfs);
+
+	return QDF_STATUS_SUCCESS;
+}
 
 QDF_STATUS utils_dfs_cac_stop(struct wlan_objmgr_pdev *pdev)
 {
@@ -839,9 +866,9 @@ static void utils_dfs_get_channel_list(struct wlan_objmgr_pdev *pdev,
 		policy_mgr_get_pcl(psoc, mode, pcl_ch,
 				   &len, weight_list, weight_len, vdev_id);
 	else
-		policy_mgr_get_pcl_for_existing_conn(
-			psoc, mode, pcl_ch, &len, weight_list,
-			weight_len, true, vdev_id);
+		policy_mgr_get_pcl_for_scc_in_same_mode(psoc, mode, pcl_ch,
+							&len, weight_list,
+							weight_len, vdev_id);
 
 	if (*num_chan < len) {
 		dfs_err(NULL, WLAN_DEBUG_DFS_ALWAYS,
@@ -1071,9 +1098,86 @@ void utils_dfs_init_nol(struct wlan_objmgr_pdev *pdev)
 qdf_export_symbol(utils_dfs_init_nol);
 #endif
 
+void utils_dfs_retrieve_nol(struct wlan_objmgr_pdev *pdev)
+{
+	struct wlan_dfs *dfs;
+	struct dfsreq_nolinfo *dfs_persistent_nol;
+	uint16_t cc = 0;
+
+	dfs = wlan_pdev_get_dfs_obj(pdev);
+	if (!dfs) {
+		dfs_err(dfs, WLAN_DEBUG_DFS_ALWAYS,  "null dfs");
+		return;
+	}
+
+	if (!dfs->is_retain_nol_cfg_enabled) {
+		dfs_debug(dfs, WLAN_DEBUG_DFS_NOL, "Store NOL cfg disabled");
+		return;
+	}
+
+	dfs_persistent_nol = dfs->dfs_mm_nolinfo;
+	if (!dfs_persistent_nol)
+		return;
+
+	if (dfs_persistent_nol->dfs_ch_nchans) {
+		if (global_dfs_to_mlme.mlme_dfs_get_cc)
+			global_dfs_to_mlme.mlme_dfs_get_cc(pdev, &cc);
+
+		if (cc && (cc == dfs_persistent_nol->cc)) {
+			dfs_debug(dfs, WLAN_DEBUG_DFS_NOL,
+				  "Initialising stored NOL chans %pK cc %d",
+				  dfs_persistent_nol, dfs_persistent_nol->cc);
+			dfs_set_nol(dfs, dfs_persistent_nol->dfs_nol,
+				    dfs_persistent_nol->dfs_ch_nchans);
+			DFS_PRINT_NOL_LOCKED(dfs);
+		} else {
+			dfs_debug(dfs, WLAN_DEBUG_DFS_NOL,
+				  "CC Mismatch. Current CC %d CC in NOL %d",
+				  cc, dfs_persistent_nol->cc);
+		}
+	} else {
+		dfs_debug(dfs, WLAN_DEBUG_DFS_NOL, "No NOL Channels");
+	}
+}
+
 #ifndef QCA_DFS_NOL_PLATFORM_DRV_SUPPORT
 void utils_dfs_save_nol(struct wlan_objmgr_pdev *pdev)
 {
+	struct dfsreq_nolinfo *dfs_persistent_nol;
+	struct wlan_dfs *dfs;
+	int num_chans;
+
+	dfs = wlan_pdev_get_dfs_obj(pdev);
+	if (!dfs) {
+		dfs_err(dfs, WLAN_DEBUG_DFS_ALWAYS,  "null dfs");
+		return;
+	}
+
+	if (!dfs->is_retain_nol_cfg_enabled) {
+		dfs_debug(dfs, WLAN_DEBUG_DFS_NOL, "Store NOL cfg disabled");
+		return;
+	}
+
+	dfs_persistent_nol = dfs->dfs_mm_nolinfo;
+	if (!dfs_persistent_nol) {
+		dfs_err(dfs, WLAN_DEBUG_DFS_ALWAYS,  "null dfs mm");
+		return;
+	}
+
+	DFS_GET_NOL_LOCKED(dfs, dfs_persistent_nol->dfs_nol, &num_chans);
+
+	if (num_chans > DFS_CHAN_MAX)
+		dfs_persistent_nol->dfs_ch_nchans = DFS_CHAN_MAX;
+	else
+		dfs_persistent_nol->dfs_ch_nchans = num_chans;
+
+	if (global_dfs_to_mlme.mlme_dfs_get_cc)
+		global_dfs_to_mlme.mlme_dfs_get_cc(pdev,
+						   &dfs_persistent_nol->cc);
+
+	dfs_debug(dfs, WLAN_DEBUG_DFS_NOL,
+		  "%pK Num NOL Chans %d cc %d", dfs_persistent_nol,
+		  dfs_persistent_nol->dfs_ch_nchans, dfs_persistent_nol->cc);
 }
 #else
 void utils_dfs_save_nol(struct wlan_objmgr_pdev *pdev)
@@ -1690,13 +1794,13 @@ utils_dfs_convert_wlan_phymode_to_chwidth(enum wlan_phymode phymode)
 }
 #endif
 
-#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_EXPAND) && \
+#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_PUNCTURE) && \
 	defined(QCA_DFS_RCSA_SUPPORT)
 uint16_t
 utils_dfs_get_radar_bitmap_from_nolie(struct wlan_objmgr_pdev *pdev,
-				      enum wlan_phymode phy_mode,
 				      qdf_freq_t nol_ie_start_freq,
-				      uint8_t nol_ie_bitmap)
+				      uint8_t nol_ie_bitmap,
+				      bool *is_ignore_radar_puncture)
 {
 	struct wlan_dfs *dfs;
 
@@ -1704,7 +1808,23 @@ utils_dfs_get_radar_bitmap_from_nolie(struct wlan_objmgr_pdev *pdev,
 	if (!dfs)
 		return 0;
 
-	return dfs_get_radar_bitmap_from_nolie(dfs, phy_mode, nol_ie_start_freq,
-					       nol_ie_bitmap);
+	return dfs_get_radar_bitmap_from_nolie(dfs, nol_ie_start_freq,
+					       nol_ie_bitmap,
+					       is_ignore_radar_puncture);
+}
+#endif
+
+#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_PUNCTURE)
+void utils_dfs_stop_punc_sm(struct wlan_objmgr_pdev *pdev)
+{
+	struct wlan_dfs *dfs = wlan_pdev_get_dfs_obj(pdev);
+
+	if (!dfs)
+		return;
+
+	if (dfs->dfs_use_puncture)
+		dfs_punc_sm_stop_all(dfs);
+
+	return;
 }
 #endif

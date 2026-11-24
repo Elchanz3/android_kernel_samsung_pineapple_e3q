@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022,2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -29,6 +29,7 @@
 
 #ifdef FEATURE_DENYLIST_MGR
 #include "wlan_dlm_core.h"
+#include "wlan_objmgr_vdev_obj.h"
 
 /**
  * wlan_dlm_add_bssid_to_reject_list() - Add BSSID to the specific reject list.
@@ -133,6 +134,70 @@ wlan_dlm_get_rssi_denylist_threshold(struct wlan_objmgr_pdev *pdev)
 	return dlm_get_rssi_denylist_threshold(pdev);
 }
 
+#ifdef WLAN_FEATURE_11BE_MLO
+/**
+ * wlan_dlm_get_max_allowed_11be_failure() - Get max allowed 11BE connection
+ * failure per AP
+ * @pdev: pdev object
+ *
+ * This API will get the maximum allowed 11BE failure per AP value configured
+ * via CFG_MAX_11BE_CON_FAIL_ALLOWED_PER_AP.
+ *
+ * Return: max allowed 11BE failure
+ */
+static inline uint8_t
+wlan_dlm_get_max_allowed_11be_failure(struct wlan_objmgr_pdev *pdev)
+{
+	return dlm_get_max_allowed_11be_failure(pdev);
+}
+
+/**
+ * wlan_update_mlo_reject_ap_info: Update MLO info of reqjected candidate
+ * @pdev: objmgr pdev
+ * @vdev_id: vdev id
+ * @ap_info: reject ap info
+ *
+ * This API updates the MLO info of rejected AP
+ */
+
+static inline void
+wlan_update_mlo_reject_ap_info(struct wlan_objmgr_pdev *pdev,
+			       uint8_t vdev_id,
+			       struct reject_ap_info *ap_info)
+{
+	return dlm_update_mlo_reject_ap_info(pdev, vdev_id, ap_info);
+}
+
+#else
+static inline uint8_t
+wlan_dlm_get_max_allowed_11be_failure(struct wlan_objmgr_pdev *pdev)
+{
+	return 0;
+}
+
+static inline void
+wlan_update_mlo_reject_ap_info(struct wlan_objmgr_pdev *pdev,
+			       uint8_t vdev_id,
+			       struct reject_ap_info *ap_info)
+{}
+
+#endif
+
+/**
+ * wlan_dlm_get_connection_monitor_time() - Get the connection monitor time post
+ * connection success.
+ * @pdev: pdev object
+ *
+ * This API will get the connection monitor time configured via
+ * CFG_MONITOR_CON_STABILITY_POST_CONNECTION_TIME.
+ *
+ * Return: connection monitor time value
+ */
+static inline qdf_time_t
+wlan_dlm_get_connection_monitor_time(struct wlan_objmgr_pdev *pdev)
+{
+	return dlm_get_connection_monitor_time(pdev);
+}
 #else
 static inline bool
 wlan_dlm_is_bssid_in_reject_list(struct wlan_objmgr_pdev *pdev,
@@ -169,5 +234,23 @@ wlan_dlm_get_rssi_denylist_threshold(struct wlan_objmgr_pdev *pdev)
 {
 	return 0;
 }
+
+static inline uint8_t
+wlan_dlm_get_max_allowed_11be_failure(struct wlan_objmgr_pdev *pdev)
+{
+	return 0;
+}
+
+static inline qdf_time_t
+wlan_dlm_get_connection_monitor_time(struct wlan_objmgr_pdev *pdev)
+{
+	return 0;
+}
+
+static inline void
+wlan_update_mlo_reject_ap_info(struct wlan_objmgr_pdev *pdev,
+			       uint8_t vdev_id,
+			       struct reject_ap_info *ap_info)
+{}
 #endif
 #endif

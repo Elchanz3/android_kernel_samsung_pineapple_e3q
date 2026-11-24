@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012 - 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -145,6 +145,22 @@ struct wlan_fwol_thermal_temp {
 #endif
 };
 
+#ifdef WLAN_DDR_BW_MITIGATION
+/**
+ * struct wlan_fwol_bwm_params - BW mitigation related config items
+ * @bw_mitigation_enable: To control bw mitigation feature
+ * @throttle_dutycycle_level: Array of throttle duty cycle levels
+ * @bw_sampling_time: sampling time for bw mitigation in ms
+ * @priority_bwm: priority of the bw mitigation to consider by fw
+ */
+struct wlan_fwol_bwm_params {
+	bool bw_mitigation_enable;
+	uint32_t throttle_dutycycle_level[FWOL_THERMAL_THROTTLE_LEVEL_MAX];
+	uint16_t bw_sampling_time;
+	uint8_t priority_bwm;
+};
+#endif
+
 /**
  * struct wlan_fwol_ie_allowlist - Probe request IE allowlist config items
  * @ie_allowlist: IE allowlist flag
@@ -218,6 +234,7 @@ struct wlan_fwol_tsf_accuracy_configs {
  * struct wlan_fwol_cfg - fwol config items
  * @coex_config: coex config items
  * @thermal_temp_cfg: Thermal temperature related config items
+ * @bwm_params_cfg: BW mitigation related config items
  * @ie_allowlist_cfg: IE Allowlist related config items
  * @neighbor_report_cfg: 11K neighbor report config
  * @ani_enabled: ANI enable/disable
@@ -229,6 +246,7 @@ struct wlan_fwol_tsf_accuracy_configs {
  * @upper_brssi_thresh: Upper BRSSI threshold
  * @lower_brssi_thresh: Lower BRSSI threshold
  * @enable_dtim_1chrx: Enable/disable DTIM 1 CHRX
+ * @dynamic_bw_switch: Enable/Disable dynamic bandwidth switch
  * @alternative_chainmask_enabled: Alternate chainmask
  * @smart_chainmask_enabled: Enable/disable chainmask
  * @get_rts_profile: Set the RTS profile
@@ -262,6 +280,9 @@ struct wlan_fwol_cfg {
 	/* Add CFG and INI items here */
 	struct wlan_fwol_coex_config coex_config;
 	struct wlan_fwol_thermal_temp thermal_temp_cfg;
+#ifdef WLAN_DDR_BW_MITIGATION
+	struct wlan_fwol_bwm_params bwm_params_cfg;
+#endif
 	struct wlan_fwol_ie_allowlist ie_allowlist_cfg;
 	struct wlan_fwol_neighbor_report_cfg neighbor_report_cfg;
 	bool ani_enabled;
@@ -273,6 +294,7 @@ struct wlan_fwol_cfg {
 	uint16_t upper_brssi_thresh;
 	uint16_t lower_brssi_thresh;
 	bool enable_dtim_1chrx;
+	bool dynamic_bw_switch;
 	bool alternative_chainmask_enabled;
 	bool smart_chainmask_enabled;
 	uint16_t get_rts_profile;

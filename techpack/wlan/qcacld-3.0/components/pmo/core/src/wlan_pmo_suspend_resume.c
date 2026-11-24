@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -123,6 +123,8 @@ static QDF_STATUS pmo_core_calculate_listen_interval(
 
 	if (psoc_cfg->sta_dynamic_dtim) {
 		*listen_interval = psoc_cfg->sta_dynamic_dtim;
+	} else if (psoc_cfg->sta_teles_dtim) {
+		*listen_interval = psoc_cfg->sta_teles_dtim;
 	} else if ((psoc_cfg->sta_mod_dtim) &&
 		   (psoc_cfg->sta_max_li_mod_dtim)) {
 		/*
@@ -172,8 +174,9 @@ static QDF_STATUS pmo_core_calculate_listen_interval(
 		}
 	}
 
-	pmo_info("sta dynamic dtim %d sta mod dtim %d sta_max_li_mod_dtim %d max_dtim %d",
-		 psoc_cfg->sta_dynamic_dtim, psoc_cfg->sta_mod_dtim,
+	pmo_info("sta dynamic dtim %d teles dtim %d sta mod dtim %d sta_max_li_mod_dtim %d max_dtim %d",
+		 psoc_cfg->sta_dynamic_dtim, psoc_cfg->sta_teles_dtim,
+		 psoc_cfg->sta_mod_dtim,
 		 psoc_cfg->sta_max_li_mod_dtim, max_dtim);
 
 	return QDF_STATUS_SUCCESS;
@@ -349,6 +352,10 @@ static void pmo_core_set_suspend_dtim(struct wlan_objmgr_psoc *psoc)
 							    WLAN_PMO_ID);
 		if (!vdev)
 			continue;
+		else if (QDF_IS_STATUS_ERROR(wlan_vdev_is_up(vdev))) {
+			wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
+			continue;
+		}
 
 		vdev_ctx = pmo_vdev_get_priv(vdev);
 		if (!pmo_is_listen_interval_user_set(vdev_ctx)
@@ -836,6 +843,9 @@ pmo_core_enable_wow_in_fw(struct wlan_objmgr_psoc *psoc,
 		pmo_info("Unit test WoW, force DRV mode");
 		param.flags |= WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP;
 	}
+
+	pmo_set_wow_suspend_type(psoc, type);
+
 	if (type == QDF_SYSTEM_SUSPEND) {
 		pmo_info("system suspend wow");
 		param.flags |= WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW;
@@ -848,6 +858,11 @@ pmo_core_enable_wow_in_fw(struct wlan_objmgr_psoc *psoc,
 	if (psoc_cfg->is_mod_dtim_on_sys_suspend_enabled) {
 		pmo_debug("mod DTIM enabled");
 		param.flags |= WMI_WOW_FLAG_MOD_DTIM_ON_SYS_SUSPEND;
+	}
+
+	if (psoc_cfg->is_teles_dtim_only_on_sys_suspend_enabled) {
+		pmo_debug("teles DTIM enabled");
+		param.flags |= WMI_WOW_FLAG_TELES_DTIM_ON_SYS_SUSPEND;
 	}
 
 	if (psoc_cfg->sta_forced_dtim) {
@@ -902,6 +917,8 @@ pmo_core_enable_wow_in_fw(struct wlan_objmgr_psoc *psoc,
 	}
 	pmo_debug("WOW enabled successfully in fw: credits:%d pending_cmds: %d",
 		host_credits, wmi_pending_cmds);
+
+	pmo_set_wow_suspend_type(psoc, QDF_WOW_UNSUPPORTED_TYPE);
 
 	hif_latency_detect_timer_stop(pmo_core_psoc_get_hif_handle(psoc));
 
@@ -1032,10 +1049,31 @@ QDF_STATUS pmo_core_txrx_suspend(struct wlan_objmgr_psoc *psoc)
 		goto out;
 	}
 
-	if (ret == -EOPNOTSUPP)
-		goto out;
+	if (ret == -EOPNOTSUPP) {
+		/* For chips, which not support IRQ disable,
+		 * drain will not be called, display and check
+		 * rings HP/TP once again
+		 */
+		if (!cdp_display_txrx_hw_info(dp_soc)) {
+			pmo_err("Prevent suspend, ring not empty");
+			status = QDF_STATUS_E_AGAIN;
+		}
 
-	cdp_drain_txrx(dp_soc);
+		goto out;
+	}
+
+	status = cdp_drain_txrx(dp_soc, 0);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		pmo_err("Prevent suspend unable to drain txrx status:%u",
+			status);
+		ret = hif_enable_grp_irqs(hif_ctx);
+		if (ret && ret != -EOPNOTSUPP) {
+			pmo_err("Failed to enable grp irqs: %d", ret);
+			qdf_trigger_self_recovery(psoc, QDF_ENABLE_IRQ_FAILURE);
+		}
+		goto out;
+	}
+
 	pmo_ctx->wow.txrx_suspended = true;
 out:
 	pmo_psoc_put_ref(psoc);
@@ -1373,7 +1411,19 @@ QDF_STATUS pmo_core_psoc_send_host_wakeup_ind_to_fw(
 
 	hif_ctx = pmo_core_psoc_get_hif_handle(psoc);
 
-	hif_set_ep_intermediate_vote_access(hif_ctx);
+	if (!hif_ctx) {
+		pmo_err("hif_ctx is NULL");
+		status = QDF_STATUS_E_INVAL;
+		goto out;
+	}
+
+	status = hif_set_ep_intermediate_vote_access(hif_ctx);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		pmo_err("Unable to set EP intermediate access error:%u",
+			status);
+		qdf_trigger_self_recovery(psoc, QDF_RESUME_TIMEOUT);
+		goto out;
+	}
 
 	qdf_event_reset(&psoc_ctx->wow.target_resume);
 
@@ -1551,7 +1601,7 @@ void pmo_core_psoc_target_suspend_acknowledge(void *context, bool wow_nack,
 
 	pmo_core_set_wow_nack(psoc_ctx, wow_nack, reason_code);
 	qdf_event_set(&psoc_ctx->wow.target_suspend);
-	if (!pmo_tgt_psoc_get_runtime_pm_in_progress(psoc)) {
+	if (!pmo_tgt_psoc_get_runtime_pm_inprogress(psoc)) {
 		if (wow_nack)
 			qdf_wake_lock_timeout_acquire(
 				&psoc_ctx->wow.wow_wake_lock,
@@ -1643,6 +1693,7 @@ void pmo_core_psoc_handle_initial_wake_up(void *cb_ctx)
 {
 	struct pmo_psoc_priv_obj *psoc_ctx;
 	struct wlan_objmgr_psoc *psoc = (struct wlan_objmgr_psoc *)cb_ctx;
+	void *hif_ctx;
 
 	if (!psoc) {
 		pmo_err("cb ctx/psoc is null");
@@ -1650,6 +1701,12 @@ void pmo_core_psoc_handle_initial_wake_up(void *cb_ctx)
 	}
 
 	psoc_ctx = pmo_psoc_get_priv(psoc);
+	hif_ctx = psoc_ctx->hif_hdl;
+	if (!hif_ctx)
+		pmo_err("hif ctx is null, request resume not called");
+	else if(hif_pm_get_wake_irq_type(hif_ctx) == HIF_PM_CE_WAKE)
+		hif_rtpm_check_and_request_resume(true);
+
 	pmo_core_update_wow_initial_wake_up(psoc_ctx, 1);
 }
 

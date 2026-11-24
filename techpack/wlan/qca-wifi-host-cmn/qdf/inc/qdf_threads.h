@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -28,12 +28,28 @@
 #include <qdf_types.h>
 #include "i_qdf_threads.h"
 
+/* Function declarations and documentation */
+
+typedef int (*qdf_thread_os_func)(void *data);
+
 typedef __qdf_thread_t qdf_thread_t;
 typedef QDF_STATUS (*qdf_thread_func)(void *context);
 
 /* Function declarations and documentation */
 
 void qdf_sleep(uint32_t ms_interval);
+
+/**
+ *  qdf_sleep_uninterruptible() - QDF wrapper for msleep() Kernel API
+ *  @ms_interval : Number of milliseconds to suspend the current thread.
+ *  A value of 0 may or may not cause the current thread to yield.
+ *
+ *  This function suspends the execution of the current thread
+ *  until the specified time out interval elapses.
+ *
+ *  Return: none
+ */
+void qdf_sleep_uninterruptible(uint32_t ms_interval);
 
 void qdf_sleep_us(uint32_t us_interval);
 
@@ -77,7 +93,7 @@ qdf_thread_t *qdf_create_thread(int (*thread_handler)(void *data), void *data,
  *
  * Return: a new qdf_thread pointer
  */
-qdf_thread_t *qdf_thread_run(qdf_thread_func callback, void *context);
+qdf_thread_t *qdf_thread_run(qdf_thread_os_func callback, void *context);
 
 /**
  * qdf_thread_join() - signal and wait for a thread to stop
@@ -181,6 +197,31 @@ void qdf_cpumask_setall(qdf_cpu_mask *dstp);
  * Return: None
  */
 void qdf_cpumask_clear_cpu(unsigned int cpu, qdf_cpu_mask *dstp);
+
+/**
+ * qdf_cpumask_test_cpu() - test for a cpu in a cpumask
+ * @cpu: cpu number (< nr_cpu_ids)
+ * @cpumask: the cpumask pointer
+ *
+ * Returns 1 if @cpu is set in @cpumask, else returns 0
+ */
+int qdf_cpumask_test_cpu(unsigned int cpu, qdf_cpu_mask *cpumask);
+
+/**
+ * qdf_cpumask_first() - get the first cpu in a cpumask
+ * @cpumask: the cpumask pointer
+ *
+ * Returns >= nr_cpu_ids if no cpus set.
+ */
+uint32_t qdf_cpumask_first(qdf_cpu_mask *cpumask);
+
+/**
+ * qdf_cpumask_weight - Count of bits in *cpumask
+ * @cpumask: the cpumask to count bits (< nr_cpu_ids) in.
+ *
+ * Returns number of bits in the given cpumask
+ */
+uint32_t qdf_cpumask_weight(qdf_cpu_mask *cpumask);
 
 /**
  * qdf_cpumask_empty - Check if cpu_mask is empty
@@ -308,4 +349,15 @@ qdf_walt_get_cpus_taken_supported(void)
 	return false;
 }
 #endif
+
+/*
+ * qdf_sort - sort the array elements
+ * @base: pointer to array base
+ * @num: number of elements in the array
+ * @size: size of each element
+ * @cmp_func: compare function
+ * @swap_func: swap function
+ */
+void qdf_sort(void *base, qdf_size_t num, qdf_size_t size,
+	      qdf_cmp_func_t cmp_func, qdf_swap_func_t swap_func);
 #endif /* __QDF_THREADS_H */

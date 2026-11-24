@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -700,6 +700,10 @@ static void get_twt_infra_cp_stats(struct infra_cp_stats_event *ev,
 				ev->twt_infra_cp_stats->tx_bytes_per_sp;
 	priv->twt_infra_cp_stats->rx_bytes_per_sp =
 				ev->twt_infra_cp_stats->rx_bytes_per_sp;
+	priv->twt_infra_cp_stats->avg_eosp_sp_dur_us =
+				ev->twt_infra_cp_stats->avg_eosp_sp_dur_us;
+	priv->twt_infra_cp_stats->eosp_sp_count =
+				ev->twt_infra_cp_stats->eosp_sp_count;
 }
 
 static void
@@ -899,6 +903,9 @@ wlan_cfg80211_mc_twt_get_infra_cp_stats(struct wlan_objmgr_vdev *vdev,
 	out->twt_infra_cp_stats->rx_mpdu_per_sp = twt_event->rx_mpdu_per_sp;
 	out->twt_infra_cp_stats->tx_bytes_per_sp = twt_event->tx_bytes_per_sp;
 	out->twt_infra_cp_stats->rx_bytes_per_sp = twt_event->rx_bytes_per_sp;
+	out->twt_infra_cp_stats->avg_eosp_sp_dur_us =
+						twt_event->avg_eosp_sp_dur_us;
+	out->twt_infra_cp_stats->eosp_sp_count = twt_event->eosp_sp_count;
 	qdf_mem_copy(&out->twt_infra_cp_stats->peer_macaddr, twt_peer_mac,
 		     QDF_MAC_ADDR_SIZE);
 	osif_request_put(request);
@@ -1556,101 +1563,29 @@ station_adv_stats_cb_fail:
 	osif_request_put(request);
 }
 
-#ifdef WLAN_FEATURE_11BE_MLO
-/**
- * wlan_cfg80211_get_mlstats_vdev_peer - get peer per ml vdev
- * @psoc: pointer to psoc struct
- * @req_info: pointer to request info struct
- *
- * Return: QDF_STATUS_SUCCESS on success
- */
-static QDF_STATUS
-wlan_cfg80211_get_mlstats_vdev_peer(struct wlan_objmgr_psoc *psoc,
-					struct request_info *req_info)
-{
-	struct wlan_objmgr_vdev *vdev;
-	struct wlan_objmgr_peer *peer;
-	struct mlo_stats_vdev_params *info = &req_info->ml_vdev_info;
-	int i;
-
-	for (i = 0; i < info->ml_vdev_count; i++) {
-		vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
-							    info->ml_vdev_id[i],
-							    WLAN_OSIF_STATS_ID);
-		if (!vdev) {
-			hdd_err("vdev object is NULL for vdev %d",
-				info->ml_vdev_id[i]);
-			return QDF_STATUS_E_INVAL;
-		}
-
-		peer = wlan_objmgr_vdev_try_get_bsspeer(vdev,
-							WLAN_OSIF_STATS_ID);
-		if (!peer) {
-			hdd_err("peer is null");
-			wlan_objmgr_vdev_release_ref(vdev, WLAN_OSIF_STATS_ID);
-			return QDF_STATUS_E_INVAL;
-		}
-
-		qdf_mem_copy(&req_info->ml_peer_mac_addr[i][0], peer->macaddr,
-			     QDF_MAC_ADDR_SIZE);
-
-		wlan_objmgr_peer_release_ref(peer, WLAN_OSIF_STATS_ID);
-		wlan_objmgr_vdev_release_ref(vdev, WLAN_OSIF_STATS_ID);
-	}
-	return QDF_STATUS_SUCCESS;
-}
-
-static QDF_STATUS
-wlan_cfg80211_get_mlstats_vdev_params(struct wlan_objmgr_vdev *vdev,
-				      struct request_info *info)
-{
-	struct wlan_objmgr_psoc *psoc;
-	bool is_mlo_vdev;
-	QDF_STATUS status;
-
-	psoc = wlan_vdev_get_psoc(vdev);
-	if (!psoc)
-		return QDF_STATUS_E_INVAL;
-
-	is_mlo_vdev = wlan_vdev_mlme_get_is_mlo_vdev(psoc, info->vdev_id);
-	if (is_mlo_vdev) {
-		status = mlo_get_mlstats_vdev_params(psoc, &info->ml_vdev_info,
-						     info->vdev_id);
-		if (QDF_IS_STATUS_ERROR(status)) {
-			osif_err("unable to get vdev params for mlo stats");
-			return status;
-		}
-	}
-
-	status = wlan_cfg80211_get_mlstats_vdev_peer(psoc, info);
-	return status;
-}
-#else
-static QDF_STATUS
-wlan_cfg80211_get_mlstats_vdev_params(struct wlan_objmgr_vdev *vdev,
-				      struct request_info *info)
-{
-	return QDF_STATUS_SUCCESS;
-}
-#endif
-
 struct stats_event *
-wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
-					 const uint8_t *mac_addr,
-					 int *errno)
+wlan_cfg80211_mc_cp_stats_get_peer_stats_ext(struct wlan_objmgr_vdev *vdev,
+					     const uint8_t *mac_addr,
+					     int *errno)
 {
 	void *cookie;
 	QDF_STATUS status;
 	struct stats_event *priv, *out;
 	struct osif_request *request;
 	struct request_info info = {0};
+	bool pending;
+	struct wlan_objmgr_psoc *psoc = NULL;
 	static const struct osif_request_params params = {
 		.priv_size = sizeof(*priv),
 		.timeout_ms = 2 * CP_STATS_WAIT_TIME_STAT,
 		.dealloc = wlan_cfg80211_mc_cp_stats_dealloc,
 	};
 
-	osif_debug("Enter");
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc) {
+		osif_err("Failed to get psoc");
+		return NULL;
+	}
 
 	out = qdf_mem_malloc(sizeof(*out));
 	if (!out) {
@@ -1684,6 +1619,8 @@ wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
 	*errno = osif_request_wait_for_response(request);
 	if (*errno) {
 		osif_err("wait failed or timed out ret: %d", *errno);
+		ucfg_mc_cp_stats_reset_pending_req(psoc, TYPE_PEER_STATS_INFO_EXT,
+						   &info, &pending);
 		goto get_peer_stats_fail;
 	}
 
@@ -1700,6 +1637,36 @@ wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
 	out->peer_stats_info_ext = priv->peer_stats_info_ext;
 	priv->peer_stats_info_ext = NULL;
 	osif_request_put(request);
+	return out;
+
+get_peer_stats_fail:
+	osif_request_put(request);
+	wlan_cfg80211_mc_cp_stats_free_stats_event(out);
+
+	return NULL;
+}
+
+struct stats_event *
+wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
+					 const uint8_t *mac_addr,
+					 int *errno)
+{
+	void *cookie;
+	QDF_STATUS status;
+	struct stats_event *priv, *out;
+	struct osif_request *request;
+	struct request_info info = {0};
+	static const struct osif_request_params params = {
+		.priv_size = sizeof(*priv),
+		.timeout_ms = 2 * CP_STATS_WAIT_TIME_STAT,
+		.dealloc = wlan_cfg80211_mc_cp_stats_dealloc,
+	};
+
+	out = wlan_cfg80211_mc_cp_stats_get_peer_stats_ext(vdev,
+							   mac_addr,
+							   errno);
+	if (*errno)
+		return NULL;
 
 	request = osif_request_alloc(&params);
 	if (!request) {
@@ -1713,12 +1680,7 @@ wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
 	info.cookie = cookie;
 	info.u.get_station_stats_cb = get_station_adv_stats_cb;
 
-	status = wlan_cfg80211_get_mlstats_vdev_params(vdev, &info);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		*errno = qdf_status_to_os_return(status);
-		goto get_peer_stats_fail;
-	}
-
+	qdf_mem_copy(info.peer_mac_addr, mac_addr, QDF_MAC_ADDR_SIZE);
 	status = ucfg_mc_cp_stats_send_stats_request(vdev, TYPE_STATION_STATS,
 						     &info);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -1742,13 +1704,10 @@ wlan_cfg80211_mc_cp_stats_get_peer_stats(struct wlan_objmgr_vdev *vdev,
 	out->peer_adv_stats = priv->peer_adv_stats;
 	priv->peer_adv_stats = NULL;
 	osif_request_put(request);
-	osif_debug("Exit");
 	return out;
 get_peer_stats_fail:
 	osif_request_put(request);
 	wlan_cfg80211_mc_cp_stats_free_stats_event(out);
-
-	osif_debug("Exit");
 
 	return NULL;
 }
@@ -1861,7 +1820,8 @@ void infra_cp_stats_bmiss_response_cb(struct infra_cp_stats_event *ev,
 
 struct infra_cp_stats_event *
 wlan_cfg80211_mc_bmiss_get_infra_cp_stats(struct wlan_objmgr_vdev *vdev,
-					  uint8_t *bmiss_peer_mac, int *errno)
+					  uint8_t mac[QDF_MAC_ADDR_SIZE],
+					  int *errno)
 {
 	void *cookie;
 	int idx = 0;
@@ -1935,7 +1895,7 @@ wlan_cfg80211_mc_bmiss_get_infra_cp_stats(struct wlan_objmgr_vdev *vdev,
 	info.num_mac_addr_list = MAX_TWT_STAT_MAC_ADDR_ENTRIES;
 	info.num_pdev_ids = 0;
 
-	qdf_mem_copy(&info.peer_mac_addr[0], bmiss_peer_mac, QDF_MAC_ADDR_SIZE);
+	qdf_mem_copy(&info.peer_mac_addr[0], mac, QDF_MAC_ADDR_SIZE);
 	status = ucfg_infra_cp_stats_register_resp_cb(wlan_vdev_get_psoc(vdev),
 						      &info);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -1987,7 +1947,7 @@ wlan_cfg80211_mc_bmiss_get_infra_cp_stats(struct wlan_objmgr_vdev *vdev,
 	out->bmiss_infra_cp_stats->cons_bmiss_stats.num_bcn_hist_lost =
 			bmiss_event->cons_bmiss_stats.num_bcn_hist_lost;
 
-	qdf_mem_copy(&out->bmiss_infra_cp_stats->peer_macaddr, bmiss_peer_mac,
+	qdf_mem_copy(&out->bmiss_infra_cp_stats->peer_macaddr, mac,
 		     QDF_MAC_ADDR_SIZE);
 	osif_request_put(request);
 	status = ucfg_infra_cp_stats_deregister_resp_cb(

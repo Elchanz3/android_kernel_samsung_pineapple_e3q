@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -32,7 +32,7 @@
 #include "wlan_objmgr_psoc_obj_i.h"
 #include "wlan_objmgr_pdev_obj_i.h"
 #include "wlan_objmgr_vdev_obj_i.h"
-
+#include "wlan_utility.h"
 
 /*
  * APIs to Create/Delete Peer object APIs
@@ -163,6 +163,24 @@ static inline void
 wlan_objmgr_peer_init_ref_id_debug(struct wlan_objmgr_peer *peer) {}
 #endif
 
+void
+wlan_peer_set_phymode(struct wlan_objmgr_peer *peer, enum wlan_phymode phymode)
+{
+	wlan_objmgr_peer_phymode_change_notify_handler notify_handler;
+	uint8_t id;
+	void *arg;
+
+	peer->peer_mlme.phymode = phymode;
+
+	for (id = 0; id < WLAN_UMAC_MAX_COMPONENTS; id++) {
+		notify_handler =
+			g_umac_glb_obj->peer_phymode_change_notify_handler[id];
+		arg = g_umac_glb_obj->peer_phymode_change_notify_handler_arg[id];
+		if (notify_handler)
+			notify_handler(peer, arg);
+	}
+}
+
 struct wlan_objmgr_peer *wlan_objmgr_peer_obj_create(
 			struct wlan_objmgr_vdev *vdev,
 			enum wlan_peer_type type,
@@ -219,6 +237,7 @@ struct wlan_objmgr_peer *wlan_objmgr_peer_obj_create(
 		"Peer("QDF_MAC_ADDR_FMT") PSOC attach failure",
 				QDF_MAC_ADDR_REF(macaddr));
 		qdf_spinlock_destroy(&peer->peer_lock);
+		wlan_objmgr_peer_trace_del_ref_list(peer);
 		wlan_objmgr_peer_trace_deinit_lock(peer);
 		qdf_mem_free(peer);
 		return NULL;
@@ -232,6 +251,7 @@ struct wlan_objmgr_peer *wlan_objmgr_peer_obj_create(
 		/* if attach fails, detach from psoc table before free */
 		wlan_objmgr_psoc_peer_detach(psoc, peer);
 		qdf_spinlock_destroy(&peer->peer_lock);
+		wlan_objmgr_peer_trace_del_ref_list(peer);
 		wlan_objmgr_peer_trace_deinit_lock(peer);
 		qdf_mem_free(peer);
 		return NULL;
@@ -281,6 +301,8 @@ struct wlan_objmgr_peer *wlan_objmgr_peer_obj_create(
 	obj_mgr_debug("Created peer " QDF_MAC_ADDR_FMT " type %d",
 		      QDF_MAC_ADDR_REF(macaddr), type);
 
+	wlan_minidump_log(peer, sizeof(*peer), psoc, WLAN_MD_OBJMGR_PEER,
+			  "wlan_objmgr_peer");
 	return peer;
 }
 
@@ -534,6 +556,7 @@ QDF_STATUS wlan_objmgr_peer_obj_delete(struct wlan_objmgr_peer *peer)
 {
 	uint8_t print_idx;
 	uint8_t *macaddr;
+	struct wlan_objmgr_psoc *psoc;
 
 	if (!peer) {
 		obj_mgr_err("PEER is NULL");
@@ -547,6 +570,9 @@ QDF_STATUS wlan_objmgr_peer_obj_delete(struct wlan_objmgr_peer *peer)
 	obj_mgr_debug("Logically deleting peer " QDF_MAC_ADDR_FMT,
 		      QDF_MAC_ADDR_REF(macaddr));
 
+	psoc = wlan_peer_get_psoc(peer);
+	wlan_minidump_remove(peer, sizeof(*peer), psoc, WLAN_MD_OBJMGR_PEER,
+			     "wlan_objmgr_peer");
 	print_idx = qdf_get_pidx();
 	wlan_objmgr_print_peer_ref_ids(peer, QDF_TRACE_LEVEL_DEBUG);
 	/*

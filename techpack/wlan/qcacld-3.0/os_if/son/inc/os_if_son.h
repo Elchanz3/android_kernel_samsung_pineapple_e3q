@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -154,6 +154,38 @@ enum os_if_son_vendor_cmd_type {
 	OS_IF_SON_VENDOR_GET_CMD,
 	OS_IF_SON_VENDOR_SET_CMD,
 	OS_IF_SON_VENDOR_MAX_CMD,
+};
+
+#define OSIF_SON_STATUS_EVENT_ID 120
+#define OSIF_SON_STATUS_EVT_GRP_MASK BIT(12)
+#define OSIF_SON_STATUS_EVT_GRP(id) ((id) | OSIF_SON_STATUS_EVT_GRP_MASK)
+#define OSIF_SON_WLAN_MODULE_NAME "cld32"
+#define OSIF_SON_WLAN_SON_NAME "wlanson"
+
+/*
+ * osif_son_status_evt_type - wlan modules status type
+ * @OSIF_SON_STATUS_EVT_UP: Module up event
+ * @OSIF_SON_STATUS_EVT_DOWN: Module down event
+ * @OSIF_SON_STATUS_EVT_REINIT_DONE: Module reinit done event
+ * @OSIF_SON_STATUS_EVT_DUMP_READY: Module dump ready event
+ * @OSIF_SON_STATUS_EVT_TARGET_ASSERT: Target assert event
+ */
+enum osif_son_status_evt_type {
+	OSIF_SON_STATUS_EVT_UP            = OSIF_SON_STATUS_EVT_GRP(0x0),
+	OSIF_SON_STATUS_EVT_DOWN          = OSIF_SON_STATUS_EVT_GRP(0x1),
+	OSIF_SON_STATUS_EVT_REINIT_DONE   = OSIF_SON_STATUS_EVT_GRP(0x2),
+	OSIF_SON_STATUS_EVT_DUMP_READY    = OSIF_SON_STATUS_EVT_GRP(0x3),
+	OSIF_SON_STATUS_EVT_TARGET_ASSERT = OSIF_SON_STATUS_EVT_GRP(0x4),
+};
+
+/*
+ * osif_son_status_evt - wlan modules status event
+ * @id: event id
+ * @event_type: event type
+ */
+struct osif_son_status_evt {
+	uint32_t     id;
+	uint32_t     event_type;
 };
 
 /**
@@ -791,4 +823,38 @@ uint32_t os_if_son_get_peer_max_mcs_idx(struct wlan_objmgr_vdev *vdev,
  */
 int os_if_son_get_sta_stats(struct wlan_objmgr_vdev *vdev, uint8_t *mac_addr,
 			    struct ieee80211_nodestats *stats);
+
+/**
+ * os_if_son_del_ast() - Delete AST
+ * @vdev: vdev object
+ * @wds_macaddr: wds mac address
+ * @peer_macaddr: peer mac address
+ *
+ * Return: 0 on success, negative errno on failure
+ */
+int os_if_son_del_ast(struct wlan_objmgr_vdev *vdev,
+		      struct qdf_mac_addr *wds_macaddr,
+		      struct qdf_mac_addr *peer_macaddr);
+
+/**
+ * os_if_son_send_status_nlink_msg() - Send wlan module status message
+ * to userspace
+ * @event_id: event id
+ * @event_type: event type
+ * @module_name: module name
+ *
+ * Return: 0 on success, negative errno on failure
+ */
+QDF_STATUS
+os_if_son_send_status_nlink_msg(uint32_t event_id,
+				enum osif_son_status_evt_type event_type,
+				char *module_name);
+/**
+ * wlan_mlme_register_tx_ops() - Register tx ops
+ *
+ * Register tx ops for son driver update
+ *
+ * Return: mlme_external_tx_ops
+ */
+struct mlme_external_tx_ops *wlan_mlme_register_tx_ops(void);
 #endif

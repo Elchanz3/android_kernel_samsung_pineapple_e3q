@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -103,9 +103,9 @@ struct wma_ps_params {
 
 /**
  * enum wma_sta_ps_scheme_cfg - STA power save schemes
- * @WMA_STA_PS_OPM_CONSERVATIVE - Conservative OPM mode
- * @WMA_STA_PS_OPM_AGGRESSIVE - Aggressive OPM mode
- * @WMA_STA_PS_USER_DEF - User defined OPM mode
+ * @WMA_STA_PS_OPM_CONSERVATIVE: Conservative OPM mode
+ * @WMA_STA_PS_OPM_AGGRESSIVE: Aggressive OPM mode
+ * @WMA_STA_PS_USER_DEF: User defined OPM mode
  */
 enum wma_sta_ps_scheme_cfg {
 	WMA_STA_PS_OPM_CONSERVATIVE = 0,
@@ -164,9 +164,9 @@ int wma_rx_service_ready_ext2_event(void *handle, uint8_t *ev, uint32_t len);
 QDF_STATUS wma_wait_for_ready_event(WMA_HANDLE handle);
 
 int wma_cli_get_command(int vdev_id, int param_id, int vpdev);
-int wma_cli_set_command(int vdev_id, int param_id, int sval, int vpdev);
-int wma_cli_set2_command(int vdev_id, int param_id, int sval1,
-			 int sval2, int vpdev);
+int wma_cli_set_command(int vdev_id, int param_id, uint32_t sval, int vpdev);
+int wma_cli_set2_command(int vdev_id, int param_id, uint32_t sval1,
+			 uint32_t sval2, int vpdev);
 
 /**
  * wma_get_fw_phy_mode_for_freq_cb() - Callback to get current PHY Mode.
@@ -208,8 +208,6 @@ QDF_STATUS wma_update_channel_list(WMA_HANDLE handle, void *scan_chan_info);
  */
 uint8_t *wma_get_vdev_address_by_vdev_id(uint8_t vdev_id);
 struct wma_txrx_node *wma_get_interface_by_vdev_id(uint8_t vdev_id);
-QDF_STATUS wma_get_connection_info(uint8_t vdev_id,
-		struct policy_mgr_vdev_entry_info *conn_table_entry);
 QDF_STATUS wma_ndi_update_connection_info(uint8_t vdev_id,
 		struct nan_datapath_channel_info *ndp_chan_info);
 
@@ -288,6 +286,7 @@ QDF_STATUS wma_send_dbs_scan_selection_params(WMA_HANDLE handle,
 			struct wmi_dbs_scan_sel_params *dbs_scan_params);
 QDF_STATUS wma_set_tx_power_scale(uint8_t vdev_id, int value);
 QDF_STATUS wma_set_tx_power_scale_decr_db(uint8_t vdev_id, int value);
+QDF_STATUS wma_enable_disable_imps(uint32_t pdev_id, uint32_t param_val);
 
 bool wma_is_csa_offload_enabled(void);
 /**
@@ -439,6 +438,18 @@ QDF_STATUS wma_set_sar_limit(WMA_HANDLE handle,
 		struct sar_limit_cmd_params *sar_limit_params);
 
 /**
+ * wma_set_tx_power_per_mcs() - set tx power per mcs in the target
+ * @handle: wma handle
+ * @txpower_adjust_params: adjust txpower per mcs cmd params
+ *
+ * This function sends WMI command to adjust txpower per mcs.
+ *
+ * Return: QDF_STATUS enumeration
+ */
+QDF_STATUS wma_set_tx_power_per_mcs(WMA_HANDLE handle,
+		struct tx_power_per_mcs_rate *txpower_adjust_params);
+
+/**
  * wma_send_coex_config_cmd() - Send coex config params
  * @wma_handle: wma handle
  * @coex_cfg_params: struct to coex cofig params
@@ -539,6 +550,40 @@ QDF_STATUS wma_set_vc_mode_config(void *wma_handle,
 
 QDF_STATUS wma_process_dhcp_ind(WMA_HANDLE wma_handle,
 				tAniDHCPInd *ta_dhcp_ind);
+
+#ifdef FEATURE_WLAN_APF
+/**
+ * wma_enable_active_apf_mode() - Enable apf mode.
+ * @handle: pointer to wma handle.
+ * @ta_dhcp_ind: dhcp indicator.
+ *
+ * Enable apf mode.
+ *
+ * Return: QDF_STATUS.
+ */
+QDF_STATUS wma_enable_active_apf_mode(WMA_HANDLE handle, tAniDHCPInd *ta_dhcp_ind);
+
+/**
+ * wma_disable_active_apf_mode() - Disable apf mode.
+ * @handle: pointer to wma handle.
+ * @ta_dhcp_ind: dhcp indicator.
+ *
+ * Disable apf mode.
+ *
+ * Return: QDF_STATUS.
+ */
+QDF_STATUS wma_disable_active_apf_mode(WMA_HANDLE handle, tAniDHCPInd *ta_dhcp_ind);
+#else
+QDF_STATUS wma_enable_active_apf_mode(WMA_HANDLE handle, tAniDHCPInd *ta_dhcp_ind)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS wma_disable_active_apf_mode(WMA_HANDLE handle, tAniDHCPInd *ta_dhcp_ind)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
 
 /**
  * wma_wmi_stop() - send wmi stop cmd
@@ -802,6 +847,15 @@ QDF_STATUS wma_mon_mlme_vdev_down_send(struct vdev_mlme_obj *vdev_mlme,
 				       uint16_t data_len, void *data);
 
 /**
+ * wma_mon_mlme_vdev_stop_resp() - VDEV down operation
+ * @vdev_mlme:  VDEV MLME comp object
+ *
+ * Return: SUCCESS on successful completion of VDEV stop response
+ *         FAILURE, if it fails due to any
+ */
+QDF_STATUS wma_mon_mlme_vdev_stop_resp(struct vdev_mlme_obj *vdev_mlme);
+
+/**
  * wma_vdev_detach_callback() - VDEV delete response handler
  * @rsp: pointer to vdev delete response
  *
@@ -903,4 +957,46 @@ void wma_cleanup_vdev(struct wlan_objmgr_vdev *vdev);
  * Return: None
  */
 void wma_set_wakeup_logs_to_console(bool value);
+
+#ifdef WLAN_FEATURE_PEER_TXQ_FLUSH_CONF
+QDF_STATUS
+wma_peer_txq_flush_config_send(struct peer_txq_flush_config_params *params);
+
+QDF_STATUS
+wma_peer_flush_tids_send(uint8_t peer_addr[QDF_MAC_ADDR_SIZE],
+			 struct peer_flush_params *param);
+#endif
+
+#ifdef FEATURE_EPM
+bool wma_is_epm_supported_cfg(WMA_HANDLE handle);
+bool wma_is_epm_supported_fw(WMA_HANDLE handle);
+#else
+static inline bool wma_is_epm_supported_cfg(WMA_HANDLE handle)
+{
+	return false;
+}
+
+static inline bool wma_is_epm_supported_fw(WMA_HANDLE handle)
+{
+	return false;
+}
+#endif
+
+#ifdef FEATURE_WLAN_APF
+/**
+ * wma_get_fw_active_apf_mode() - convert active_apf_mode to WMI
+ * configurable APF mode
+ * @mode: APF mode
+ *
+ * Return: FW configurable APF mode
+ */
+enum wmi_host_active_apf_mode
+wma_get_fw_active_apf_mode(enum active_apf_mode mode);
+#else
+static inline enum wmi_host_active_apf_mode
+wma_get_fw_active_apf_mode(enum active_apf_mode mode)
+{
+	return WMI_HOST_ACTIVE_APF_DISABLED;
+}
+#endif /* FEATURE_WLAN_APF */
 #endif /* WMA_API_H */

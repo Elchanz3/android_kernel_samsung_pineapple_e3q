@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022,2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -100,11 +100,22 @@ int hif_ce_msi_configure_irq_by_ceid(struct hif_softc *scn, int ce_id);
  *  intrs based on bitmask
  * @scn: hif context
  * @grp_intr_bitmask:
+ * @cpumask: cpu mask to which grp_intr should be affined
  * @perf: affine to perf or non-perf cluster
  *
  * Return: None
  */
 void hif_pci_set_grp_intr_affinity(struct hif_softc *scn,
-				   uint32_t grp_intr_bitmask, bool perf);
+				   uint32_t grp_intr_bitmask,
+				   uint32_t cpumask, bool perf);
 #endif
+
+/*
+ * hif_pci_get_device_handle() - Returns the pci device handle
+ * @hif_ctx: hif context
+ * @handle: placeholder to carry the device pointer
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS hif_pci_get_device_handle(struct hif_softc *hif_ctx, void **handle);
 #endif /* _PCI_API_H_ */

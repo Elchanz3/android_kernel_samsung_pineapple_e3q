@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014-2020 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -72,6 +72,9 @@
 #define __qdf_must_check __must_check
 
 typedef struct sg_table __sgtable_t;
+
+#define __qdf_get_current() get_current()
+#define __qdf_this_cpu_ksoftirqd() this_cpu_ksoftirqd()
 
 /*
  * The IDs of the various system clocks
@@ -149,6 +152,17 @@ typedef unsigned long __sgtable_t;
 #define __QDF_USEC_PER_MSEC USEC_PER_MSEC
 #define __QDF_NSEC_PER_SEC NSEC_PER_SEC
 
+/*
+ * Monitor flags defined in kernel "enum monitor_flags"
+ */
+#define __QDF_MONITOR_FLAG_CHANGED MONITOR_FLAG_CHANGED
+#define __QDF_MONITOR_FLAG_FCSFAIL MONITOR_FLAG_FCSFAIL
+#define __QDF_MONITOR_FLAG_PLCPFAIL MONITOR_FLAG_PLCPFAIL
+#define __QDF_MONITOR_FLAG_CONTROL MONITOR_FLAG_CONTROL
+#define __QDF_MONITOR_FLAG_OTHER_BSS MONITOR_FLAG_OTHER_BSS
+#define __QDF_MONITOR_FLAG_COOK_FRAMES MONITOR_FLAG_COOK_FRAMES
+#define __QDF_MONITOR_FLAG_ACTIVE MONITOR_FLAG_ACTIVE
+
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 #define QDF_LITTLE_ENDIAN_MACHINE
 #elif defined(__BIG_ENDIAN_BITFIELD)
@@ -193,6 +207,9 @@ typedef __be16 __qdf_be16_t;
 typedef __be32 __qdf_be32_t;
 typedef __be64 __qdf_be64_t;
 typedef struct net_device __qdf_dummy_netdev_t;
+
+typedef int (*__qdf_cmp_func_t)(const void *a, const void *b);
+typedef void (*__qdf_swap_func_t)(void *a, void *b, int size);
 
 #if defined(IPA_OFFLOAD) && defined(__KERNEL__)
 typedef struct ipa_wdi_buffer_info __qdf_mem_info_t;
@@ -269,6 +286,7 @@ enum qdf_bus_type {
  * @smmu_s1_enabled: SMMU S1 enabled or not
  * @domain: domain type
  * @iommu_mapping: DMA iommu mapping pointer
+ * @no_dma_map: Flag to check whether DMA mapping for TX buffers is needed
  */
 struct __qdf_device {
 	void *drv;
@@ -290,6 +308,7 @@ struct __qdf_device {
 	struct dma_iommu_mapping *iommu_mapping;
 #endif
 #endif
+	bool no_dma_map;
 };
 typedef struct __qdf_device *__qdf_device_t;
 

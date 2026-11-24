@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -574,8 +574,8 @@ __wma_handle_vdev_stop_rsp(struct vdev_stop_response *resp_event);
 void wma_hold_req_timer(void *data);
 struct wma_target_req *wma_fill_hold_req(tp_wma_handle wma,
 				    uint8_t vdev_id, uint32_t msg_type,
-				    uint8_t type, void *params,
-				    uint32_t timeout);
+				    uint8_t type, uint8_t *mac_addr,
+				    void *params, uint32_t timeout);
 
 /**
  * wma_add_bss() - Add BSS request to fw as per opmode
@@ -938,7 +938,8 @@ QDF_STATUS wma_set_mcc_channel_time_latency
 QDF_STATUS wma_set_mcc_channel_time_quota
 	(tp_wma_handle wma,
 	uint32_t adapter_1_chan_number,
-	uint32_t adapter_1_quota, uint32_t adapter_2_chan_number);
+	uint32_t adapter_1_quota, uint32_t adapter_2_chan_number,
+	uint8_t band_1, uint8_t band_2);
 
 /**
  * wma_process_rate_update_indate() - rate update indication
@@ -974,18 +975,6 @@ QDF_STATUS wma_tx_detach(tp_wma_handle wma_handle);
  */
 int wma_mcc_vdev_tx_pause_evt_handler(void *handle, uint8_t *event,
 					     uint32_t len);
-#endif
-
-#if defined(CONFIG_HL_SUPPORT) && defined(QCA_BAD_PEER_TX_FLOW_CL)
-QDF_STATUS wma_process_init_bad_peer_tx_ctl_info(tp_wma_handle wma,
-					struct t_bad_peer_txtcl_config *config);
-#else
-static inline QDF_STATUS
-wma_process_init_bad_peer_tx_ctl_info(tp_wma_handle wma,
-			struct t_bad_peer_txtcl_config *config)
-{
-	return QDF_STATUS_E_FAILURE;
-}
 #endif
 
 QDF_STATUS wma_process_init_thermal_info(tp_wma_handle wma,
@@ -1377,6 +1366,7 @@ void wma_remove_req(tp_wma_handle wma, uint8_t vdev_id,
  * wma_find_remove_req_msgtype() - find and remove request for vdev id
  * @wma: wma handle
  * @vdev_id: vdev id
+ * @macaddr: MAC address
  * @msg_type: message request type
  *
  * Find target request for given vdev id & sub type of request.
@@ -1386,6 +1376,7 @@ void wma_remove_req(tp_wma_handle wma, uint8_t vdev_id,
  */
 struct wma_target_req *wma_find_remove_req_msgtype(tp_wma_handle wma,
 						   uint8_t vdev_id,
+						   struct qdf_mac_addr *macaddr,
 						   uint32_t msg_type);
 
 /**

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/pinctrl/qcom-pinctrl.h>
 #include <linux/regulator/consumer.h>
 #include <soc/qcom/cmd-db.h>
 #include "main.h"
@@ -21,13 +23,23 @@ static struct icnss_vreg_cfg icnss_wcn6750_vreg_list[] = {
 	{"vdd-cx-mx", 824000, 952000, 0, 0, 0, false, true},
 	{"vdd-1.8-xo", 1872000, 1872000, 0, 0, 0, false, true},
 	{"vdd-1.3-rfa", 1256000, 1352000, 0, 0, 0, false, true},
+	{"vdd-ipa-2p2", 2200000, 2200000, 0, 0, 0, false, true},
+	{"vdd-1.8-io", 1800000, 1800000, 0, 0, 0, false, true},
+};
+
+static struct icnss_vreg_cfg icnss_wcn7750_vreg_list[] = {
+	{"vdd-cx-mx", 824000, 952000, 0, 0, 0, false, true},
+	{"vdd-1.8-xo", 1872000, 1872000, 0, 0, 0, false, true},
+	{"vdd-1.3-rfa", 1256000, 1352000, 0, 0, 0, false, true},
+	{"vdd-1.8-io", 1800000, 1800000, 0, 0, 0, false, true},
+	{"vdd-1.2-io", 1200000, 1200000, 0, 0, 0, false, true},
 };
 
 static struct icnss_vreg_cfg icnss_adrestea_vreg_list[] = {
 	{"vdd-cx-mx", 752000, 752000, 0, 0, 0, false, true},
 	{"vdd-1.8-xo", 1800000, 1800000, 0, 0, 0, false, true},
 	{"vdd-1.3-rfa", 1304000, 1304000, 0, 0, 0, false, true},
-	{"vdd-3.3-ch1", 3312000, 3312000, 0, 0, 0, false, true},
+	{"vdd-3.3-ch1", 3312000, 3312000, 0, 0, 0, false, false},
 	{"vdd-3.3-ch0", 3312000, 3312000, 0, 0, 0, false, true},
 };
 
@@ -40,10 +52,13 @@ static struct icnss_battery_level icnss_battery_level[] = {
 };
 
 static struct icnss_vreg_cfg icnss_wcn6450_vreg_list[] = {
-	{"vdd-cx-mx", 824000, 952000, 0, 0, 0, false, true},
-	{"vdd-1.8-xo", 1872000, 1872000, 0, 0, 0, false, true},
-	{"vdd-1.3-rfa", 1256000, 1352000, 0, 0, 0, false, true},
-	{"vdd-aon", 1256000, 1352000, 0, 0, 0, false, true},
+	{"vdd-aon", 920000, 1040000, 0, 0, 0, false, true},
+	{"vdd-1.8-rfa", 1856000, 1908000, 0, 0, 0, false, true},
+	{"vdd-1.2-rfa", 1256000, 1408000, 0, 0, 0, false, true},
+	{"vdd-cx", 620000, 2200000, 0, 0, 0, false, true},
+	{"vdd-1.8-io", 1800000, 1800000, 0, 0, 0, false, true},
+	{"vdd-3p3-2g", 3300000, 3300000, 0, 0, 0, false, true},
+	{"vdd-3p3-5g", 3300000, 3300000, 0, 0, 0, false, true},
 };
 
 static struct icnss_clk_cfg icnss_clk_list[] = {
@@ -57,13 +72,19 @@ static struct icnss_clk_cfg icnss_adrestea_clk_list[] = {
 #define ICNSS_VREG_LIST_SIZE		ARRAY_SIZE(icnss_wcn6750_vreg_list)
 #define ICNSS_VREG_ADRESTEA_LIST_SIZE	ARRAY_SIZE(icnss_adrestea_vreg_list)
 #define ICNSS_VREG_EVROS_LIST_SIZE	ARRAY_SIZE(icnss_wcn6450_vreg_list)
+#define ICNSS_VREG_WCN7750_LIST_SIZE    ARRAY_SIZE(icnss_wcn7750_vreg_list)
 #define ICNSS_CLK_LIST_SIZE		ARRAY_SIZE(icnss_clk_list)
 #define ICNSS_CLK_ADRESTEA_LIST_SIZE	ARRAY_SIZE(icnss_adrestea_clk_list)
 
 #define ICNSS_CHAIN1_REGULATOR                          "vdd-3.3-ch1"
 #define MAX_PROP_SIZE					32
 
-#define BT_CXMX_VOLTAGE_MV		950
+#define SW_CTRL_GPIO			"pin_sw-ctrl-gpio"
+#define WLAN_EN_GPIO			"pin_wlan-en-gpio"
+#define PIN_CTRL			"pin-ctrl-support"
+#define WLAN_EN_ACTIVE			"wlan_en_active"
+#define WLAN_EN_SLEEP			"wlan_en_sleep"
+#define BT_CXMX_VOLTAGE_MV		900
 #define ICNSS_MBOX_MSG_MAX_LEN 64
 #define ICNSS_MBOX_TIMEOUT_MS 1000
 
@@ -164,7 +185,8 @@ static int icnss_get_vreg_single(struct icnss_priv *priv,
 			vreg->cfg.delay_us = be32_to_cpup(&prop[3]);
 			break;
 		case 4:
-			if (priv->device_id == WCN6750_DEVICE_ID)
+			if (priv->device_id == WCN6750_DEVICE_ID ||
+			    priv->device_id == WCN7750_DEVICE_ID)
 				vreg->cfg.need_unvote = be32_to_cpup(&prop[4]);
 			else
 				vreg->cfg.need_unvote = 0;
@@ -324,8 +346,12 @@ static struct icnss_vreg_cfg *get_vreg_list(u32 *vreg_list_size,
 		*vreg_list_size = ICNSS_VREG_EVROS_LIST_SIZE;
 		return icnss_wcn6450_vreg_list;
 
+	case WCN7750_DEVICE_ID:
+		*vreg_list_size = ICNSS_VREG_WCN7750_LIST_SIZE;
+		return icnss_wcn7750_vreg_list;
+
 	default:
-		icnss_pr_err("Unsupported device_id 0x%x\n", device_id);
+		icnss_pr_err("Unsupported device_id 0x%lx\n", device_id);
 		*vreg_list_size = 0;
 		return NULL;
 	}
@@ -385,14 +411,6 @@ static int icnss_vreg_on(struct icnss_priv *priv)
 	list_for_each_entry(vreg, vreg_list, list) {
 		if (IS_ERR_OR_NULL(vreg->reg) || !vreg->cfg.is_supported)
 			continue;
-		if (!priv->chain_reg_info_updated &&
-		    !strcmp(ICNSS_CHAIN1_REGULATOR, vreg->cfg.name)) {
-			priv->chain_reg_info_updated = true;
-			if (!priv->is_chain1_supported) {
-				vreg->cfg.is_supported = false;
-				continue;
-			}
-		}
 
 		ret = icnss_vreg_on_single(vreg);
 		if (ret)
@@ -443,8 +461,8 @@ int icnss_vreg_unvote(struct icnss_priv *priv)
 	return 0;
 }
 
-int icnss_get_clk_single(struct icnss_priv *priv,
-			 struct icnss_clk_info *clk_info)
+static int icnss_get_clk_single(struct icnss_priv *priv,
+				struct icnss_clk_info *clk_info)
 {
 	struct device *dev = &priv->pdev->dev;
 	struct clk *clk;
@@ -538,7 +556,8 @@ int icnss_get_clk(struct icnss_priv *priv)
 		clk_cfg = icnss_adrestea_clk_list;
 		clk_list_size = ICNSS_CLK_ADRESTEA_LIST_SIZE;
 	} else if (priv->device_id == WCN6750_DEVICE_ID ||
-		   priv->device_id == WCN6450_DEVICE_ID) {
+		   priv->device_id == WCN6450_DEVICE_ID ||
+		   priv->device_id == WCN7750_DEVICE_ID) {
 		clk_cfg = icnss_clk_list;
 		clk_list_size = ICNSS_CLK_LIST_SIZE;
 	}
@@ -638,6 +657,151 @@ static int icnss_clk_off(struct list_head *clk_list)
 	return 0;
 }
 
+int icnss_get_pinctrl(struct icnss_priv *priv)
+{
+	int ret = 0;
+	struct device *dev;
+	struct icnss_pinctrl_info *pinctrl_info;
+	u32 gpio_id, i;
+	int gpio_id_n;
+
+	dev = &priv->pdev->dev;
+	pinctrl_info = &priv->pinctrl_info;
+
+	if (of_property_read_bool(dev->of_node, PIN_CTRL)) {
+		gpio_id = of_get_named_gpio(dev->of_node, SW_CTRL_GPIO, 0);
+		pinctrl_info->sw_ctrl_gpio = gpio_id;
+		icnss_pr_dbg("Switch control GPIO: %d\n",
+			     pinctrl_info->sw_ctrl_gpio);
+
+		pinctrl_info->pinctrl = devm_pinctrl_get(dev);
+		if (IS_ERR_OR_NULL(pinctrl_info->pinctrl)) {
+			ret = PTR_ERR(pinctrl_info->pinctrl);
+			icnss_pr_err("Failed to get pinctrl, err = %d\n", ret);
+			goto out;
+		}
+
+		pinctrl_info->sw_ctrl =
+			pinctrl_lookup_state(pinctrl_info->pinctrl,
+					     "sw_ctrl");
+		if (IS_ERR_OR_NULL(pinctrl_info->sw_ctrl)) {
+			ret = PTR_ERR(pinctrl_info->sw_ctrl);
+			icnss_pr_dbg("Failed to get sw_ctrl state, err = %d\n",
+				     ret);
+		} else {
+			ret = pinctrl_select_state(pinctrl_info->pinctrl,
+						   pinctrl_info->sw_ctrl);
+			if (ret)
+				icnss_pr_err("Failed to select sw_ctrl state, err = %d\n",
+					     ret);
+		}
+
+		pinctrl_info->wlan_en_gpio = of_get_named_gpio(dev->of_node,
+							       WLAN_EN_GPIO, 0);
+		icnss_pr_dbg("WLAN_EN GPIO: %d\n", pinctrl_info->wlan_en_gpio);
+
+		pinctrl_info->wlan_en_active =
+			pinctrl_lookup_state(pinctrl_info->pinctrl, WLAN_EN_ACTIVE);
+
+		if (IS_ERR_OR_NULL(pinctrl_info->wlan_en_active)) {
+			ret = PTR_ERR(pinctrl_info->wlan_en_active);
+			icnss_pr_err("Failed to get wlan_en active state, err = %d\n", ret);
+		}
+
+		pinctrl_info->wlan_en_sleep =
+			pinctrl_lookup_state(pinctrl_info->pinctrl, WLAN_EN_SLEEP);
+
+		if (IS_ERR_OR_NULL(pinctrl_info->wlan_en_sleep)) {
+			ret = PTR_ERR(pinctrl_info->wlan_en_sleep);
+			icnss_pr_err("Failed to get wlan_en sleep state, err = %d\n",
+				     ret);
+		}
+	} else {
+		pinctrl_info->sw_ctrl_gpio = -EINVAL;
+		pinctrl_info->wlan_en_gpio = -EINVAL;
+	}
+
+	/* Find out and configure all those GPIOs which need to be setup
+	 * for interrupt wakeup capable
+	 */
+	gpio_id_n = of_property_count_u32_elems(dev->of_node, "mpm_wake_set_gpios");
+	if (gpio_id_n > 0) {
+		icnss_pr_dbg("Num of GPIOs to be setup for interrupt wakeup capable: %d\n",
+			     gpio_id_n);
+		for (i = 0; i < gpio_id_n; i++) {
+			ret = of_property_read_u32_index(dev->of_node,
+							 "mpm_wake_set_gpios",
+							 i, &gpio_id);
+			if (ret) {
+				icnss_pr_err("Failed to read gpio_id at index: %d\n", i);
+				continue;
+			}
+
+			ret = msm_gpio_mpm_wake_set(gpio_id, 1);
+			if (ret < 0) {
+				icnss_pr_err("Failed to setup gpio_id: %d as interrupt wakeup capable, ret: %d\n",
+					     gpio_id, ret);
+			} else {
+				icnss_pr_dbg("gpio_id: %d successfully setup for interrupt wakeup capable\n",
+					     gpio_id);
+			}
+		}
+	} else {
+		icnss_pr_dbg("No GPIOs to be setup for interrupt wakeup capable\n");
+	}
+
+	return 0;
+out:
+	return ret;
+}
+
+int icnss_select_pinctrl_state(struct icnss_priv *plat_priv, bool state)
+{
+	int ret = 0;
+	struct icnss_pinctrl_info *pinctrl_info;
+
+	if (!plat_priv) {
+		icnss_pr_err("plat_priv is NULL!\n");
+		ret = -ENODEV;
+		goto out;
+	}
+
+	pinctrl_info = &plat_priv->pinctrl_info;
+
+	if (state) {
+		if (!IS_ERR_OR_NULL(pinctrl_info->wlan_en_active)) {
+			ret = pinctrl_select_state(pinctrl_info->pinctrl,
+						   pinctrl_info->wlan_en_active);
+			if (ret) {
+				icnss_pr_err("Failed to select wlan_en active state, err = %d\n",
+					     ret);
+				goto out;
+			}
+		} else {
+			goto out;
+		}
+	} else {
+		if (!IS_ERR_OR_NULL(pinctrl_info->wlan_en_sleep)) {
+			ret = pinctrl_select_state(pinctrl_info->pinctrl,
+						   pinctrl_info->wlan_en_sleep);
+			if (ret) {
+				icnss_pr_err("Failed to select wlan_en sleep state, err = %d\n",
+					     ret);
+				goto out;
+			}
+		} else {
+			goto out;
+		}
+	}
+
+	icnss_pr_info("WLAN_EN Value: %d\n", gpio_get_value(pinctrl_info->wlan_en_gpio));
+	icnss_pr_info("%s WLAN_EN GPIO successfully\n", state ? "Assert" : "De-assert");
+
+	return 0;
+out:
+	return ret;
+}
+
 int icnss_hw_power_on(struct icnss_priv *priv)
 {
 	int ret = 0;
@@ -730,6 +894,26 @@ int icnss_power_off(struct device *dev)
 }
 EXPORT_SYMBOL(icnss_power_off);
 
+int icnss_power_on_chain1_reg(struct icnss_priv *priv)
+{
+	struct list_head *vreg_list = &priv->vreg_list;
+	struct icnss_vreg_info *vreg = NULL;
+	int ret = 0;
+
+	list_for_each_entry(vreg, vreg_list, list) {
+		if (!strcmp(ICNSS_CHAIN1_REGULATOR, vreg->cfg.name) && priv->is_chain1_supported) {
+			vreg->cfg.is_supported = true;
+			ret = icnss_vreg_on_single(vreg);
+			break;
+		}
+	}
+
+	/* Setting chain1 supported to false as chain1 regulator cfg already updated */
+	priv->is_chain1_supported = false;
+
+	return ret;
+}
+
 void icnss_put_resources(struct icnss_priv *priv)
 {
 	icnss_put_clk(priv);
@@ -751,13 +935,14 @@ int icnss_aop_interface_init(struct icnss_priv *priv)
 {
 	struct mbox_client *mbox = &priv->mbox_client_data;
 	struct mbox_chan *chan;
-	int ret = 0;
+	int ret = 0, ol_cpr = 0;
 
-	ret = of_property_read_string(priv->pdev->dev.of_node,
-				      "qcom,vreg_ol_cpr",
-				      &priv->cpr_info.vreg_ol_cpr);
-	if (ret) {
-		icnss_pr_dbg("Vreg for OL CPR not configured\n");
+	ol_cpr = of_property_read_string(priv->pdev->dev.of_node,
+					 "qcom,vreg_ol_cpr",
+					 &priv->cpr_info.vreg_ol_cpr);
+
+	if (ol_cpr && !priv->pdc_init_table) {
+		icnss_pr_dbg("Vreg for OL CPR and pdc_init table not configured\n");
 		return -EINVAL;
 	}
 
@@ -789,11 +974,15 @@ int icnss_aop_interface_init(struct icnss_priv *priv)
 		priv->mbox_chan = chan;
 		icnss_pr_dbg("Mbox channel initialized\n");
 	}
+	ret = icnss_aop_pdc_reconfig(priv);
+	if (ret)
+		icnss_pr_err("Failed to reconfig WLAN PDC, err = %d\n", ret);
+
 	return ret;
 }
 
 /**
- * cnss_aop_interface_deinit: Cleanup AOP interface
+ * icnss_aop_interface_deinit: Cleanup AOP interface
  * @priv: Pointer to icnss platform data
  *
  * Cleanup mbox channel or QMP whichever was configured during initialization.
@@ -850,6 +1039,53 @@ static int icnss_aop_set_vreg_param(struct icnss_priv *priv,
 
 	return ret;
 }
+
+/* icnss_aop_pdc_reconfig: Send AOP msg to configure PDC table for WLAN device
+ * @priv: Pointer to icnss platform data
+ *
+ * Send AOP QMP or Mbox msg to configure PDC table for WLAN device
+ *
+ * Return: 0 for success, otherwise error code
+ */
+int icnss_aop_pdc_reconfig(struct icnss_priv *priv)
+{
+	u32 i;
+	int ret;
+	char *mbox_msg;
+	struct qmp_pkt pkt;
+
+	if (priv->pdc_init_table_len <= 0 || !priv->pdc_init_table)
+		return 0;
+
+	icnss_pr_dbg("Setting PDC defaults for device ID: (0x%lx)\n",
+		     priv->device_id);
+	for (i = 0; i < priv->pdc_init_table_len; i++) {
+		mbox_msg = (char *)priv->pdc_init_table[i];
+		if (priv->use_direct_qmp) {
+			icnss_pr_dbg("Sending AOP QMP msg: %s\n", mbox_msg);
+			ret = qmp_send(priv->qmp, mbox_msg,
+				       ICNSS_MBOX_MSG_MAX_LEN);
+			if (ret < 0)
+				icnss_pr_err("Failed to send AOP QMP msg: %s\n",
+					     mbox_msg);
+			else
+				ret = 0;
+		} else {
+			icnss_pr_dbg("Sending AOP Mbox msg: %s\n", mbox_msg);
+			pkt.size = ICNSS_MBOX_MSG_MAX_LEN;
+			pkt.data = mbox_msg;
+
+			ret = mbox_send_message(priv->mbox_chan, &pkt);
+			if (ret < 0)
+				icnss_pr_err("Failed to send AOP mbox msg: %s,ret: %d\n",
+					     mbox_msg, ret);
+			else
+				ret = 0;
+		}
+	}
+	return ret;
+}
+
 #else
 int icnss_aop_interface_init(struct icnss_priv *priv)
 {
@@ -867,13 +1103,47 @@ static int icnss_aop_set_vreg_param(struct icnss_priv *priv,
 {
 	return 0;
 }
+
+int icnss_aop_pdc_reconfig(struct icnss_priv *priv)
+{
+	return 0;
+}
+
 #endif
+
+void icnss_power_misc_params_init(struct icnss_priv *priv)
+{
+	struct device *dev = &priv->pdev->dev;
+	int ret;
+
+	/* common DT Entries */
+	priv->pdc_init_table_len =
+				of_property_count_strings(dev->of_node,
+							  "qcom,pdc_init_table");
+	if (priv->pdc_init_table_len > 0) {
+		priv->pdc_init_table =
+			kcalloc(priv->pdc_init_table_len,
+				sizeof(char *), GFP_KERNEL);
+		if (priv->pdc_init_table) {
+			ret = of_property_read_string_array(dev->of_node,
+						"qcom,pdc_init_table",
+						priv->pdc_init_table,
+						priv->pdc_init_table_len);
+			if (ret < 0)
+				icnss_pr_err("Failed to get PDC Init Table\n");
+		} else {
+			icnss_pr_err("Failed to alloc PDC Init Table mem\n");
+		}
+	} else {
+		icnss_pr_dbg("PDC Init Table not configured\n");
+	}
+}
 
 int icnss_update_cpr_info(struct icnss_priv *priv)
 {
 	struct icnss_cpr_info *cpr_info = &priv->cpr_info;
 
-	if (!cpr_info->vreg_ol_cpr || (!priv->mbox_chan && !priv->qmp)) {
+	if (!cpr_info->vreg_ol_cpr || (!priv->mbox_chan && !priv->use_direct_qmp)) {
 		icnss_pr_dbg("Mbox channel / QMP / OL CPR Vreg not configured\n");
 		return 0;
 	}
@@ -883,8 +1153,13 @@ int icnss_update_cpr_info(struct icnss_priv *priv)
 		return -EINVAL;
 	}
 
-	cpr_info->voltage = cpr_info->voltage > BT_CXMX_VOLTAGE_MV ?
-		cpr_info->voltage : BT_CXMX_VOLTAGE_MV;
+	/* For WCN6450 WLAN_CX is a dedicated rail for WLAN and there is a seperate rail
+	 * for BT_CX.
+	 * Hence, there is no need to modifying it with BT_CXMX_VOLTAGE.
+	 */
+	if (priv->device_id != WCN6450_DEVICE_ID)
+		cpr_info->voltage = cpr_info->voltage > BT_CXMX_VOLTAGE_MV ?
+			cpr_info->voltage : BT_CXMX_VOLTAGE_MV;
 
 	return icnss_aop_set_vreg_param(priv,
 				       cpr_info->vreg_ol_cpr,

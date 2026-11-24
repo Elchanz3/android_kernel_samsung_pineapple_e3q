@@ -41,6 +41,9 @@
 #include "lim_send_messages.h"
 #include "wlan_connectivity_logging.h"
 #include "cds_ieee80211_common.h"
+#include <lim_mlo.h>
+#include "wlan_dlm_public_struct.h"
+#include "wlan_dlm_api.h"
 
 /**
  * lim_process_deauth_frame
@@ -71,6 +74,7 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 	uint8_t roamSessionId;
 	uint32_t frameLen;
 	int32_t frame_rssi;
+	struct reject_ap_info ap_info;
 
 	pHdr = WMA_GET_RX_MAC_HEADER(pRxPacketInfo);
 
@@ -162,19 +166,20 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 			pe_session->limSmeState,
 			GET_LIM_SYSTEM_ROLE(pe_session));
 
-	lim_extract_ies_from_deauth_disassoc(pe_session, (uint8_t *)pHdr,
-					WMA_GET_RX_MPDU_LEN(pRxPacketInfo));
-	wlan_connectivity_mgmt_event(mac->psoc, (struct wlan_frame_hdr *)pHdr,
-				     pe_session->vdev_id, reasonCode,
-				     0, frame_rssi, 0, 0, 0, 0,
-				     WLAN_DEAUTH_RX);
 	lim_diag_event_report(mac, WLAN_PE_DIAG_DEAUTH_FRAME_EVENT,
 		pe_session, 0, reasonCode);
+
+	lim_cp_stats_cstats_log_deauth_evt(pe_session, CSTATS_DIR_RX,
+					   reasonCode);
 
 	if (lim_check_disassoc_deauth_ack_pending(mac, (uint8_t *) pHdr->sa)) {
 		pe_debug("Ignore the Deauth received, while waiting for ack of "
 			"disassoc/deauth");
 		lim_clean_up_disassoc_deauth_req(mac, (uint8_t *) pHdr->sa, 1);
+		wlan_connectivity_mgmt_event(mac->psoc, (struct wlan_frame_hdr *)pHdr,
+					     pe_session->vdev_id, reasonCode,
+					     0, frame_rssi, 0, 0, 0, 0,
+					     WLAN_DEAUTH_RX);
 		return;
 	}
 
@@ -196,6 +201,16 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 		}
 	} else if (LIM_IS_STA_ROLE(pe_session)) {
 		switch (reasonCode) {
+		case REASON_4WAY_HANDSHAKE_TIMEOUT:
+			qdf_mem_zero(&ap_info, sizeof(struct reject_ap_info));
+			qdf_mem_copy(ap_info.bssid.bytes, pHdr->sa,
+				     QDF_MAC_ADDR_SIZE);
+			ap_info.reject_ap_type = DRIVER_AVOID_TYPE;
+			ap_info.reject_reason = REASON_EAPOL_TIMEOUT;
+			ap_info.source = ADDED_BY_DRIVER;
+			wlan_dlm_add_bssid_to_reject_list(mac->pdev, &ap_info);
+			break;
+
 		case REASON_UNSPEC_FAILURE:
 		case REASON_PREV_AUTH_NOT_VALID:
 		case REASON_DEAUTH_NETWORK_LEAVING:
@@ -314,8 +329,16 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 		}
 	}
 
+	lim_extract_ies_from_deauth_disassoc(pe_session, (uint8_t *)pHdr,
+					WMA_GET_RX_MPDU_LEN(pRxPacketInfo));
+	wlan_connectivity_mgmt_event(mac->psoc, (struct wlan_frame_hdr *)pHdr,
+				     pe_session->vdev_id, reasonCode,
+				     0, frame_rssi, 0, 0, 0, 0,
+				     WLAN_DEAUTH_RX);
+
 	lim_perform_deauth(mac, pe_session, reasonCode, pHdr->sa,
 			   frame_rssi);
+	lim_update_disconnect_vdev_id(mac, pe_session->vdev_id);
 
 	if (mac->mlme_cfg->gen.fatal_event_trigger &&
 	    (reasonCode != REASON_UNSPEC_FAILURE &&
@@ -486,13 +509,14 @@ void lim_perform_deauth(struct mac_context *mac_ctx, struct pe_session *pe_sessi
 							rc);
 			return;
 			} else {
-
-			/*
-			 * Delete all the TDLS peers only if Deauth
-			 * is received from the AP
-			 */
+				/*
+				 * Delete all the TDLS peers only if Deauth
+				 * is received from the AP
+				 */
 				if (IS_CURRENT_BSSID(mac_ctx, addr, pe_session))
-					lim_delete_tdls_peers(mac_ctx, pe_session);
+					lim_delete_tdls_peers(mac_ctx,
+							      pe_session,
+							      TDLS_PEER_DEL_REASON_NONE);
 #endif
 			/**
 			 * This could be Deauthentication frame from
@@ -626,6 +650,7 @@ void lim_perform_deauth(struct mac_context *mac_ctx, struct pe_session *pe_sessi
 	if (LIM_IS_STA_ROLE(pe_session))
 		wma_tx_abort(pe_session->smeSessionId);
 
+	lim_mlo_sta_notify_peer_disconn(pe_session);
 	lim_update_lost_link_info(mac_ctx, pe_session, frame_rssi);
 
 	/* / Deauthentication from peer MAC entity */

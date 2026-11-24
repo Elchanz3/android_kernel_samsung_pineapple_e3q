@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -38,12 +38,14 @@
 #include "wlan_mlo_mgr_roam.h"
 #include "wlan_mlo_mgr_sta.h"
 #include "wlan_mlo_mgr_link_switch.h"
+#include <wlan_action_oui_main.h>
+#include <wlan_p2p_api.h>
+#include <wlan_t2lm_api.h>
 
 #ifdef WLAN_FEATURE_11BE_MLO
-static inline bool
-if_mgr_is_assoc_link_of_vdev(struct wlan_objmgr_pdev *pdev,
-			     struct wlan_objmgr_vdev *vdev,
-			     uint8_t cur_vdev_id)
+bool if_mgr_is_assoc_link_of_vdev(struct wlan_objmgr_pdev *pdev,
+				  struct wlan_objmgr_vdev *vdev,
+				  uint8_t cur_vdev_id)
 {
 	struct wlan_objmgr_vdev *cur_vdev, *assoc_vdev;
 
@@ -61,10 +63,9 @@ if_mgr_is_assoc_link_of_vdev(struct wlan_objmgr_pdev *pdev,
 	return false;
 }
 #else
-static inline bool
-if_mgr_is_assoc_link_of_vdev(struct wlan_objmgr_pdev *pdev,
-			     struct wlan_objmgr_vdev *vdev,
-			     uint8_t cur_vdev_id)
+bool if_mgr_is_assoc_link_of_vdev(struct wlan_objmgr_pdev *pdev,
+				  struct wlan_objmgr_vdev *vdev,
+				  uint8_t cur_vdev_id)
 {
 	return false;
 }
@@ -76,6 +77,11 @@ static void if_mgr_enable_roaming_on_vdev(struct wlan_objmgr_pdev *pdev,
 	struct wlan_objmgr_vdev *vdev = (struct wlan_objmgr_vdev *)object;
 	struct change_roam_state_arg *roam_arg = arg;
 	uint8_t vdev_id, curr_vdev_id;
+	struct wlan_objmgr_psoc *psoc;
+
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc)
+		return;
 
 	vdev_id = wlan_vdev_get_id(vdev);
 	curr_vdev_id = roam_arg->curr_vdev_id;
@@ -89,7 +95,11 @@ static void if_mgr_enable_roaming_on_vdev(struct wlan_objmgr_pdev *pdev,
 
 	if (curr_vdev_id != vdev_id &&
 	    vdev->vdev_mlme.mlme_state == WLAN_VDEV_S_UP) {
-		ifmgr_debug("Enable roaming for vdev_id %d", vdev_id);
+		ifmgr_debug("Enable roaming for vdev_id %d, requestor %d",
+			    vdev_id, roam_arg->requestor);
+		mlme_set_rso_pending_disable_req_bitmap(psoc, vdev_id,
+							roam_arg->requestor,
+							true);
 		wlan_cm_enable_rso(pdev, vdev_id,
 				   roam_arg->requestor,
 				   REASON_DRIVER_ENABLED);
@@ -123,16 +133,37 @@ static void if_mgr_disable_roaming_on_vdev(struct wlan_objmgr_pdev *pdev,
 	struct wlan_objmgr_vdev *vdev = (struct wlan_objmgr_vdev *)object;
 	struct change_roam_state_arg *roam_arg = arg;
 	uint8_t vdev_id, curr_vdev_id;
+	struct wlan_objmgr_psoc *psoc;
+
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc)
+		return;
 
 	vdev_id = wlan_vdev_get_id(vdev);
 	curr_vdev_id = roam_arg->curr_vdev_id;
 
 	if (curr_vdev_id == vdev_id ||
 	    wlan_vdev_mlme_get_opmode(vdev) != QDF_STA_MODE ||
-	    wlan_cm_is_vdev_roam_sync_inprogress(vdev) ||
 	    vdev->vdev_mlme.mlme_state != WLAN_VDEV_S_UP)
 		return;
 
+	/*
+	 * Host can't send RSO_STOP when roaming(ROAM_START/ROAM_SYNC) is in
+	 * progress as it might cause HO_FAIL. The requestor operation(e.g. SAP
+	 * start) waits till ROAM cmd is dequeued from SER queue. The requestor
+	 * operation starts once the current roaming is done and ROAM cmd is
+	 * dequeued.
+	 * The requestor(e.g. SAP start) operation and next roaming can't run
+	 * in parallel in firmware, which means the request to disable roaming
+	 * can't be dropped. So, cache the request and send RSO_STOP to fw when
+	 * current roaming is done.
+	 */
+	if (wlan_cm_is_vdev_roaming(vdev)) {
+		mlme_set_rso_pending_disable_req_bitmap(psoc, vdev_id,
+							roam_arg->requestor,
+							false);
+		return;
+	}
 	/*
 	 * Disable roaming only for the STA vdev which is not is roam sync state
 	 * and VDEV is in UP state.
@@ -770,6 +801,38 @@ static void if_mgr_get_vdev_id_from_bssid(struct wlan_objmgr_pdev *pdev,
 }
 
 #ifdef WLAN_FEATURE_11BE_MLO
+static QDF_STATUS
+if_mgr_t2lm_validate_candidate(struct cnx_mgr *cm_ctx,
+			       struct scan_cache_entry *scan_entry)
+{
+	struct wlan_objmgr_vdev *vdev;
+	struct wlan_objmgr_psoc *psoc;
+
+	if (!scan_entry || !cm_ctx || !cm_ctx->vdev)
+		return QDF_STATUS_E_NULL_VALUE;
+
+	vdev = cm_ctx->vdev;
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc)
+		return QDF_STATUS_E_NULL_VALUE;
+
+	if (!wlan_mlme_get_t2lm_negotiation_supported(psoc))
+		return QDF_STATUS_SUCCESS;
+
+	/*
+	 * Skip T2LM validation for following cases:
+	 *  - Is link VDEV
+	 *  - Is not STA VDEV
+	 *  - T2LM IE not present in scan entry
+	 */
+	if (wlan_vdev_mlme_is_mlo_link_vdev(vdev) ||
+	    wlan_vdev_mlme_get_opmode(vdev) != QDF_STA_MODE ||
+	    !scan_entry->ie_list.t2lm[0])
+		return QDF_STATUS_SUCCESS;
+
+	return wlan_t2lm_validate_candidate(scan_entry);
+}
+
 /**
  * if_mgr_get_conc_ext_flags() - get extended flags for concurrency check
  * @vdev: pointer to vdev on which new connection is coming up
@@ -799,24 +862,60 @@ static void if_mgr_update_candidate(struct wlan_objmgr_psoc *psoc,
 				    struct validate_bss_data *candidate_info)
 {
 	struct scan_cache_entry *scan_entry = candidate_info->scan_entry;
+	struct action_oui_search_attr attr = {0};
+	int8_t i, allowed_partner_links = 0;
+	uint8_t mlo_support_link_num;
 
 	if (!(scan_entry->ie_list.multi_link_bv || scan_entry->ie_list.ehtcap ||
 	      scan_entry->ie_list.ehtop))
 		return;
 
-	if (mlme_get_bss_11be_allowed(psoc, &candidate_info->peer_addr,
-				      util_scan_entry_ie_data(scan_entry),
-				      util_scan_entry_ie_len(scan_entry)) &&
-	    (!wlan_vdev_mlme_get_user_dis_eht_flag(vdev)))
+	attr.ie_data = util_scan_entry_ie_data(scan_entry);
+	attr.ie_length = util_scan_entry_ie_len(scan_entry);
+
+	if (!mlme_get_bss_11be_allowed(psoc, &candidate_info->peer_addr,
+				       attr.ie_data, attr.ie_length) ||
+	    wlan_vdev_mlme_get_user_dis_eht_flag(vdev) ||
+	    !wlan_reg_phybitmap_support_11be(wlan_vdev_get_pdev(vdev))) {
+		scan_entry->ie_list.multi_link_bv = NULL;
+		scan_entry->ie_list.ehtcap = NULL;
+		scan_entry->ie_list.ehtop = NULL;
+		qdf_mem_zero(&scan_entry->ml_info, sizeof(scan_entry->ml_info));
+		candidate_info->is_mlo = false;
+		return;
+	}
+
+	mlo_support_link_num = wlan_mlme_get_sta_mlo_conn_max_num(psoc);
+
+	if (mlo_support_link_num <= WLAN_MAX_ML_DEFAULT_LINK)
 		return;
 
-	scan_entry->ie_list.multi_link_bv = NULL;
-	scan_entry->ie_list.ehtcap = NULL;
-	scan_entry->ie_list.ehtop = NULL;
-	qdf_mem_zero(&scan_entry->ml_info, sizeof(scan_entry->ml_info));
-	candidate_info->is_mlo = false;
+	if (!wlan_action_oui_search(psoc, &attr,
+				    ACTION_OUI_RESTRICT_MAX_MLO_LINKS))
+		return;
+
+	for (i = 0; i < scan_entry->ml_info.num_links; i++) {
+		if (i < WLAN_MAX_ML_DEFAULT_LINK - 1) {
+			allowed_partner_links++;
+			continue;
+		}
+
+		scan_entry->ml_info.link_info[i].is_valid_link = false;
+	}
+
+	if (allowed_partner_links != scan_entry->ml_info.num_links)
+		ifmgr_nofl_debug("Downgrade " QDF_MAC_ADDR_FMT " partner links from %d to %d",
+				 QDF_MAC_ADDR_REF(scan_entry->ml_info.mld_mac_addr.bytes),
+				 scan_entry->ml_info.num_links,
+				 allowed_partner_links);
 }
 #else
+static inline QDF_STATUS
+if_mgr_t2lm_validate_candidate(struct cnx_mgr *cm_ctx,
+			       struct scan_cache_entry *scan_entry)
+{
+	return QDF_STATUS_SUCCESS;
+}
 static inline uint32_t
 if_mgr_get_conc_ext_flags(struct wlan_objmgr_vdev *vdev,
 			  struct validate_bss_data *candidate_info)
@@ -843,6 +942,12 @@ QDF_STATUS if_mgr_validate_candidate(struct wlan_objmgr_vdev *vdev,
 		&event_data->validate_bss_info;
 	uint32_t chan_freq = candidate_info->chan_freq;
 	uint32_t conc_freq = 0, conc_ext_flags;
+	struct cnx_mgr *cm_ctx;
+	QDF_STATUS status;
+
+	cm_ctx = cm_get_cm_ctx(vdev);
+	if (!cm_ctx)
+		return QDF_STATUS_E_FAILURE;
 
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
 
@@ -855,18 +960,36 @@ QDF_STATUS if_mgr_validate_candidate(struct wlan_objmgr_vdev *vdev,
 		return QDF_STATUS_E_FAILURE;
 
 	if_mgr_update_candidate(psoc, vdev, candidate_info);
-	/*
-	 * Do not allow STA to connect on 6Ghz or indoor channel for non dbs
-	 * hardware if SAP and skip_6g_and_indoor_freq_scan ini are present
-	 */
-	if (op_mode == QDF_STA_MODE &&
-	    !policy_mgr_is_sta_chan_valid_for_connect_and_roam(pdev,
-							       chan_freq)) {
-		ifmgr_debug("STA connection not allowed on bssid: "QDF_MAC_ADDR_FMT" with freq: %d (6Ghz or indoor(%d)), as not valid for connection",
-			    QDF_MAC_ADDR_REF(candidate_info->peer_addr.bytes),
-			    chan_freq,
-			    wlan_reg_is_freq_indoor(pdev, chan_freq));
-		return QDF_STATUS_E_INVAL;
+
+	if (op_mode == QDF_STA_MODE) {
+		/*
+		 * Do not allow STA to connect on 6Ghz or indoor channel for
+		 * non dbs hardware if SAP and skip_6g_and_indoor_freq_scan
+		 * ini are present
+		 */
+		if (!policy_mgr_is_sta_chan_valid_for_connect_and_roam(pdev,
+								       chan_freq)) {
+			ifmgr_debug("STA connection not allowed on bssid: "QDF_MAC_ADDR_FMT" with freq: %d (6Ghz or indoor(%d)), as not valid for connection",
+				    QDF_MAC_ADDR_REF(candidate_info->peer_addr.bytes),
+				    chan_freq,
+				    wlan_reg_is_freq_indoor(pdev, chan_freq));
+			return QDF_STATUS_E_INVAL;
+		}
+
+		/*
+		 * If TTLM mapping and self link ID are not same then
+		 * return FAILURE
+		 */
+		status =
+			if_mgr_t2lm_validate_candidate(cm_ctx,
+						       candidate_info->scan_entry);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			ifmgr_debug("STA connection not allowed on bssid: "QDF_MAC_ADDR_FMT" with freq: %d (6Ghz or indoor(%d)), as TTLM is not mapped on this link",
+				    QDF_MAC_ADDR_REF(candidate_info->peer_addr.bytes),
+				    chan_freq,
+				    wlan_reg_is_freq_indoor(pdev, chan_freq));
+			return QDF_STATUS_E_INVAL;
+		}
 	}
 
 	/*
@@ -954,13 +1077,33 @@ QDF_STATUS if_mgr_validate_candidate(struct wlan_objmgr_vdev *vdev,
 	if (conc_freq)
 		return QDF_STATUS_E_INVAL;
 
-	/* Check low latency SAP and STA/GC concurrency are valid or not */
-	if (!policy_mgr_is_ll_sap_concurrency_valid(psoc, chan_freq, mode)) {
-		ifmgr_debug("STA connection not allowed on bssid: "QDF_MAC_ADDR_FMT" with freq: %d due to LL SAP present",
-			    QDF_MAC_ADDR_REF(candidate_info->peer_addr.bytes),
-			    chan_freq);
-		return QDF_STATUS_E_INVAL;
-	}
+	if (op_mode == QDF_P2P_CLIENT_MODE &&
+	    wlan_reg_is_dfs_for_freq(pdev, chan_freq) &&
+	    wlan_p2p_is_vdev_wfd_r2_mode(vdev)) {
+		const uint8_t *ie;
+		uint16_t ie_len;
+		bool is_dfs_owner = false, is_valid_ap_assist = false;
 
+		ie = util_scan_entry_ie_data(candidate_info->scan_entry);
+		ie_len = util_scan_entry_ie_len(candidate_info->scan_entry);
+		wlan_p2p_extract_ap_assist_dfs_params(vdev, ie, ie_len,
+						      true, chan_freq, true);
+		wlan_p2p_get_ap_assist_dfs_params(vdev, &is_dfs_owner,
+						  &is_valid_ap_assist,
+						  NULL, NULL, NULL, NULL);
+		if (is_dfs_owner)
+			goto end;
+
+		if (!wlan_p2p_fw_support_ap_assist_dfs_group(psoc)) {
+			ifmgr_debug("FW doesn't support assisted AP for P2P");
+			return QDF_STATUS_E_INVAL;
+		}
+
+		if (!is_valid_ap_assist) {
+			ifmgr_debug("Invalid AP assist params");
+			return QDF_STATUS_E_INVAL;
+		}
+	}
+end:
 	return QDF_STATUS_SUCCESS;
 }

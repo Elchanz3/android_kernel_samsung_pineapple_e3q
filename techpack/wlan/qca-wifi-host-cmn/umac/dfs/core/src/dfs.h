@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013, 2016-2021 The Linux Foundation.  All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2005-2006 Atheros Communications, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -1140,6 +1140,9 @@ struct dfs_punc_unpunc {
  * @dfs_radarqlock:                  Lock for dfs q.
  * @dfs_arqlock:                     Lock for AR q.
  * @dfs_nol:                         Non occupancy list for radar.
+ * @dfs_mm_nolinfo:                  DFS NOL list present in persistent memory.
+ * @is_retain_nol_cfg_enabled:       Flag to indicate if the config for storing
+ *                                   NOL in persistent memory is enabled.
  * @dfs_nol_count:                   How many items?
  * @wlan_dfs_stats:                  DFS related stats.
  * @pulses:                          Pulse history.
@@ -1221,6 +1224,7 @@ struct dfs_punc_unpunc {
  * @dfs_is_stadfs_enabled:           Is STADFS enabled.
  * @dfs_seg_id:                      Segment ID of the radar hit channel.
  * @dfs_is_chirp:                    Radar Chirp in pulse present or not.
+ * @dfs_is_fh_pulse:                 Frequency hopping radar present or not.
  * @dfs_bw_reduced:                  DFS bandwidth reduced channel bit.
  * @dfs_freq_offset:                 Frequency offset where radar was found.
  * @dfs_cac_aborted:                 DFS cac is aborted.
@@ -1320,6 +1324,8 @@ struct wlan_dfs {
 
 	qdf_spinlock_t dfs_arqlock;
 	struct dfs_nolelem    *dfs_nol;
+	struct dfsreq_nolinfo *dfs_mm_nolinfo;
+	bool           is_retain_nol_cfg_enabled;
 	int                   dfs_nol_count;
 	struct dfs_stats      wlan_dfs_stats;
 	struct dfs_pulseline  *pulses;
@@ -1404,6 +1410,7 @@ struct wlan_dfs {
 	bool           dfs_is_stadfs_enabled;
 	uint8_t        dfs_seg_id;
 	uint8_t        dfs_is_chirp;
+	uint8_t        dfs_is_fh_pulse;
 	bool           dfs_bw_reduced;
 	int32_t        dfs_freq_offset;
 	bool           dfs_cac_aborted;
@@ -2435,6 +2442,21 @@ void dfs_deliver_cac_state_events(struct wlan_dfs *dfs)
 {
 }
 #endif
+
+/*
+ * dfs_deliver_cac_state_events_for_prevchan() - Deliver the DFS CAC events
+ * on dfs_prevchan.
+ *
+ * @dfs: Pointer to wlan_dfs structure.
+ */
+#if defined(WLAN_DISP_CHAN_INFO)
+void dfs_deliver_cac_state_events_for_prevchan(struct wlan_dfs *dfs);
+#else
+static inline
+void dfs_deliver_cac_state_events_for_prevchan(struct wlan_dfs *dfs)
+{
+}
+#endif
 #else
 static inline
 void dfs_stacac_stop(struct wlan_dfs *dfs)
@@ -2527,6 +2549,11 @@ void dfs_cac_timer_detach(struct wlan_dfs *dfs)
 
 static inline
 void dfs_deliver_cac_state_events(struct wlan_dfs *dfs)
+{
+}
+
+static inline
+void dfs_deliver_cac_state_events_for_prevchan(struct wlan_dfs *dfs)
 {
 }
 
@@ -2956,9 +2983,9 @@ void dfs_set_rcsa_flags(struct wlan_dfs *dfs, bool is_rcsa_ie_sent,
  * frame, puncture the nol infected channels and formulate the radar puncture
  * bitmap.
  * @dfs: Pointer to wlan_dfs structure.
- * @phymode: Phymode of enum wlan_phymode.
  * @nol_ie_start_freq: NOL IE start frequency
  * @nol_ie_bitmap: NOL bitmap
+ * @is_ignore_radar_puncture: Boolean Flag to check if radar should be ignored
  *
  * Return: radar puncture bitmap
  */
@@ -2966,14 +2993,15 @@ void dfs_set_rcsa_flags(struct wlan_dfs *dfs, bool is_rcsa_ie_sent,
 	defined(QCA_DFS_RCSA_SUPPORT)
 uint16_t
 dfs_get_radar_bitmap_from_nolie(struct wlan_dfs *dfs,
-				enum wlan_phymode phymode,
 				qdf_freq_t nol_ie_start_freq,
-				uint8_t nol_ie_bitmap);
+				uint8_t nol_ie_bitmap,
+				bool *is_ignore_radar_puncture);
 #else
 static inline uint16_t
-dfs_get_radar_bitmap_from_nolie(struct wlan_dfs *dfs, enum wlan_phymode phymode,
+dfs_get_radar_bitmap_from_nolie(struct wlan_dfs *dfs,
 				qdf_freq_t nol_ie_start_freq,
-				uint8_t nol_ie_bitmap)
+				uint8_t nol_ie_bitmap,
+				bool *is_ignore_radar_puncture)
 {
 	return NO_SCHANS_PUNC;
 }

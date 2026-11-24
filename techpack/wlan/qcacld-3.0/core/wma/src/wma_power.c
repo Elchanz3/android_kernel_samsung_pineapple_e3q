@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1309,20 +1309,28 @@ static void wma_update_beacon_noa_ie(struct beacon_info *bcn,
 			/* TODO: Assuming p2p noa ie is last ie in the beacon */
 			qdf_mem_zero(bcn->noa_ie, (bcn->noa_sub_ie_len +
 						   sizeof(struct p2p_ie)));
-			bcn->len -= (bcn->noa_sub_ie_len +
-				     sizeof(struct p2p_ie));
+			if (bcn->len < (bcn->noa_sub_ie_len +
+					sizeof(struct p2p_ie)))
+				bcn->len = 0;
+			else
+				bcn->len -= (bcn->noa_sub_ie_len +
+					     sizeof(struct p2p_ie));
 			bcn->noa_ie = NULL;
 			bcn->noa_sub_ie_len = 0;
 		}
-		wma_debug("No need to update NoA");
 		return;
 	}
 
 	if (bcn->noa_sub_ie_len && bcn->noa_ie) {
+		if (bcn->len < (bcn->noa_sub_ie_len + sizeof(struct p2p_ie)))
+			bcn->len = 0;
+		else
+			bcn->len -= (bcn->noa_sub_ie_len +
+				     sizeof(struct p2p_ie));
+
 		/* NoA present in previous beacon, update it */
 		wma_debug("NoA present in previous beacon, update the NoA IE, bcn->len %u bcn->noa_sub_ie_len %u",
-			 bcn->len, bcn->noa_sub_ie_len);
-		bcn->len -= (bcn->noa_sub_ie_len + sizeof(struct p2p_ie));
+			   bcn->len, bcn->noa_sub_ie_len);
 		qdf_mem_zero(bcn->noa_ie,
 			     (bcn->noa_sub_ie_len + sizeof(struct p2p_ie)));
 	} else {                /* NoA is not present in previous beacon */
@@ -1695,6 +1703,38 @@ QDF_STATUS wma_set_tx_power_scale_decr_db(uint8_t vdev_id, int value)
 		wma_err("Decrease tx power value failed");
 
 	return ret;
+}
+
+/**
+ * wma_enable_disable_imps() - enable/disable FW IMPS feature
+ * @pdev_id: pdev id
+ * @param_val: value
+ *
+ * Return: QDF_STATUS_SUCCESS for success or error code.
+ */
+QDF_STATUS wma_enable_disable_imps(uint32_t pdev_id, uint32_t param_val)
+{
+	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+	struct pdev_params pparam = {0};
+	QDF_STATUS status;
+
+	if (!wma)
+		return QDF_STATUS_E_FAILURE;
+
+	pparam.is_host_pdev_id = false;
+
+	/* Enable-disable IMPS */
+	pparam.param_id = WMI_PDEV_PARAM_IDLE_PS_CONFIG;
+	pparam.param_value = param_val;
+	status = wmi_unified_pdev_param_send(wma->wmi_handle,
+					     &pparam, pdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		wma_err("Unable to enable/disable:(%d) IMPS",
+			param_val);
+
+	wma->in_imps = !!param_val;
+
+	return status;
 }
 #endif /* FEATURE_TX_POWER */
 

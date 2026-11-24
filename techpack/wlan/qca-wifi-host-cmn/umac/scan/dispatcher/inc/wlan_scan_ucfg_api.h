@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1163,6 +1163,16 @@ ucfg_scan_get_user_config_sched_scan_plan(struct wlan_objmgr_psoc *psoc)
 bool ucfg_scan_is_connected_scan_enabled(struct wlan_objmgr_psoc *psoc);
 
 /**
+ * ucfg_scan_get_scan_cache_report_max_time_in_sec() - API to get scan cache
+ * report max time in seconds
+ * @psoc: pointer to psoc object
+ *
+ * Return: value
+ */
+uint64_t
+ucfg_scan_get_scan_cache_report_max_time_in_sec(struct wlan_objmgr_psoc *psoc);
+
+/**
  * ucfg_scan_is_snr_monitor_enabled() - API to get SNR monitoring enabled or not
  * @psoc: pointer to psoc object
  *
@@ -1172,5 +1182,11 @@ static inline
 bool ucfg_scan_is_snr_monitor_enabled(struct wlan_objmgr_psoc *psoc)
 {
 	return wlan_scan_is_snr_monitor_enabled(psoc);
+}
+
+static inline bool
+ucfg_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev)
+{
+	return scm_scan_get_cached_scan_report_fw_cap(pdev);
 }
 #endif

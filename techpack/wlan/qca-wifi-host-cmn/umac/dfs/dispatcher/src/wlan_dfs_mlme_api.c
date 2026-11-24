@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -261,6 +261,17 @@ uint32_t dfs_mlme_dfs_ch_flags_ext(struct wlan_objmgr_pdev *pdev)
 	return flag_ext;
 }
 
+struct dfsreq_nolinfo *
+dfs_mlme_nol_alloc_nol(struct wlan_objmgr_pdev *pdev)
+{
+	struct dfsreq_nolinfo *dfs_mm_nolinfo = NULL;
+
+	if (global_dfs_to_mlme.mlme_dfs_alloc_nol)
+		global_dfs_to_mlme.mlme_dfs_alloc_nol(pdev, &dfs_mm_nolinfo);
+
+	return dfs_mm_nolinfo;
+}
+
 void dfs_mlme_channel_change_by_precac(struct wlan_objmgr_pdev *pdev)
 {
 	if (global_dfs_to_mlme.mlme_channel_change_by_precac)
@@ -279,6 +290,14 @@ void dfs_mlme_set_tx_flag(struct wlan_objmgr_pdev *pdev, bool is_tx_allowed)
 {
 	if (global_dfs_to_mlme.mlme_set_tx_flag)
 		global_dfs_to_mlme.mlme_set_tx_flag(pdev, is_tx_allowed);
+}
+
+bool dfs_mlme_is_pdev_valid(struct wlan_objmgr_pdev *pdev)
+{
+	if (global_dfs_to_mlme.mlme_is_pdev_valid_for_curhwmode)
+	    return global_dfs_to_mlme.mlme_is_pdev_valid_for_curhwmode(pdev);
+
+	return false;
 }
 
 void dfs_mlme_clist_update(struct wlan_objmgr_pdev *pdev,

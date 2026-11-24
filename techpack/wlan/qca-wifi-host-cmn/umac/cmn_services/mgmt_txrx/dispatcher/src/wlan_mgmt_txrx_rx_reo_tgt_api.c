@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -121,7 +121,8 @@ tgt_mgmt_rx_reo_enter_algo_without_buffer(
 		return QDF_STATUS_E_NULL_VALUE;
 	}
 
-	if (!wlan_mgmt_rx_reo_is_feature_enabled_at_pdev(pdev))
+	if (!wlan_mgmt_rx_reo_is_feature_enabled_at_pdev(pdev) ||
+	    wlan_mgmt_rx_reo_is_fpmo_war_applicable(reo_params))
 		return  QDF_STATUS_SUCCESS;
 
 	if (!reo_params) {
@@ -330,7 +331,8 @@ QDF_STATUS tgt_mgmt_rx_reo_frame_handler(
 		goto cleanup;
 	}
 
-	if (!wlan_mgmt_rx_reo_is_feature_enabled_at_pdev(pdev))
+	if (!wlan_mgmt_rx_reo_is_feature_enabled_at_pdev(pdev) ||
+	    wlan_mgmt_rx_reo_is_fpmo_war_applicable(mgmt_rx_params->reo_params))
 		return tgt_mgmt_txrx_process_rx_frame(pdev, buf,
 						      mgmt_rx_params);
 
@@ -353,6 +355,10 @@ QDF_STATUS tgt_mgmt_rx_reo_frame_handler(
 		status = QDF_STATUS_E_INVAL;
 		goto cleanup;
 	}
+
+	if (wlan_mlo_is_wsi_remap_in_progress(ml_grp_id))
+		return tgt_mgmt_txrx_process_rx_frame(pdev, buf,
+						      mgmt_rx_params);
 
 	mgmt_rx_params->reo_params->link_id = link_id;
 	mgmt_rx_params->reo_params->mlo_grp_id = ml_grp_id;

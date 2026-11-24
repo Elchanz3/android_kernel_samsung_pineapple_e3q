@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2011,2017-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -129,6 +129,60 @@ struct target_if_spectral *get_target_if_spectral_handle_from_pdev(
 }
 
 qdf_export_symbol(get_target_if_spectral_handle_from_pdev);
+
+/**
+ * target_if_spectral_check_buffer_size() - API to check the
+ * report size for spectral scan of a given pdev
+ * @pdev: pdev handle
+ * @fft_size: FFT size
+ * @rpt_mode: Spectral report mode
+ *
+ * This API checks for the given fft_size and report_mode, size of the
+ * spectral report to be generated is less than or equal to the
+ * streamfs sub-buffer size allocated.
+ *
+ * Return: QDF_STATUS on success
+ */
+static QDF_STATUS
+target_if_spectral_check_buffer_size(struct wlan_objmgr_pdev *pdev,
+				     uint16_t fft_size,
+				     uint16_t rpt_mode)
+{
+	struct target_if_spectral *spectral;
+	uint32_t num_bins, report_size, buffer_size;
+	QDF_STATUS status;
+
+	spectral = get_target_if_spectral_handle_from_pdev(pdev);
+
+	if (!spectral) {
+		spectral_err("spectral variable in null.");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	status = spectral->spectral_buf_cb.get_buff_size(pdev, &buffer_size);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		spectral_err("Failed to get spectral buffer size");
+		return status;
+	}
+
+	num_bins = target_if_spectral_get_num_fft_bins(fft_size, rpt_mode);
+
+	if (num_bins < 0) {
+		spectral_err("Number of bins less than zero.");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	report_size = SPECTRAL_REPORT_HEADER_SIZE + num_bins;
+
+	if (report_size > buffer_size) {
+		spectral_err
+		("Requested report size %u is greater than buffer size %u.",
+		 report_size, buffer_size);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
 
 /**
  * target_if_spectral_get_normal_mode_cap() - API to get normal
@@ -970,6 +1024,9 @@ target_if_spectral_info_init_defaults(struct target_if_spectral *spectral,
 	}
 	info->osps_cache.osc_params.ss_bandwidth = sscan_bw;
 
+	info->osps_cache.osc_params.ss_completion_timeout =
+	    SPECTRAL_SCAN_CMPL_TIMEOUT_DEFAULT;
+
 	/* The cache is now valid */
 	info->osps_cache.osc_is_valid = 1;
 
@@ -1028,7 +1085,7 @@ target_if_log_read_spectral_params(
 	const char *function_name,
 	struct spectral_config *pparam)
 {
-	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS. Returning following params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u\nss_frequency1=%u\nss_frequency2=%u\n",
+	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS. Returning following params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u\nss_frequency1=%u\nss_frequency2=%u\nss_completion_timeout=%u\n",
 		       function_name,
 		       pparam->ss_count,
 		       pparam->ss_period,
@@ -1050,7 +1107,8 @@ target_if_log_read_spectral_params(
 		       pparam->ss_dbm_adj,
 		       pparam->ss_chn_mask,
 		       pparam->ss_frequency.cfreq1,
-		       pparam->ss_frequency.cfreq2);
+		       pparam->ss_frequency.cfreq2,
+		       pparam->ss_completion_timeout);
 }
 
 /**
@@ -1106,7 +1164,7 @@ target_if_log_read_spectral_params_catch_validate(
 	const char *function_name,
 	struct spectral_config *pparam)
 {
-	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS on initial cache validation\nReturning following params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u",
+	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS on initial cache validation\nReturning following params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u\nss_completion_timeout = %u",
 		       function_name,
 		       pparam->ss_count,
 		       pparam->ss_period,
@@ -1125,7 +1183,8 @@ target_if_log_read_spectral_params_catch_validate(
 		       pparam->ss_pwr_format,
 		       pparam->ss_rpt_mode,
 		       pparam->ss_bin_scale,
-		       pparam->ss_dbm_adj, pparam->ss_chn_mask);
+		       pparam->ss_dbm_adj, pparam->ss_chn_mask,
+		       pparam->ss_completion_timeout);
 }
 
 /**
@@ -1353,7 +1412,7 @@ target_if_log_write_spectral_params(
 	const char *function_name,
 	int ret)
 {
-	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS. Params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u\nss_frequency1=%u\nss_frequency2=%u\nstatus = %d",
+	spectral_debug("%s: TARGET_IF_SPECTRAL_INFO_PARAMS. Params:\nss_count = %u\nss_period = %u\nss_recapture = %u\nss_spectral_pri = %u\nss_fft_size = %u\nss_gc_ena = %u\nss_restart_ena = %u\nss_noise_floor_ref = %d\nss_init_delay = %u\nss_nb_tone_thr = %u\nss_str_bin_thr = %u\nss_wb_rpt_mode = %u\nss_rssi_rpt_mode = %u\nss_rssi_thr = %d\nss_pwr_format = %u\nss_rpt_mode = %u\nss_bin_scale = %u\nss_dbm_adj = %u\nss_chn_mask = %u\nss_frequency1=%u\nss_frequency2=%u\nstatus = %d\nss_completion_timeout = %u",
 		       function_name,
 		       param->ss_count,
 		       param->ss_period,
@@ -1376,6 +1435,7 @@ target_if_log_write_spectral_params(
 		       param->ss_chn_mask,
 		       param->ss_frequency.cfreq1,
 		       param->ss_frequency.cfreq2,
+		       param->ss_completion_timeout,
 		       ret);
 }
 
@@ -3094,6 +3154,225 @@ target_if_spectral_detach_simulation(struct target_if_spectral *spectral)
 #endif
 
 /**
+ * target_if_spectral_scan_timeout_handler() - Finite spectral scan
+ * timeout function.
+ * @arg: Container of spectral object.
+ *
+ * Send timeout event notification to userspace when timer expires
+ */
+static enum qdf_hrtimer_restart_status
+target_if_spectral_scan_timeout_handler(qdf_hrtimer_data_t *arg)
+{
+	struct target_if_spectral *spectral;
+	struct target_if_spectral_scan_timer *spectral_timer;
+	struct target_if_finite_spectral_scan_params *finite_scan;
+	uint32_t num_reports_received;
+	struct spectral_scan_event sptrl_event;
+	struct spectral_scan_complete_event compl_event;
+	QDF_STATUS status;
+	enum spectral_scan_mode smode;
+
+	spectral_timer = qdf_container_of(arg,
+					  struct target_if_spectral_scan_timer,
+					  scan_completion_timer);
+	if (!spectral_timer) {
+		spectral_err("spectral_timer pointer is null.");
+		return QDF_HRTIMER_NORESTART;
+	}
+
+	smode = spectral_timer->smode;
+
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err("Invalid Spectral mode %u", smode);
+		return QDF_HRTIMER_NORESTART;
+	}
+
+	spectral = qdf_container_of(spectral_timer,
+				    struct target_if_spectral,
+				    spectral_timer[smode]);
+	if (!spectral) {
+		spectral_err("spectral pointer is null.");
+		return QDF_HRTIMER_NORESTART;
+	}
+
+	qdf_spin_lock_bh(&spectral->spectral_lock);
+
+	finite_scan = &spectral->finite_scan[smode];
+
+	finite_scan->finite_spectral_scan =  false;
+
+	if (finite_scan->is_scan_complete) {
+		qdf_spin_unlock_bh(&spectral->spectral_lock);
+		return QDF_HRTIMER_NORESTART;
+	}
+
+	num_reports_received = finite_scan->num_reports_requested -
+				finite_scan->num_reports_expected;
+
+	sptrl_event.event_id = SPECTRAL_SCAN_COMPLETE;
+
+	compl_event.completion_status = SPECTRAL_SCAN_COMPLETE_TIMEOUT;
+	compl_event.num_received_samples = num_reports_received;
+
+	sptrl_event.complete_event = compl_event;
+
+	status = target_if_spectral_scan_complete_event(spectral,
+							&sptrl_event);
+
+	if (QDF_IS_STATUS_ERROR(status))
+		spectral_err("Failed spectral scan completion event");
+
+	finite_scan->is_scan_complete =  true;
+
+	qdf_spin_unlock_bh(&spectral->spectral_lock);
+
+	return QDF_HRTIMER_NORESTART;
+}
+
+/**
+ * target_if_spectral_init_scan_completion_timer() - Initialize hrtimer
+ * for the given scan mode
+ * @spectral: Pointer to Spectral target_if internal private data
+ * @smode: Spectral scan mode
+ *
+ * Function to initialize hrtimer for spectral scan.
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+target_if_spectral_init_scan_completion_timer
+				(struct target_if_spectral *spectral,
+				 enum spectral_scan_mode smode)
+{
+	struct target_if_spectral_scan_timer *spectral_timer;
+
+	if (!spectral) {
+		spectral_err("Spectral object is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err("Invalid Spectral mode %u", smode);
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	spectral_timer = &spectral->spectral_timer[smode];
+	spectral_timer->smode = smode;
+
+	qdf_hrtimer_init(&spectral_timer->scan_completion_timer,
+			 target_if_spectral_scan_timeout_handler,
+			 QDF_CLOCK_MONOTONIC,
+			 QDF_HRTIMER_MODE_REL,
+			 QDF_CONTEXT_TASKLET);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * target_if_spectral_deinit_scan_completion_timer() - De-initialize hrtimer
+ * for the given scan mode
+ * @spectral: Pointer to Spectral target_if internal private data
+ * @smode: Spectral scan mode
+ *
+ * Function to de-initialize/kill hrtimer for spectral scan.
+ *
+ * Return: None
+ */
+static void
+target_if_spectral_deinit_scan_completion_timer
+				(struct target_if_spectral *spectral,
+				 enum spectral_scan_mode smode)
+{
+	struct target_if_spectral_scan_timer *spectral_timer;
+
+	if (!spectral) {
+		spectral_err("Spectral object is null");
+		return;
+	}
+
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err("Invalid Spectral mode %u", smode);
+		return;
+	}
+
+	spectral_timer = &spectral->spectral_timer[smode];
+
+	qdf_hrtimer_kill(&spectral_timer->scan_completion_timer);
+}
+
+/**
+ * target_if_spectral_scan_start_timer() - Start hrtimer
+ * for the given scan mode
+ * @spectral: Pointer to Spectral target_if internal private data
+ * @smode: Spectral scan mode
+ * @completion_timeout_us: Timer interval in micro-seconds
+ *
+ * Function to start timer for finite spectral scan.
+ *
+ * Return: None
+ */
+static void
+target_if_spectral_scan_start_timer(struct target_if_spectral *spectral,
+				    enum spectral_scan_mode smode,
+				    uint32_t completion_timeout_us)
+{
+	struct target_if_spectral_scan_timer *spectral_timer;
+
+	if (!spectral) {
+		spectral_err_rl("Spectral object is null");
+		return;
+	}
+
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err("Invalid Spectral mode %u", smode);
+		return;
+	}
+
+	if (!completion_timeout_us) {
+		spectral_info
+			("Timer is not started as timeout value is set to 0");
+		return;
+	}
+
+	spectral_timer = &spectral->spectral_timer[smode];
+
+	qdf_hrtimer_start(&spectral_timer->scan_completion_timer,
+			  qdf_ns_to_ktime(completion_timeout_us *
+					  NSEC_PER_USEC),
+			  QDF_HRTIMER_MODE_REL);
+}
+
+/**
+ * target_if_spectral_scan_cancel_timer() - Start hrtimer
+ * for the given scan mode
+ * @spectral: Pointer to Spectral target_if internal private data
+ * @smode: Spectral scan mode
+ *
+ * Function to stop/cancel timer for finite spectral scan.
+ *
+ * Return: None
+ */
+static void
+target_if_spectral_scan_cancel_timer(struct target_if_spectral *spectral,
+				     enum spectral_scan_mode smode)
+{
+	struct target_if_spectral_scan_timer *spectral_timer;
+
+	if (!spectral) {
+		spectral_err_rl("Spectral LMAC object is null");
+		return;
+	}
+
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err("Invalid Spectral mode %u", smode);
+		return;
+	}
+
+	spectral_timer = &spectral->spectral_timer[smode];
+
+	qdf_hrtimer_cancel(&spectral_timer->scan_completion_timer);
+}
+
+/**
  * target_if_spectral_detach() - De-initialize target_if Spectral
  * @spectral: Pointer to Spectral target_if internal private data
  *
@@ -3108,9 +3387,13 @@ target_if_spectral_detach(struct target_if_spectral *spectral)
 	spectral_info("spectral detach");
 
 	if (spectral) {
-		for (; smode < SPECTRAL_SCAN_MODE_MAX; smode++)
+		for (; smode < SPECTRAL_SCAN_MODE_MAX; smode++) {
 			qdf_spinlock_destroy
 				(&spectral->param_info[smode].osps_lock);
+
+			target_if_spectral_deinit_scan_completion_timer
+							(spectral, smode);
+		}
 
 		target_if_spectral_detach_simulation(spectral);
 
@@ -3181,7 +3464,9 @@ target_if_spectral_len_adj_swar_init(struct spectral_fft_bin_len_adj_swar *swar,
 	    target_type == TARGET_TYPE_QCA6490 ||
 	    target_type == TARGET_TYPE_KIWI ||
 	    target_type == TARGET_TYPE_MANGO ||
-	    target_type == TARGET_TYPE_PEACH) {
+	    target_type == TARGET_TYPE_PEACH ||
+	    target_type == TARGET_TYPE_WCN7750 ||
+	    target_type == TARGET_TYPE_QCC2072) {
 		swar->fftbin_size_war = SPECTRAL_FFTBIN_SIZE_WAR_2BYTE_TO_1BYTE;
 		rparams->hw_fft_bin_width = 2;
 	} else if (target_type == TARGET_TYPE_QCA8074 ||
@@ -3256,7 +3541,9 @@ target_if_spectral_report_params_init(
 	    target_type == TARGET_TYPE_QCN9224 ||
 	    target_type == TARGET_TYPE_KIWI ||
 	    target_type == TARGET_TYPE_MANGO ||
-	    target_type == TARGET_TYPE_PEACH) {
+	    target_type == TARGET_TYPE_PEACH ||
+	    target_type == TARGET_TYPE_WCN7750 ||
+	    target_type == TARGET_TYPE_QCC2072) {
 		rparams->version = SPECTRAL_REPORT_FORMAT_VERSION_2;
 		rparams->num_spectral_detectors =
 				NUM_SPECTRAL_DETECTORS_GEN3_V2;
@@ -3724,7 +4011,9 @@ target_if_pdev_spectral_init(struct wlan_objmgr_pdev *pdev)
 	    target_type == TARGET_TYPE_QCN9224 ||
 	    target_type == TARGET_TYPE_KIWI ||
 	    target_type == TARGET_TYPE_MANGO ||
-	    target_type == TARGET_TYPE_PEACH)
+	    target_type == TARGET_TYPE_PEACH ||
+	    target_type == TARGET_TYPE_WCN7750 ||
+	    target_type == TARGET_TYPE_QCC2072)
 		spectral->direct_dma_support = true;
 
 	target_if_spectral_report_params_init(&spectral->rparams,
@@ -3750,7 +4039,9 @@ target_if_pdev_spectral_init(struct wlan_objmgr_pdev *pdev)
 	    (target_type == TARGET_TYPE_QCA6750) ||
 	    (target_type == TARGET_TYPE_KIWI) ||
 	    (target_type == TARGET_TYPE_MANGO) ||
-	    (target_type == TARGET_TYPE_PEACH)) {
+	    (target_type == TARGET_TYPE_PEACH) ||
+	    (target_type == TARGET_TYPE_WCN7750) ||
+	    (target_type == TARGET_TYPE_QCC2072)) {
 		spectral->spectral_gen = SPECTRAL_GEN3;
 		spectral->hdr_sig_exp = SPECTRAL_PHYERR_SIGNATURE_GEN3;
 		spectral->tag_sscan_summary_exp =
@@ -3821,12 +4112,22 @@ target_if_pdev_spectral_init(struct wlan_objmgr_pdev *pdev)
 		    target_type == TARGET_TYPE_QCA9888)
 			spectral->is_sec80_rssi_war_required = true;
 
-		spectral->use_nl_bcast = SPECTRAL_USE_NL_BCAST;
+		spectral->use_bcast = SPECTRAL_USE_NL_BCAST;
 
 		if (spectral->spectral_gen == SPECTRAL_GEN3)
 			init_160mhz_delivery_state_machine(spectral);
 	}
 
+	smode = SPECTRAL_SCAN_MODE_NORMAL;
+	for (; smode < SPECTRAL_SCAN_MODE_MAX; smode++) {
+		status = target_if_spectral_init_scan_completion_timer(spectral,
+								       smode);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			spectral_err("Failed to init timer for scan mode : %u",
+				     smode);
+			goto fail;
+		}
+	}
 	qdf_spinlock_create(&spectral->detector_list_lock);
 	qdf_spinlock_create(&spectral->session_report_info_lock);
 	qdf_spinlock_create(&spectral->session_det_map_lock);
@@ -3924,10 +4225,7 @@ target_if_psoc_spectral_init(struct wlan_objmgr_psoc *psoc)
 	return psoc_spectral;
 
 fail:
-	if (psoc_spectral)
-		target_if_psoc_spectral_deinit(psoc);
-
-	return psoc_spectral;
+	return NULL;
 }
 
 /**
@@ -4174,7 +4472,7 @@ target_if_is_agile_span_overlap_with_operating_span
 	uint32_t op_end_freq;
 	uint32_t agile_start_freq;
 	uint32_t agile_end_freq;
-	uint32_t cfreq2;
+	int16_t cfreq2;
 
 	if (!spectral) {
 		spectral_err("spectral object is NULL");
@@ -4607,8 +4905,7 @@ _target_if_set_spectral_config(struct target_if_spectral *spectral,
 		sparams->ss_pwr_format = !!param->value;
 		break;
 	case SPECTRAL_PARAM_RPT_MODE:
-		if ((param->value < SPECTRAL_PARAM_RPT_MODE_MIN) ||
-		    (param->value > SPECTRAL_PARAM_RPT_MODE_MAX)) {
+		if (param->value > SPECTRAL_PARAM_RPT_MODE_MAX) {
 			*err = SPECTRAL_SCAN_ERR_PARAM_INVALID_VALUE;
 			return QDF_STATUS_E_FAILURE;
 		}
@@ -4790,6 +5087,9 @@ _target_if_set_spectral_config(struct target_if_spectral *spectral,
 		sparams->ss_bandwidth = param->value;
 		spectral->sscan_width_configured[smode] = true;
 
+		break;
+	case SPECTRAL_PARAM_COMPLETION_TIMEOUT:
+		sparams->ss_completion_timeout = param->value;
 		break;
 	}
 
@@ -5113,6 +5413,7 @@ target_if_spectral_finite_scan_init(struct target_if_spectral *spectral,
 	uint32_t num_detectors;
 	QDF_STATUS status;
 	uint16_t sscan_count;
+	uint32_t ss_completion_timeout;
 
 	if (!spectral) {
 		spectral_err("target if spectral object is null");
@@ -5135,9 +5436,16 @@ target_if_spectral_finite_scan_init(struct target_if_spectral *spectral,
 
 	finite_scan = &spectral->finite_scan[smode];
 	sscan_count =  spectral->params[smode].ss_count;
+	ss_completion_timeout =  spectral->params[smode].ss_completion_timeout;
 
 	finite_scan->finite_spectral_scan =  true;
-	finite_scan->num_reports_expected = num_detectors * sscan_count;
+	finite_scan->is_scan_complete =  false;
+	finite_scan->num_reports_expected
+		= finite_scan->num_reports_requested
+		= num_detectors * sscan_count;
+
+	target_if_spectral_scan_start_timer(spectral, smode,
+					    ss_completion_timeout);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -5441,6 +5749,15 @@ target_if_spectral_scan_enable_params(struct target_if_spectral *spectral,
 	spectral->num_spectral_data = 0;
 
 	if (!p_sops->is_spectral_active(spectral, smode)) {
+		status =
+		    spectral->spectral_buf_cb.reset_transport_channel(pdev);
+
+		if (QDF_IS_STATUS_ERROR(status)) {
+			spectral_err
+				("Failed to reset transport specific buffer.");
+			return 1;
+		}
+
 		p_sops->configure_spectral(spectral, spectral_params, smode);
 		spectral->rparams.marker[smode].is_valid = false;
 
@@ -6184,6 +6501,16 @@ target_if_start_spectral_scan(struct wlan_objmgr_pdev *pdev,
 		}
 	}
 
+	ret = target_if_spectral_check_buffer_size
+				(spectral->pdev_obj,
+				 spectral->params[smode].ss_fft_size,
+				 spectral->params[smode].ss_rpt_mode);
+	if (QDF_IS_STATUS_ERROR(ret)) {
+		qdf_spin_unlock_bh(&spectral->spectral_lock);
+		spectral_err("Check buffer size failed");
+		return ret;
+	}
+
 	/* Populate detectot list first */
 	ret = target_if_spectral_detector_list_init(spectral);
 	if (QDF_IS_STATUS_ERROR(ret)) {
@@ -6248,6 +6575,7 @@ target_if_stop_spectral_scan(struct wlan_objmgr_pdev *pdev,
 	struct target_if_spectral_ops *p_sops;
 	struct target_if_spectral *spectral;
 	uint8_t det;
+	QDF_STATUS status;
 
 	if (!pdev) {
 		spectral_err("pdev object is NULL");
@@ -6278,6 +6606,13 @@ target_if_stop_spectral_scan(struct wlan_objmgr_pdev *pdev,
 	}
 	p_sops = GET_TARGET_IF_SPECTRAL_OPS(spectral);
 
+	/* Cancel timer before acquiring the lock as the timer handler
+	 * would attempt to acquire the lock to send timeout event.
+	 * Cancelling timer after acquiring the lock would cause a
+	 * deadlock.
+	 */
+	target_if_spectral_scan_cancel_timer(spectral, smode);
+
 	qdf_spin_lock_bh(&spectral->spectral_lock);
 	p_sops->stop_spectral_scan(spectral, smode);
 	if (spectral->classify_scan) {
@@ -6291,6 +6626,14 @@ target_if_stop_spectral_scan(struct wlan_objmgr_pdev *pdev,
 
 	spectral->send_single_packet = 0;
 	spectral->sc_spectral_scan = 0;
+
+	status = spectral->spectral_buf_cb.reset_transport_channel(pdev);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		qdf_spin_unlock_bh(&spectral->spectral_lock);
+		spectral_err
+			("Failed to reset transport specific buffer.");
+		return status;
+	}
 
 	qdf_spin_lock_bh(&spectral->session_det_map_lock);
 	for (det = 0; det < MAX_DETECTORS_PER_PDEV; det++)
@@ -6792,16 +7135,16 @@ target_if_register_spectral_tgt_ops(struct wlan_objmgr_psoc *psoc,
 }
 
 /**
- * target_if_register_netlink_cb() - Register Netlink callbacks
+ * target_if_register_buffer_cb() - Register buffer callbacks
  * @pdev: Pointer to pdev object
- * @nl_cb: Netlink callbacks to register
+ * @spectral_buf_cb: Netlink/Streamfs callbacks to register
  *
  * Return: void
  */
 static void
-target_if_register_netlink_cb(
+target_if_register_buffer_cb(
 	struct wlan_objmgr_pdev *pdev,
-	struct spectral_nl_cb *nl_cb)
+	struct spectral_buffer_cb *spectral_buf_cb)
 {
 	struct target_if_spectral *spectral = NULL;
 
@@ -6812,23 +7155,28 @@ target_if_register_netlink_cb(
 		return;
 	}
 
-	qdf_mem_copy(&spectral->nl_cb, nl_cb, sizeof(struct spectral_nl_cb));
+	qdf_mem_copy(&spectral->spectral_buf_cb, spectral_buf_cb,
+		     sizeof(struct spectral_buffer_cb));
 
-	if (spectral->use_nl_bcast)
-		spectral->send_phy_data = spectral->nl_cb.send_nl_bcast;
-	else
-		spectral->send_phy_data = spectral->nl_cb.send_nl_unicast;
+	if (spectral->use_bcast) {
+		spectral->send_phy_data =
+			spectral->spectral_buf_cb.send_bcast;
+	} else {
+		spectral->send_phy_data =
+			spectral->spectral_buf_cb.send_unicast;
+	}
 }
 
 /**
- * target_if_use_nl_bcast() - Get whether to use broadcast/unicast while sending
- * Netlink messages to the application layer
+ * target_if_use_broadcast() - Set whether to use broadcast/unicast while
+ * sending messages to the application layer
  * @pdev: Pointer to pdev object
+ * @use_bcast: true for broadcast, false for unicast
  *
- * Return: true for broadcast, false for unicast
+ * Return: QDF_STATUS
  */
-static bool
-target_if_use_nl_bcast(struct wlan_objmgr_pdev *pdev)
+static QDF_STATUS
+target_if_use_broadcast(struct wlan_objmgr_pdev *pdev, bool use_bcast)
 {
 	struct target_if_spectral *spectral = NULL;
 
@@ -6836,20 +7184,21 @@ target_if_use_nl_bcast(struct wlan_objmgr_pdev *pdev)
 
 	if (!spectral) {
 		spectral_err("SPECTRAL : Module doesn't exist");
-		return false;
+		return QDF_STATUS_E_NULL_VALUE;
 	}
 
-	return spectral->use_nl_bcast;
+	spectral->use_bcast = use_bcast;
+	return QDF_STATUS_SUCCESS;
 }
 
 /**
- * target_if_deregister_netlink_cb() - De-register Netlink callbacks
+ * target_if_deregister_buffer_cb() - De-register buffer callbacks
  * @pdev: Pointer to pdev object
  *
  * Return: void
  */
 static void
-target_if_deregister_netlink_cb(struct wlan_objmgr_pdev *pdev)
+target_if_deregister_buffer_cb(struct wlan_objmgr_pdev *pdev)
 {
 	struct target_if_spectral *spectral = NULL;
 
@@ -6859,7 +7208,8 @@ target_if_deregister_netlink_cb(struct wlan_objmgr_pdev *pdev)
 		return;
 	}
 
-	qdf_mem_zero(&spectral->nl_cb, sizeof(struct spectral_nl_cb));
+	qdf_mem_zero(&spectral->spectral_buf_cb,
+		     sizeof(struct spectral_buffer_cb));
 }
 
 static int
@@ -8060,12 +8410,12 @@ target_if_sptrl_register_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 	    target_if_register_spectral_wmi_ops;
 	tx_ops->sptrl_tx_ops.sptrlto_register_spectral_tgt_ops =
 	    target_if_register_spectral_tgt_ops;
-	tx_ops->sptrl_tx_ops.sptrlto_register_netlink_cb =
-	    target_if_register_netlink_cb;
-	tx_ops->sptrl_tx_ops.sptrlto_use_nl_bcast =
-	    target_if_use_nl_bcast;
-	tx_ops->sptrl_tx_ops.sptrlto_deregister_netlink_cb =
-	    target_if_deregister_netlink_cb;
+	tx_ops->sptrl_tx_ops.sptrlto_register_buffer_cb =
+	    target_if_register_buffer_cb;
+	tx_ops->sptrl_tx_ops.sptrlto_use_broadcast =
+	    target_if_use_broadcast;
+	tx_ops->sptrl_tx_ops.sptrlto_deregister_buffer_cb =
+	    target_if_deregister_buffer_cb;
 	tx_ops->sptrl_tx_ops.sptrlto_process_spectral_report =
 	    target_if_process_spectral_report;
 	tx_ops->sptrl_tx_ops.sptrlto_direct_dma_support =
@@ -8102,7 +8452,7 @@ target_if_spectral_send_intf_found_msg(struct wlan_objmgr_pdev *pdev,
 		return;
 	}
 
-	msg  = (struct spectral_samp_msg *)spectral->nl_cb.get_sbuff(
+	msg  = (struct spectral_samp_msg *)spectral->spectral_buf_cb.get_sbuff(
 			spectral->pdev_obj,
 			SPECTRAL_MSG_INTERFERENCE_NOTIFICATION,
 			SPECTRAL_MSG_BUF_NEW);
@@ -8150,13 +8500,57 @@ target_if_spectral_is_finite_scan(struct target_if_spectral *spectral,
 }
 
 QDF_STATUS
+target_if_spectral_is_scan_complete(struct target_if_spectral *spectral,
+				    enum spectral_scan_mode smode,
+				    bool *is_scan_complete)
+{
+	struct target_if_finite_spectral_scan_params *finite_scan;
+	bool is_finite_spectral_scan;
+
+	if (!spectral) {
+		spectral_err_rl("target if spectral object is null");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	if (smode >= SPECTRAL_SCAN_MODE_MAX) {
+		spectral_err_rl("invalid spectral mode %d", smode);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	if (!is_scan_complete) {
+		spectral_err_rl("Invalid pointer");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	finite_scan = &spectral->finite_scan[smode];
+	is_finite_spectral_scan = finite_scan->finite_spectral_scan;
+
+	/* Scan completion is valid only for finite scan mode */
+	if (is_finite_spectral_scan)
+		*is_scan_complete = finite_scan->is_scan_complete;
+	else
+		*is_scan_complete = false;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
 target_if_spectral_finite_scan_update(struct target_if_spectral *spectral,
 				      enum spectral_scan_mode smode)
 {
 	struct target_if_finite_spectral_scan_params *finite_scan;
+	struct wlan_objmgr_pdev *pdev;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct spectral_scan_event sptrl_event;
+	struct spectral_scan_complete_event compl_event;
 
 	if (!spectral) {
 		spectral_err_rl("target if spectral object is null");
+		return QDF_STATUS_E_INVAL;
+	}
+	pdev  = spectral->pdev_obj;
+	if (!pdev) {
+		spectral_err("pdev object is NULL");
 		return QDF_STATUS_E_INVAL;
 	}
 
@@ -8174,17 +8568,74 @@ target_if_spectral_finite_scan_update(struct target_if_spectral *spectral,
 
 	finite_scan->num_reports_expected--;
 	if (!finite_scan->num_reports_expected) {
-		QDF_STATUS status;
-		enum spectral_cp_error_code err;
+		uint32_t received_reports = finite_scan->num_reports_requested;
 
-		/* received expected number of reports from target, stop scan */
-		status = target_if_stop_spectral_scan(spectral->pdev_obj, smode,
-						      &err);
+		sptrl_event.event_id = SPECTRAL_SCAN_COMPLETE;
+
+		compl_event.completion_status = SPECTRAL_SCAN_COMPLETE_SUCCESS;
+		compl_event.num_received_samples = received_reports;
+
+		sptrl_event.complete_event = compl_event;
+
+		status = target_if_spectral_scan_complete_event(spectral,
+								&sptrl_event);
+
 		if (QDF_IS_STATUS_ERROR(status)) {
-			spectral_err_rl("Failed to stop finite Spectral scan");
-			return QDF_STATUS_E_FAILURE;
+			spectral_err_rl
+			  ("Failed to notify finite spectral scan completion");
 		}
+
 		finite_scan->finite_spectral_scan =  false;
+		finite_scan->is_scan_complete =  true;
+	}
+
+	return status;
+}
+
+QDF_STATUS
+target_if_spectral_scan_complete_event(struct target_if_spectral *spectral,
+				       struct spectral_scan_event *sptrl_event)
+{
+	struct wlan_objmgr_pdev *pdev;
+	struct wlan_objmgr_psoc *psoc;
+	struct wlan_lmac_if_rx_ops *rx_ops;
+	QDF_STATUS status;
+
+	if (!spectral) {
+		spectral_err_rl("target if spectral object is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	pdev  = spectral->pdev_obj;
+	if (!pdev) {
+		spectral_err("pdev object is NULL");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	psoc = wlan_pdev_get_psoc(pdev);
+	if (!psoc) {
+		spectral_err("psoc is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	rx_ops = wlan_psoc_get_lmac_if_rxops(psoc);
+	if (!rx_ops) {
+		spectral_err("rx_ops is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	if (!sptrl_event) {
+		spectral_err("spectral event is null");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	status = rx_ops->sptrl_rx_ops.sptrlro_scan_complete_event(pdev,
+								  sptrl_event);
+
+	if (QDF_IS_STATUS_ERROR(status)) {
+		spectral_err_rl
+			("Failed to notify userspace about scan completion.");
+		return QDF_STATUS_E_FAILURE;
 	}
 
 	return QDF_STATUS_SUCCESS;

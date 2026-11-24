@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -211,6 +211,72 @@ mlo_roam_abort_req(struct wlan_objmgr_psoc *psoc,
 }
 #endif
 
+/**
+ * mlo_roam_update_all_vdev_macaddr() - Update all mlo vdev mac addr when
+ * ROAM SYNCH event is received from firmware
+ * @psoc: Pointer to soc
+ * @sync_ind: Structure with roam synch parameters
+ *
+ * During roaming reassoc, when partner link rejected while standby link
+ * allowed, link vdev will switch from partner link to standby link,
+ * link vdev self mac will be changed to standby link self mac in F/W and
+ * passed to host by roam_sync event.
+ * Host also need update all self mac info in link vdev and os_if accordingly.
+ *
+ * Return: void
+ */
+static void
+mlo_roam_update_all_vdev_macaddr(struct wlan_objmgr_psoc *psoc,
+				 struct roam_offload_synch_ind *sync_ind)
+{
+	struct wlan_objmgr_vdev *vdev;
+	struct qdf_mac_addr *old_self_mac, *new_self_mac;
+	uint8_t *self_mac;
+	uint8_t i, link_vdev_id, roamed_vdev_id;
+	QDF_STATUS status = QDF_STATUS_E_INVAL;
+	QDF_STATUS (*cb)(struct wlan_objmgr_vdev *vdev,
+			 struct qdf_mac_addr *old_self_mac,
+			 struct qdf_mac_addr *new_self_mac);
+	struct mlo_mgr_context *g_mlo_ctx = wlan_objmgr_get_mlo_ctx();
+
+	/* Update the link address received from fw to vdev */
+	roamed_vdev_id = sync_ind->roamed_vdev_id;
+	for (i = 0; i < sync_ind->num_setup_links; i++) {
+		link_vdev_id = sync_ind->ml_link[i].vdev_id;
+		if (link_vdev_id == INVALID_VDEV_ID)
+			continue;
+		new_self_mac = &sync_ind->ml_link[i].self_link_addr;
+		if (qdf_is_macaddr_zero(new_self_mac) ||
+		    qdf_is_macaddr_broadcast(new_self_mac))
+			continue;
+
+		vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
+							    link_vdev_id,
+							    WLAN_MLO_MGR_ID);
+		if (!vdev) {
+			mlo_err("Invalid vdev %d", link_vdev_id);
+			continue;
+		}
+
+		/* self link address of assoc vdev shouldn't be changed */
+		if (link_vdev_id  == roamed_vdev_id)
+			goto rel_ref;
+
+		self_mac = wlan_vdev_mlme_get_linkaddr(vdev);
+		old_self_mac = (struct qdf_mac_addr *)self_mac;
+		if (qdf_is_macaddr_equal(new_self_mac, old_self_mac))
+			goto rel_ref;
+
+		cb = g_mlo_ctx->osif_ops->mlo_roam_osif_update_mac_addr;
+		status = cb(vdev, old_self_mac, new_self_mac);
+		wlan_vdev_mlme_set_linkaddr(vdev, new_self_mac->bytes);
+
+rel_ref:
+		wlan_vdev_mlme_set_macaddr(vdev, new_self_mac->bytes);
+		wlan_objmgr_vdev_release_ref(vdev, WLAN_MLO_MGR_ID);
+	}
+}
+
 static void mlo_roam_update_vdev_macaddr(struct wlan_objmgr_psoc *psoc,
 					 struct roam_offload_synch_ind *sync_ind,
 					 uint8_t vdev_id,
@@ -219,53 +285,37 @@ static void mlo_roam_update_vdev_macaddr(struct wlan_objmgr_psoc *psoc,
 	struct wlan_objmgr_vdev *vdev;
 	struct qdf_mac_addr *mld_mac;
 
-	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
-						    vdev_id,
-						    WLAN_MLO_MGR_ID);
-	if (!vdev) {
-		mlo_err("VDEV is null");
-		return;
-	}
-
 	if (is_non_ml_connection) {
+		vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc,
+							    vdev_id,
+							    WLAN_MLO_MGR_ID);
+		if (!vdev) {
+			mlo_err("VDEV is null");
+			return;
+		}
 		mld_mac = (struct qdf_mac_addr *)wlan_vdev_mlme_get_mldaddr(vdev);
 		if (!qdf_is_macaddr_zero(mld_mac))
 			wlan_vdev_mlme_set_macaddr(vdev, mld_mac->bytes);
-	} else {
-		struct qdf_mac_addr *vdev_link_addr;
-		uint8_t i;
+		mlme_debug("vdev_id %d self mac " QDF_MAC_ADDR_FMT,
+			   vdev_id,
+			   QDF_MAC_ADDR_REF(wlan_vdev_mlme_get_macaddr(vdev)));
+		wlan_objmgr_vdev_release_ref(vdev, WLAN_MLO_MGR_ID);
 
-		wlan_vdev_mlme_set_macaddr(vdev,
-					   wlan_vdev_mlme_get_linkaddr(vdev));
-		/* Update the link address received from fw to assoc vdev */
-		for (i = 0; i < sync_ind->num_setup_links; i++) {
-			if (vdev_id != sync_ind->ml_link[i].vdev_id)
-				continue;
-
-			vdev_link_addr = &sync_ind->ml_link[i].self_link_addr;
-			if (qdf_is_macaddr_zero(vdev_link_addr) ||
-			    qdf_is_macaddr_broadcast(vdev_link_addr))
-				continue;
-
-			wlan_vdev_mlme_set_macaddr(vdev, vdev_link_addr->bytes);
-			wlan_vdev_mlme_set_linkaddr(vdev,
-						    vdev_link_addr->bytes);
-		}
+		return;
 	}
 
-	mlme_debug("vdev_id %d self mac " QDF_MAC_ADDR_FMT,
-		   vdev_id,
-		   QDF_MAC_ADDR_REF(wlan_vdev_mlme_get_macaddr(vdev)));
-	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLO_MGR_ID);
+	mlo_roam_update_all_vdev_macaddr(psoc, sync_ind);
 }
 
 QDF_STATUS mlo_fw_roam_sync_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 				void *event, uint32_t event_data_len)
 {
 	struct roam_offload_synch_ind *sync_ind;
+	struct wlan_objmgr_vdev *vdev;
 	QDF_STATUS status;
 	uint8_t i;
 	bool is_non_mlo_ap = false;
+	uint32_t is_partner_bringup_offloaded = 0;
 
 	sync_ind = (struct roam_offload_synch_ind *)event;
 	if (!sync_ind)
@@ -275,6 +325,15 @@ QDF_STATUS mlo_fw_roam_sync_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 		mlo_update_for_multi_link_roam(psoc, vdev_id,
 					       sync_ind->ml_link[i].vdev_id);
 
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, vdev_id,
+						    WLAN_MLME_SB_ID);
+	if (!vdev)
+		return QDF_STATUS_E_FAILURE;
+
+	is_partner_bringup_offloaded =
+			wlan_mlme_get_tgt_mlo_roam_partner_bringup_offload(psoc);
+	mlo_set_offload_roam_in_progress(vdev, false);
+
 	if (!sync_ind->num_setup_links) {
 		mlo_debug("MLO_ROAM: Roamed to Legacy");
 		is_non_mlo_ap = true;
@@ -283,6 +342,10 @@ QDF_STATUS mlo_fw_roam_sync_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 		sync_ind->auth_status == ROAM_AUTH_STATUS_CONNECTED) {
 		mlo_debug("MLO_ROAM: Roamed to single link MLO");
 		mlo_set_single_link_ml_roaming(psoc, vdev_id, true);
+	} else if (is_partner_bringup_offloaded) {
+		mlo_err("MLO_ROAM: Partner link bringup offloaded to host");
+		mlo_set_offload_roam_in_progress(vdev, true);
+		mlo_set_single_link_ml_roaming(psoc, vdev_id, false);
 	} else {
 		mlo_debug("MLO_ROAM: Roamed to MLO with %d links",
 			  sync_ind->num_setup_links);
@@ -298,36 +361,79 @@ QDF_STATUS mlo_fw_roam_sync_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
 	if (QDF_IS_STATUS_ERROR(status))
 		mlo_clear_link_bmap(psoc, vdev_id);
 
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_SB_ID);
+
 	return status;
 }
 
 #ifdef WLAN_FEATURE_11BE_MLO_ADV_FEATURE
+static struct mlo_link_info *
+mlo_mgr_get_link_info_by_self_addr(struct wlan_objmgr_vdev *vdev,
+				   struct qdf_mac_addr *self_addr)
+{
+	uint8_t iter;
+	struct mlo_link_info *mlo_link;
+
+	if (!vdev || !vdev->mlo_dev_ctx || !vdev->mlo_dev_ctx->link_ctx ||
+	    !self_addr || qdf_is_macaddr_zero(self_addr))
+		return NULL;
+
+	for (iter = 0; iter < WLAN_MAX_ML_BSS_LINKS; iter++) {
+		mlo_link = &vdev->mlo_dev_ctx->link_ctx->links_info[iter];
+
+		if (qdf_is_macaddr_equal(&mlo_link->link_addr, self_addr))
+			return mlo_link;
+	}
+
+	return NULL;
+}
+
+#ifdef WLAN_FEATURE_ROAM_OFFLOAD
+uint8_t mlo_mgr_num_roam_links(struct wlan_objmgr_vdev *vdev)
+{
+	struct wlan_cm_connect_resp *reassoc_rsp;
+
+	if (!vdev->mlo_dev_ctx)
+		return 1;
+
+	if (!vdev->mlo_dev_ctx->sta_ctx)
+		return 0;
+
+	reassoc_rsp = vdev->mlo_dev_ctx->sta_ctx->copied_reassoc_rsp;
+	if (!reassoc_rsp || !reassoc_rsp->roaming_info)
+		return 0;
+
+	return reassoc_rsp->roaming_info->num_setup_links;
+}
+#endif
+
 void mlo_mgr_roam_update_ap_link_info(struct wlan_objmgr_vdev *vdev,
 				      struct ml_setup_link_param *src_link_info,
 				      struct wlan_channel *channel)
 {
 	struct mlo_link_info *link_info;
-	uint8_t iter;
 
-	if (!vdev || !vdev->mlo_dev_ctx || !vdev->mlo_dev_ctx->link_ctx ||
-	    !src_link_info)
+	if (!src_link_info)
 		return;
 
-	for (iter = 0; iter < WLAN_MAX_ML_BSS_LINKS; iter++) {
-		link_info = &vdev->mlo_dev_ctx->link_ctx->links_info[iter];
-		if (qdf_is_macaddr_zero(&link_info->ap_link_addr))
-			break;
+	link_info = mlo_mgr_get_link_info_by_self_addr(vdev,
+						       &src_link_info->self_link_addr);
+	if (!link_info) {
+		mlo_err("No link info found for vdev %d with " QDF_MAC_ADDR_FMT,
+			src_link_info->vdev_id,
+			QDF_MAC_ADDR_REF(src_link_info->self_link_addr.bytes));
+		QDF_BUG(0);
+		return;
 	}
 
-	if (iter == WLAN_MAX_ML_BSS_LINKS)
-		return;
+	if (link_info->vdev_id != src_link_info->vdev_id) {
+		mlo_debug("self mac " QDF_MAC_ADDR_FMT "vdev changed %d to %d",
+			  QDF_MAC_ADDR_REF(src_link_info->self_link_addr.bytes),
+			  link_info->vdev_id, src_link_info->vdev_id);
+	}
 
 	link_info->link_id = src_link_info->link_id;
-	link_info->vdev_id = src_link_info->vdev_id;
-	qdf_mem_copy(&link_info->ap_link_addr, src_link_info->link_addr.bytes,
-		     QDF_MAC_ADDR_SIZE);
-	qdf_mem_copy(&link_info->link_addr, src_link_info->self_link_addr.bytes,
-		     QDF_MAC_ADDR_SIZE);
+	qdf_copy_macaddr(&link_info->ap_link_addr, &src_link_info->link_addr);
 	qdf_mem_copy(link_info->link_chan_info, channel, sizeof(*channel));
 
 	mlo_debug("link_id: %d, vdev_id:%d freq:%d ap_link_addr: "QDF_MAC_ADDR_FMT", self_link_addr: "QDF_MAC_ADDR_FMT,
@@ -346,29 +452,36 @@ QDF_STATUS mlo_cm_roam_sync_cb(struct wlan_objmgr_vdev *vdev,
 	struct wlan_objmgr_vdev *link_vdev = NULL;
 	uint8_t i;
 	uint8_t vdev_id;
+	bool is_ml_roam, defer_partner_bringup = false;
 
 	sync_ind = (struct roam_offload_synch_ind *)event;
 	vdev_id = wlan_vdev_get_id(vdev);
 	psoc = wlan_vdev_get_psoc(vdev);
 
+	is_ml_roam = sync_ind->num_setup_links > 1 ? true : false;
+	if (sync_ind->auth_status == ROAM_AUTH_STATUS_CONNECTED ||
+	    (is_ml_roam && mlo_is_offload_roam_in_progress(vdev)))
+		defer_partner_bringup =  true;
+
 	/* Clean up link vdev in following cases
 	 * 1. When roamed to legacy, num_setup_links = 0
 	 * 2. When roamed to single link, num_setup_links = 1
 	 * 3. Roamed to AP with auth_status = ROAMED_AUTH_STATUS_CONNECTED
+	 * 4. MLO roam with partner link bringup offloaded to host
 	 */
-	if (sync_ind->num_setup_links < 2 ||
-	    sync_ind->auth_status == ROAM_AUTH_STATUS_CONNECTED) {
-		mlme_debug("Roam auth status %d", sync_ind->auth_status);
+	if (!is_ml_roam) {
+		mlme_debug("MLO_ROAM: SL/Legacy roaming, cleanup partners");
 		mlo_update_vdev_after_roam(psoc, vdev_id,
 					   sync_ind->num_setup_links);
 	}
 
-	/* If EAPOL is offloaded to supplicant, link vdev/s are not up
-	 * at FW, in that case complete roam sync on assoc vdev
-	 * link vdev will be initialized after set key is complete.
-	 */
-	if (sync_ind->auth_status == ROAM_AUTH_STATUS_CONNECTED)
+	if (defer_partner_bringup) {
+		mlme_err("MLO_ROAM: Do not process roam sync on partners auth status %d",
+			 sync_ind->auth_status);
+		mlo_update_vdev_after_roam(psoc, vdev_id,
+					   sync_ind->num_setup_links);
 		return QDF_STATUS_SUCCESS;
+	}
 
 	for (i = 0; i < sync_ind->num_setup_links; i++) {
 		if (vdev_id == sync_ind->ml_link[i].vdev_id)
@@ -654,37 +767,14 @@ mlo_roam_copy_partner_info(struct mlo_partner_info *partner_info,
 		  fill_all_links);
 }
 
-void mlo_roam_init_cu_bpcc(struct wlan_objmgr_vdev *vdev,
-			   struct roam_offload_synch_ind *sync_ind)
-{
-	uint8_t i;
-	struct wlan_mlo_dev_context *mlo_dev_ctx;
-
-	if (!vdev) {
-		mlo_err("vdev is NULL");
-		return;
-	}
-
-	mlo_dev_ctx = vdev->mlo_dev_ctx;
-	if (!mlo_dev_ctx) {
-		mlo_err("ML dev ctx is NULL");
-		return;
-	}
-
-	mlo_clear_cu_bpcc(vdev);
-	for (i = 0; i < sync_ind->num_setup_links; i++)
-		mlo_init_cu_bpcc(mlo_dev_ctx, sync_ind->ml_link[i].vdev_id);
-
-	mlo_debug("update cu info from roam sync");
-}
-
 void
 mlo_roam_update_connected_links(struct wlan_objmgr_vdev *vdev,
 				struct wlan_cm_connect_resp *connect_rsp)
 {
 	mlo_clear_connected_links_bmap(vdev);
 	if (mlo_get_single_link_ml_roaming(wlan_vdev_get_psoc(vdev),
-					   wlan_vdev_get_id(vdev)))
+					   wlan_vdev_get_id(vdev)) ||
+	    mlo_is_offload_roam_in_progress(vdev))
 		mlo_update_connected_links(vdev, 1);
 	else
 		mlo_update_connected_links_bmap(vdev->mlo_dev_ctx,
@@ -847,14 +937,14 @@ mlo_check_if_all_vdev_up(struct wlan_objmgr_vdev *vdev)
 	}
 
 	if (QDF_IS_STATUS_ERROR(wlan_vdev_is_up(vdev))) {
-		mlo_debug("Vdev id %d is not in up state",
-			  wlan_vdev_get_id(vdev));
+		mlo_debug_rl("Vdev id %d is not in up state",
+			     wlan_vdev_get_id(vdev));
 			return false;
 	}
 
 	mlo_dev_ctx = vdev->mlo_dev_ctx;
 	if (!mlo_dev_ctx->sta_ctx) {
-		mlo_err("mlo sta ctx is null");
+		mlo_err_rl("mlo sta ctx is null");
 		return false;
 	}
 	sta_ctx = mlo_dev_ctx->sta_ctx;
@@ -862,16 +952,18 @@ mlo_check_if_all_vdev_up(struct wlan_objmgr_vdev *vdev)
 		if (!mlo_dev_ctx->wlan_vdev_list[i])
 			continue;
 
-		if (qdf_test_bit(i, sta_ctx->wlan_connected_links) &&
-		    !QDF_IS_STATUS_SUCCESS(wlan_vdev_is_up(mlo_dev_ctx->wlan_vdev_list[i]))) {
-			mlo_debug("Vdev id %d is not in up state",
-				  wlan_vdev_get_id(mlo_dev_ctx->wlan_vdev_list[i]));
+		if ((qdf_test_bit(i, sta_ctx->wlan_connected_links) ||
+		     qdf_test_bit(i, sta_ctx->wlan_connect_req_links)) &&
+		    (!QDF_IS_STATUS_SUCCESS(wlan_vdev_is_up(mlo_dev_ctx->wlan_vdev_list[i])) ||
+		    wlan_cm_is_vdev_disconnecting(mlo_dev_ctx->wlan_vdev_list[i]))) {
+			mlo_debug_rl("Vdev id %d is not in up state",
+				     wlan_vdev_get_id(mlo_dev_ctx->wlan_vdev_list[i]));
 			return false;
 		}
 	}
 
 	if (i == WLAN_UMAC_MLO_MAX_VDEVS) {
-		mlo_debug("all links are up");
+		mlo_debug_rl("all links are up");
 		return true;
 	}
 
@@ -939,7 +1031,8 @@ mlo_get_link_mac_addr_from_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
 	}
 
 	rsp = sta_ctx->copied_reassoc_rsp;
-	if (rsp->roaming_info->auth_status != ROAM_AUTH_STATUS_CONNECTED) {
+	if (rsp->roaming_info->auth_status != ROAM_AUTH_STATUS_CONNECTED &&
+	    !mlo_is_offload_roam_in_progress(vdev)) {
 		mlo_debug("Roam auth status is not connected");
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -963,7 +1056,8 @@ mlo_get_link_mac_addr_from_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
 
 QDF_STATUS
 mlo_roam_copy_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
-			  struct wlan_cm_connect_resp *reassoc_rsp)
+			  struct wlan_cm_connect_resp *reassoc_rsp,
+			  uint32_t auth_status)
 {
 	struct wlan_mlo_dev_context *mlo_dev_ctx;
 	struct wlan_mlo_sta *sta_ctx;
@@ -975,10 +1069,6 @@ mlo_roam_copy_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
 	if (!reassoc_rsp)
 		return QDF_STATUS_E_NULL_VALUE;
 
-	/* Store reassoc rsp only if roamed to 2 link AP */
-	if (reassoc_rsp->ml_parnter_info.num_partner_links < 2)
-		return QDF_STATUS_E_INVAL;
-
 	mlo_dev_ctx = vdev->mlo_dev_ctx;
 	if (!mlo_dev_ctx)
 		return QDF_STATUS_E_NULL_VALUE;
@@ -987,15 +1077,37 @@ mlo_roam_copy_reassoc_rsp(struct wlan_objmgr_vdev *vdev,
 	if (!sta_ctx)
 		return QDF_STATUS_E_NULL_VALUE;
 
-	wlan_cm_free_connect_resp(sta_ctx->copied_reassoc_rsp);
-	/* Free assoc rsp, so that reassoc rsp can be used during
-	 * reassociation.
-	 */
 	if (sta_ctx->assoc_rsp.ptr) {
 		qdf_mem_free(sta_ctx->assoc_rsp.ptr);
 		sta_ctx->assoc_rsp.ptr = NULL;
 		sta_ctx->assoc_rsp.len = 0;
 	}
+
+	sta_ctx->assoc_rsp.ptr = qdf_mem_malloc(
+			reassoc_rsp->connect_ies.assoc_rsp.len);
+	if (!sta_ctx->assoc_rsp.ptr)
+		return QDF_STATUS_E_NOMEM;
+
+	qdf_mem_copy(sta_ctx->assoc_rsp.ptr,
+		     reassoc_rsp->connect_ies.assoc_rsp.ptr,
+		     reassoc_rsp->connect_ies.assoc_rsp.len);
+	sta_ctx->assoc_rsp.len = reassoc_rsp->connect_ies.assoc_rsp.len;
+	mlo_debug("save assoc_rsp frame for vdev: %d len: %d",
+		  wlan_vdev_get_id(vdev), sta_ctx->assoc_rsp.len);
+
+	wlan_cm_free_connect_resp(sta_ctx->copied_reassoc_rsp);
+	sta_ctx->copied_reassoc_rsp = NULL;
+
+	sta_ctx->ml_partner_info = reassoc_rsp->ml_parnter_info;
+
+	if (auth_status != ROAM_AUTH_STATUS_CONNECTED &&
+	    !mlo_is_offload_roam_in_progress(vdev))
+		return QDF_STATUS_SUCCESS;
+
+	/* Store reassoc rsp only if roamed to 2 link AP */
+	if (reassoc_rsp->ml_parnter_info.num_partner_links < 2)
+		return QDF_STATUS_SUCCESS;
+
 	sta_ctx->copied_reassoc_rsp = qdf_mem_malloc(
 			sizeof(struct wlan_cm_connect_resp));
 	if (!sta_ctx->copied_reassoc_rsp)
@@ -1186,8 +1298,7 @@ static QDF_STATUS
 mlo_roam_prepare_and_send_link_connect_req(struct wlan_objmgr_vdev *assoc_vdev,
 					   struct wlan_objmgr_vdev *link_vdev,
 					   struct wlan_cm_connect_resp *rsp,
-					   struct qdf_mac_addr *link_addr,
-					   uint16_t chan_freq)
+					   struct mlo_link_info *link_info)
 {
 	struct wlan_mlo_sta *sta_ctx;
 	struct wlan_cm_connect_req req = {0};
@@ -1205,11 +1316,14 @@ mlo_roam_prepare_and_send_link_connect_req(struct wlan_objmgr_vdev *assoc_vdev,
 
 	req.vdev_id = wlan_vdev_get_id(link_vdev);
 	req.source = CM_MLO_LINK_VDEV_CONNECT;
-	req.chan_freq = chan_freq;
-	qdf_mem_copy(&req.bssid.bytes, link_addr->bytes, QDF_MAC_ADDR_SIZE);
+	req.chan_freq = link_info->chan_freq;
+	req.link_id = link_info->link_id;
+	qdf_copy_macaddr(&req.bssid, &link_info->link_addr);
+	qdf_copy_macaddr(&req.bssid_hint, &link_info->link_addr);
 
 	req.ssid.length = ssid.length;
 	qdf_mem_copy(&req.ssid.ssid, &ssid.ssid, ssid.length);
+	qdf_copy_macaddr(&req.mld_addr, &rsp->mld_addr);
 
 	req.ml_parnter_info = rsp->ml_parnter_info;
 
@@ -1238,7 +1352,7 @@ mlo_roam_prepare_and_send_link_connect_req(struct wlan_objmgr_vdev *assoc_vdev,
 
 	mlme_info("vdev:%d Connecting to " QDF_SSID_FMT " link_addr: " QDF_MAC_ADDR_FMT " freq %d rsn_caps:0x%x auth_type:0x%x pairwise:0x%x grp:0x%x mcast:0x%x akms:0x%x assoc_ie_len:%d f_rsne:%d is_wps:%d dot11_filter:%d",
 		  req.vdev_id, QDF_SSID_REF(req.ssid.length, req.ssid.ssid),
-		  QDF_MAC_ADDR_REF(link_addr->bytes),
+		  QDF_MAC_ADDR_REF(link_info->link_addr.bytes),
 		  req.chan_freq, req.crypto.rsn_caps, req.crypto.auth_type,
 		  req.crypto.ciphers_pairwise, req.crypto.group_cipher,
 		  req.crypto.mgmt_ciphers, req.crypto.akm_suites,
@@ -1262,6 +1376,7 @@ mlo_roam_prepare_and_send_link_connect_req(struct wlan_objmgr_vdev *assoc_vdev,
 
 	qdf_mem_copy(sta_ctx->copied_conn_req, &req,
 		     sizeof(struct wlan_cm_connect_req));
+	sta_ctx->copied_conn_req->chan_freq = 0;
 	mlo_allocate_and_copy_ies(sta_ctx->copied_conn_req, &req);
 	copied_conn_req_lock_release(sta_ctx);
 
@@ -1320,7 +1435,8 @@ void mlo_roam_connect_complete(struct wlan_objmgr_vdev *vdev)
 
 	auth_status = sta_ctx->copied_reassoc_rsp->roaming_info->auth_status;
 	if (!mlo_check_connect_req_bmap(vdev) &&
-	    auth_status == ROAM_AUTH_STATUS_CONNECTED) {
+	    (auth_status == ROAM_AUTH_STATUS_CONNECTED ||
+	     mlo_is_offload_roam_in_progress(vdev))) {
 		wlan_cm_free_connect_resp(sta_ctx->copied_reassoc_rsp);
 		sta_ctx->copied_reassoc_rsp = NULL;
 	}
@@ -1424,16 +1540,15 @@ mlo_roam_link_connect_notify(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
 		}
 
 		if (mlo_check_connect_req_bmap(link_vdev)) {
-			mlo_update_connect_req_links(link_vdev, false);
 			status = mlo_roam_prepare_and_send_link_connect_req(assoc_vdev,
-							link_vdev,
-							rsp,
-							&partner_info.partner_link_info[i].link_addr,
-							partner_info.partner_link_info[i].chan_freq);
+							link_vdev, rsp,
+							&partner_info.partner_link_info[i]);
 			if (QDF_IS_STATUS_ERROR(status))
 				goto err;
-			else
+			else {
+				mlo_update_connect_req_links(link_vdev, false);
 				goto end;
+			}
 		}
 	}
 err:
@@ -1493,6 +1608,8 @@ end:
 	return is_roaming_in_progress;
 }
 
+#define RSSI_OF_SCAN_ENTRY_FROM_PER_STA_PROFILE (-80)
+
 QDF_STATUS
 mlo_add_all_link_probe_rsp_to_scan_db(struct wlan_objmgr_psoc *psoc,
 			struct roam_scan_candidate_frame *rcvd_frame)
@@ -1523,7 +1640,8 @@ mlo_add_all_link_probe_rsp_to_scan_db(struct wlan_objmgr_psoc *psoc,
 
 	status = util_get_bvmlie_persta_partner_info(ml_ie,
 						     ml_ie_total_len,
-						     &ml_partner_info);
+						     &ml_partner_info,
+						     WLAN_FC0_STYPE_INVALID);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mlme_err("Per STA profile parsing failed");
 		return status;
@@ -1572,7 +1690,7 @@ mlo_add_all_link_probe_rsp_to_scan_db(struct wlan_objmgr_psoc *psoc,
 		entry.vdev_id = rcvd_frame->vdev_id;
 		entry.frame = gen_probe_rsp.ptr;
 		entry.frame_length = gen_probe_rsp.len;
-		entry.rssi = rcvd_frame->rssi;
+		entry.rssi = RSSI_OF_SCAN_ENTRY_FROM_PER_STA_PROFILE;
 
 		wlan_cm_add_frame_to_scan_db(psoc, &entry);
 	}

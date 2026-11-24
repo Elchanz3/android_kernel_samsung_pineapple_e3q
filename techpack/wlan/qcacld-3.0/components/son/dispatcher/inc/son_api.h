@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -358,6 +358,14 @@ void wlan_son_ind_assoc_req_frm(struct wlan_objmgr_vdev *vdev,
 				QDF_STATUS status);
 
 /**
+ * wlan_get_multi_ap_cap() - get multi-ap cap
+ * @vdev: pointer to vdev
+ *
+ * Return: multi-ap cap which config by son
+ */
+int wlan_get_multi_ap_cap(struct wlan_objmgr_vdev *vdev);
+
+/**
  * wlan_son_deliver_tx_power() - notify son module of tx power
  * @vdev: vdev
  * @max_pwr: max power in dBm unit
@@ -460,6 +468,18 @@ uint8_t wlan_son_get_node_tx_power(struct element_info assoc_req_ies);
 QDF_STATUS wlan_son_get_peer_rrm_info(struct element_info assoc_req_ies,
 				      uint8_t *rrmcaps,
 				      bool *is_beacon_meas_supported);
+
+/**
+ * wlan_son_del_ast() - Delete AST
+ * @vdev: vdev object
+ * @wds_macaddr: wds mac address
+ * @peer_macaddr: peer mac address
+ *
+ * Return: Returns QDF_STATUS_SUCCESS if succeed
+ */
+QDF_STATUS wlan_son_del_ast(struct wlan_objmgr_vdev *vdev,
+			    struct qdf_mac_addr *wds_macaddr,
+			    struct qdf_mac_addr *peer_macaddr);
 #else
 
 static inline bool wlan_son_peer_is_kickout_allow(struct wlan_objmgr_vdev *vdev,
@@ -474,6 +494,11 @@ void wlan_son_ind_assoc_req_frm(struct wlan_objmgr_vdev *vdev,
 				uint8_t *frame, uint16_t frame_len,
 				QDF_STATUS status)
 {
+}
+
+static inline int wlan_get_multi_ap_cap(struct wlan_objmgr_vdev *vdev)
+{
+	return 0;
 }
 
 static inline
@@ -543,6 +568,14 @@ QDF_STATUS wlan_son_get_peer_rrm_info(struct element_info assoc_req_ies,
 				      bool *is_beacon_meas_supported)
 {
 	return QDF_STATUS_E_INVAL;
+}
+
+static inline
+QDF_STATUS wlan_son_del_ast(struct wlan_objmgr_vdev *vdev,
+			    struct qdf_mac_addr *wds_macaddr,
+			    struct qdf_mac_addr *peer_macaddr)
+{
+	return QDF_STATUS_E_NOSUPPORT;
 }
 #endif /*WLAN_FEATURE_SON*/
 #endif

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,8 +38,8 @@
 #include "connection_mgr/core/src/wlan_cm_main_api.h"
 #include "wlan_roam_debug.h"
 #include "wlan_mlo_mgr_roam.h"
-
-#define FW_ROAM_SYNC_TIMEOUT 7000
+#include "wlan_mlo_mgr_sta.h"
+#include "wlan_cm_vdev_api.h"
 
 static QDF_STATUS
 cm_fw_roam_ser_cb(struct wlan_serialization_command *cmd,
@@ -310,6 +310,42 @@ error:
 	return status;
 }
 
+#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_FEATURE_ROAM_OFFLOAD)
+void
+cm_roam_handle_mlo_roam_abort(struct wlan_objmgr_vdev *vdev,
+			      uint32_t aborted_link_id)
+{
+	struct wlan_objmgr_vdev *abort_vdev = NULL;
+	struct mlo_link_info *link_info;
+
+	abort_vdev = mlo_get_vdev_by_link_id(vdev, aborted_link_id,
+					     WLAN_LEGACY_MAC_ID);
+	if (!abort_vdev) {
+		mlme_err("VDEV not found for link id %d", aborted_link_id);
+		return;
+	}
+
+	if (!wlan_vdev_mlme_is_mlo_link_vdev(abort_vdev)) {
+		mlme_err("Roam is aborted on invalid vdev %d",
+			 wlan_vdev_get_id(abort_vdev));
+		goto end;
+	}
+
+	link_info = mlo_mgr_get_ap_link_by_link_id(abort_vdev->mlo_dev_ctx,
+						   aborted_link_id);
+	if (!link_info) {
+		mlme_err("Link info not found for link %d", aborted_link_id);
+		goto end;
+	}
+
+	mlo_mgr_link_switch_for_roam_abort(abort_vdev, aborted_link_id,
+					   link_info->link_chan_info->ch_freq);
+
+end:
+	wlan_objmgr_vdev_release_ref(abort_vdev, WLAN_LEGACY_MAC_ID);
+}
+#endif
+
 QDF_STATUS cm_fw_roam_abort_req(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id)
 {
 	struct wlan_objmgr_pdev *pdev;
@@ -473,6 +509,7 @@ cm_roam_sync_frame_event_handler(struct wlan_objmgr_psoc *psoc,
 	if (sync_frame_ind->bcn_probe_rsp_len) {
 		roam_candidate.frame_length = sync_frame_ind->bcn_probe_rsp_len;
 		roam_candidate.frame = sync_frame_ind->bcn_probe_rsp;
+		roam_candidate.rssi = sync_frame_ind->rssi;
 		roam_candidate.roam_offload_candidate_frm = false;
 		wlan_cm_add_all_link_probe_rsp_to_scan_db(psoc,
 							  &roam_candidate);
@@ -482,6 +519,7 @@ cm_roam_sync_frame_event_handler(struct wlan_objmgr_psoc *psoc,
 		roam_candidate.frame_length =
 					sync_frame_ind->link_bcn_probe_rsp_len;
 		roam_candidate.frame = sync_frame_ind->link_bcn_probe_rsp;
+		roam_candidate.rssi = sync_frame_ind->rssi;
 		roam_candidate.roam_offload_candidate_frm = false;
 		wlan_cm_add_all_link_probe_rsp_to_scan_db(psoc,
 							  &roam_candidate);
@@ -497,15 +535,28 @@ QDF_STATUS cm_roam_sync_key_event_handler(struct wlan_objmgr_psoc *psoc,
 					  struct wlan_crypto_key_entry *keys,
 					  uint8_t num_keys)
 {
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
-	uint8_t i;
+	return wlan_crypto_key_event_handler(psoc, keys, num_keys);
+}
 
-	for (i = 0; i < num_keys; i++) {
-		status = wlan_crypto_add_key_entry(psoc, &keys[i]);
-		if (QDF_IS_STATUS_ERROR(status))
-			mlme_err("Failed to add key entry for link:%d",
-				 keys[i].link_id);
-	}
+QDF_STATUS cm_roam_partner_bringup_handler(struct wlan_mlo_dev_context *ml_ctx)
+{
+	struct wlan_objmgr_vdev *vdev = ml_ctx->wlan_vdev_list[0];
+	struct wlan_objmgr_psoc *psoc = NULL;
+	QDF_STATUS status;
+
+	if (!vdev)
+		return QDF_STATUS_E_FAILURE;
+
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc)
+		return QDF_STATUS_E_FAILURE;
+
+	if (!mlo_is_offload_roam_in_progress(vdev))
+		return QDF_STATUS_SUCCESS;
+
+	cm_stop_roam_key_wait_timer(vdev);
+
+	status = mlo_roam_link_connect_notify(psoc, wlan_vdev_get_id(vdev));
 
 	return status;
 }
@@ -523,7 +574,6 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 	uint8_t vdev_id;
 
 	sync_ind = (struct roam_offload_synch_ind *)event;
-
 	if (!sync_ind) {
 		mlme_err("Roam Sync ind ptr is NULL");
 		return QDF_STATUS_E_NULL_VALUE;
@@ -547,8 +597,7 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 
 	wlan_roam_debug_log(sync_ind->roamed_vdev_id, DEBUG_ROAM_SYNCH_IND,
 			    DEBUG_INVALID_PEER_ID, sync_ind->bssid.bytes, NULL,
-			    0,
-			    0);
+			    0, 0);
 	DPTRACE(qdf_dp_trace_record_event(QDF_DP_TRACE_EVENT_RECORD,
 					  sync_ind->roamed_vdev_id,
 					  QDF_TRACE_DEFAULT_PDEV_ID,
@@ -559,15 +608,14 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 	    !is_multi_link_roam(sync_ind)) {
 		mlme_err("vdev:%d Ignoring RSI as its already in progress on roamed vdev:%d",
 			 vdev_id, sync_ind->roamed_vdev_id);
-		status = QDF_STATUS_E_FAILURE;
-		goto err;
+		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (!QDF_IS_STATUS_SUCCESS(cm_fw_roam_sync_start_ind(vdev,
-							     sync_ind))) {
+	status = cm_fw_roam_sync_start_ind(vdev, sync_ind);
+	if (QDF_IS_STATUS_ERROR(status)) {
 		mlme_err("LFR3: vdev:%d CSR Roam synch cb failed", vdev_id);
 		wlan_cm_free_roam_synch_frame_ind(rso_cfg);
-		goto err;
+		return status;
 	}
 
 	/* 24 byte MAC header and 12 byte to ssid IE */
@@ -575,13 +623,12 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 	    sync_ind->link_beacon_probe_resp_length) {
 		if (sync_ind->link_beacon_probe_resp_length >
 		    (QDF_IEEE80211_3ADDR_HDR_LEN + MAC_B_PR_SSID_OFFSET)) {
-			ie_len = sync_ind->link_beacon_probe_resp_length -
-					(QDF_IEEE80211_3ADDR_HDR_LEN +
-					 MAC_B_PR_SSID_OFFSET);
+			ie_len = MAX_MGMT_MPDU_LEN -
+			(QDF_IEEE80211_3ADDR_HDR_LEN + MAC_B_PR_SSID_OFFSET);
 		} else {
 			mlme_err("LFR3: MLO: vdev:%d Invalid link Beacon Length",
 				 vdev_id);
-			goto err;
+			return QDF_STATUS_E_FAILURE;
 		}
 	} else if (sync_ind->beacon_probe_resp_length >
 			(QDF_IEEE80211_3ADDR_HDR_LEN + MAC_B_PR_SSID_OFFSET)) {
@@ -606,19 +653,21 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 			(QDF_IEEE80211_3ADDR_HDR_LEN + MAC_B_PR_SSID_OFFSET);
 
 	} else {
-		mlme_err("LFR3: vdev:%d Invalid Beacon Length", vdev_id);
-		goto err;
+		mlme_err("LFR3: vdev:%d Invalid Beacon Length:%d", vdev_id,
+			 sync_ind->beacon_probe_resp_length);
+		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (QDF_IS_STATUS_ERROR(cm_roam_pe_sync_callback(sync_ind,
-							 vdev_id,
+	if (QDF_IS_STATUS_ERROR(cm_roam_pe_sync_callback(sync_ind, vdev_id,
 							 ie_len))) {
 		mlme_err("LFR3: vdev:%d PE roam synch cb failed", vdev_id);
-		status = QDF_STATUS_E_BUSY;
-		goto err;
+		return QDF_STATUS_E_BUSY;
 	}
 
-	cm_roam_update_vdev(sync_ind, vdev_id);
+	status = cm_roam_update_vdev(vdev, sync_ind);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+
 	/*
 	 * update phy_mode in wma to avoid mismatch in phymode between host and
 	 * firmware. The phymode stored in peer->peer_mlme.phymode is
@@ -633,6 +682,41 @@ QDF_STATUS cm_roam_sync_event_handler_cb(struct wlan_objmgr_vdev *vdev,
 					     vdev_id,
 					     sync_ind);
 
-err:
 	return status;
+}
+
+QDF_STATUS cm_roam_abort_event(struct wlan_objmgr_vdev *vdev)
+{
+	struct wlan_objmgr_psoc *psoc;
+	struct wlan_objmgr_pdev *pdev;
+	uint8_t vdev_id;
+	uint8_t rso_stop_req_bitmap;
+
+	if (!vdev) {
+		mlme_debug("Vdev is NULL");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc) {
+		mlme_debug("Psoc is NULL");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	pdev = wlan_vdev_get_pdev(vdev);
+	if (!pdev) {
+		mlme_debug("Pdev is NULL");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	vdev_id = wlan_vdev_get_id(vdev);
+	rso_stop_req_bitmap = mlme_get_rso_pending_disable_req_bitmap(psoc,
+								      vdev_id);
+	if (rso_stop_req_bitmap) {
+		mlme_clear_rso_pending_disable_req_bitmap(psoc, vdev_id);
+		wlan_cm_disable_rso(pdev, vdev_id, rso_stop_req_bitmap,
+				    REASON_DRIVER_DISABLED);
+	}
+
+	return QDF_STATUS_SUCCESS;
 }

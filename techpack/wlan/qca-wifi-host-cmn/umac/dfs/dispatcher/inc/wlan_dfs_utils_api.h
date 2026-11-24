@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  *
  * Permission to use, copy, modify, and/or distribute this software for
@@ -198,6 +198,26 @@ QDF_STATUS utils_dfs_cancel_cac_timer(struct wlan_objmgr_pdev *pdev);
  */
 QDF_STATUS utils_dfs_start_cac_timer(struct wlan_objmgr_pdev *pdev);
 
+/**
+ * utils_dfs_deliver_cac_state_events() - Deliver CAC related user space
+ * events.
+ * @pdev: Pointer to DFS pdev object.
+ *
+ * wrapper function for dfs_deliver_cac_state_events(). this
+ * function called from outside of dfs component.
+ */
+QDF_STATUS utils_dfs_deliver_cac_state_events(struct wlan_objmgr_pdev *pdev);
+
+/**
+ * utils_dfs_deliver_cac_state_events_for_prevchan() - Deliver CAC
+ * related user space events.
+ * @pdev: Pointer to DFS pdev object.
+ *
+ * wrapper function for dfs_deliver_cac_state_events_for_prevchan(). this
+ * function called from outside of dfs component.
+ */
+QDF_STATUS
+utils_dfs_deliver_cac_state_events_for_prevchan(struct wlan_objmgr_pdev *pdev);
 /**
  * utils_dfs_cac_stop() - Clear the AP CAC timer.
  * @pdev: Pointer to DFS pdev object.
@@ -508,13 +528,19 @@ QDF_STATUS utils_dfs_bw_reduced_channel_for_freq(struct wlan_objmgr_pdev *pdev,
  *
  * Return: None
  */
-#ifdef QCA_DFS_NOL_PLATFORM_DRV_SUPPORT
 void utils_dfs_init_nol(struct wlan_objmgr_pdev *pdev);
-#else
-static inline void utils_dfs_init_nol(struct wlan_objmgr_pdev *pdev)
-{
-}
-#endif
+
+/**
+ * utils_dfs_retrieve_nol() - Retrieve the NOL list from persistent memory.
+ * @pdev: pdev handler.
+ *
+ * Retrieve the NOL list from persistent memory and re-initialise DFS NOL
+ * timers.
+ *
+ * Return: None
+ */
+void utils_dfs_retrieve_nol(struct wlan_objmgr_pdev *pdev);
+
 /**
  * utils_dfs_save_nol() - save nol list to platform driver.
  * @pdev: pdev handler.
@@ -1005,27 +1031,42 @@ utils_dfs_convert_wlan_phymode_to_chwidth(enum wlan_phymode phymode);
  * frame, puncture the nol infected channels and formulate the radar puncture
  * bitmap.
  * @pdev: Pointer to struct wlan_objmgr_pdev
- * @phy_mode: Phymode of enum wlan_phymode.
  * @nol_ie_start_freq: Start frequency of the NOL infected channels
  * @nol_ie_bitmap : NOL IE bitmap
+ * @is_ignore_radar_puncture: Boolean Flag to check if radar should be ignored
  *
  * Return: Punctured radar bitmap
  */
-#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_EXPAND) && \
+#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_PUNCTURE) && \
 	defined(QCA_DFS_RCSA_SUPPORT)
 uint16_t
 utils_dfs_get_radar_bitmap_from_nolie(struct wlan_objmgr_pdev *pdev,
-				      enum wlan_phymode phy_mode,
 				      qdf_freq_t nol_ie_start_freq,
-				      uint8_t nol_ie_bitmap);
+				      uint8_t nol_ie_bitmap,
+				      bool *is_ignore_radar_puncture);
 #else
 static inline uint16_t
 utils_dfs_get_radar_bitmap_from_nolie(struct wlan_objmgr_pdev *pdev,
-				      enum wlan_phymode phy_mode,
 				      qdf_freq_t nol_ie_start_freq,
-				      uint8_t nol_ie_bitmap)
+				      uint8_t nol_ie_bitmap,
+				      bool *is_ignore_radar_puncture)
 {
 	return NO_SCHANS_PUNC;
 }
 #endif
+
+#if defined(WLAN_FEATURE_11BE) && defined(QCA_DFS_BW_PUNCTURE)
+/**
+ * utils_dfs_stop_punc_sm() - Stop the DFS Puncturing SM.
+ * @pdev: Pointer to struct wlan_objmgr_pdev
+ *
+ * Return: None.
+ */
+void utils_dfs_stop_punc_sm(struct wlan_objmgr_pdev *pdev);
+#else
+static inline void utils_dfs_stop_punc_sm(struct wlan_objmgr_pdev *pdev)
+{
+}
+#endif
+
 #endif /* _WLAN_DFS_UTILS_API_H_ */

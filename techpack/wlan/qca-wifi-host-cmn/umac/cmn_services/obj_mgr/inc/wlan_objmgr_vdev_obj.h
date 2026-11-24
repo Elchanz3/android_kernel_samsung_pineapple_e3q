@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -240,6 +240,8 @@
 #define WLAN_VDEV_OP_MLO_LINK_REMOVAL_IN_PROGRESS 0x01000000
 /* MLO link switch is in progress on this VDEV */
 #define WLAN_VDEV_OP_MLO_LINK_SWITCH_IN_PROGRESS 0x02000000
+ /* MLO link rejection handling is in progress on this VDEV */
+#define WLAN_VDEV_OP_MLO_LINK_REJECTION_IN_PROGRESS 0x04000000
 
  /* flag to indicate disconnect only legacy peers due to moving to DFS channel
   * from non-DFS channel
@@ -289,6 +291,8 @@
  * @macaddr:        MAC address
  * @mataddr:        MAT address
  * @mldaddr:        MLD address
+ * @mlo_sap_sync_disable:  flag for disable mlo sap sync between vdevs
+ * @wfd_mode: WFD mode
  */
 struct wlan_vdev_create_params {
 	enum QDF_OPMODE opmode;
@@ -298,6 +302,10 @@ struct wlan_vdev_create_params {
 	uint8_t macaddr[QDF_MAC_ADDR_SIZE];
 	uint8_t mataddr[QDF_MAC_ADDR_SIZE];
 	uint8_t mldaddr[QDF_MAC_ADDR_SIZE];
+	bool mlo_sap_sync_disable;
+#ifdef FEATURE_WLAN_SUPPORT_USD
+	uint32_t wfd_mode;
+#endif
 };
 
 /**
@@ -356,6 +364,9 @@ struct wlan_channel {
  * @wlan_vdev_mlo_lock: lock to protect the set/clear of
  * @skip_pumac_cnt: Counter to skip vdev to be selected as pumac
  * WLAN_VDEV_FEXT2_MLO feature flag in vdev MLME
+ * @mlo_sap_sync_disable: flag to disable mlo sap vdev sync
+ * @wfd_mode: WFD mode
+ * @rsno_gen_supported: RSNO generation supported for connection
  */
 struct wlan_objmgr_vdev_mlme {
 	enum QDF_OPMODE vdev_opmode;
@@ -385,7 +396,14 @@ struct wlan_objmgr_vdev_mlme {
 #ifdef QCA_SUPPORT_PRIMARY_LINK_MIGRATE
 	qdf_atomic_t skip_pumac_cnt;
 #endif
+#ifdef WLAN_FEATURE_MULTI_LINK_SAP
+	bool mlo_sap_sync_disable;
 #endif
+#endif
+#ifdef FEATURE_WLAN_SUPPORT_USD
+	uint32_t wfd_mode;
+#endif
+	uint8_t rsno_gen_supported;
 };
 
 /**
@@ -450,6 +468,7 @@ struct wlan_objmgr_vdev_objmgr {
  * @vdev_lock:      VDEV lock
  * @mlo_dev_ctx:    MLO device context
  * @twt_work:	    TWT work
+ * @is_ap_suspend:	AP suspend state
  */
 struct wlan_objmgr_vdev {
 	qdf_list_node_t vdev_node;
@@ -466,6 +485,7 @@ struct wlan_objmgr_vdev {
 #ifdef WLAN_SUPPORT_TWT
 	qdf_work_t twt_work;
 #endif
+	qdf_atomic_t is_ap_suspend;
 };
 
 /*
@@ -499,6 +519,28 @@ struct wlan_objmgr_vdev *wlan_objmgr_vdev_obj_create(
  * Return: SUCCESS/FAILURE
  */
 QDF_STATUS wlan_objmgr_vdev_obj_delete(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * wlan_objmgr_vdev_mlo_dev_ctxt_attach() - vdev mlo ctxt object attach
+ * @vdev: vdev object
+ *
+ * Attach vdev to mlo dev context object.
+ *
+ * Return: SUCCESS/FAILURE
+ */
+QDF_STATUS
+wlan_objmgr_vdev_mlo_dev_ctxt_attach(struct wlan_objmgr_vdev *vdev);
+
+/**
+ * wlan_objmgr_vdev_mlo_dev_ctxt_detach() - vdev mlo ctxt object delete
+ * @vdev: vdev object
+ *
+ * Detach mlo dev context object from vdev.
+ *
+ * Return: SUCCESS/FAILURE
+ */
+QDF_STATUS
+wlan_objmgr_vdev_mlo_dev_ctxt_detach(struct wlan_objmgr_vdev *vdev);
 
 /*
  * APIs to attach/detach component objects
@@ -809,6 +851,80 @@ static inline enum QDF_OPMODE wlan_vdev_mlme_get_opmode(
 					struct wlan_objmgr_vdev *vdev)
 {
 	return vdev->vdev_mlme.vdev_opmode;
+}
+
+#if defined(WLAN_FEATURE_11BE_MLO) && defined(WLAN_FEATURE_MULTI_LINK_SAP)
+/**
+ * wlan_vdev_mlme_set_mlo_sap_sync_disable() - set mlo sap sync disable flag
+ * @vdev: VDEV object
+ * @value: mlo_ap_sync_disable
+ *
+ * API to disable vdev sync of multi link sap
+ *
+ * Return: void
+ */
+static inline void wlan_vdev_mlme_set_mlo_sap_sync_disable(
+				struct wlan_objmgr_vdev *vdev,
+				bool value)
+{
+	vdev->vdev_mlme.mlo_sap_sync_disable = value;
+}
+
+/**
+ * wlan_vdev_mlme_get_mlo_sap_sync_disable() - get mlo sap sync disable flag
+ * @vdev: VDEV object
+ *
+ * API to get if vdev sync of multi link sap is disabled.
+ *
+ * Return: bool
+ */
+static inline bool
+wlan_vdev_mlme_get_mlo_sap_sync_disable(struct wlan_objmgr_vdev *vdev)
+{
+	return vdev->vdev_mlme.mlo_sap_sync_disable;
+}
+#else
+static inline void wlan_vdev_mlme_set_mlo_sap_sync_disable(
+				struct wlan_objmgr_vdev *vdev,
+				bool value)
+{}
+
+static inline bool
+wlan_vdev_mlme_get_mlo_sap_sync_disable(struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+#endif
+
+/**
+ * wlan_vdev_set_rsno_gen_supported() - set RSNO generation supported for
+ * connection
+ * @vdev: VDEV object
+ * @val: RSNO generation
+ *
+ * API to set RSNO generation supported for connection
+ *
+ * Return: void
+ */
+static inline void
+wlan_vdev_set_rsno_gen_supported(struct wlan_objmgr_vdev *vdev, uint8_t val)
+{
+	vdev->vdev_mlme.rsno_gen_supported = val;
+}
+
+/**
+ * wlan_vdev_get_rsno_gen_supported() - get RSNO generation supported for
+ * connection
+ * @vdev: VDEV object
+ *
+ * API to get RSNO generation supported for connection
+ *
+ * Return: RSNO generation supported for connection
+ */
+static inline uint8_t
+wlan_vdev_get_rsno_gen_supported(struct wlan_objmgr_vdev *vdev)
+{
+	return vdev->vdev_mlme.rsno_gen_supported;
 }
 
 /**
@@ -1714,6 +1830,53 @@ static inline bool wlan_vdev_mlme_is_mlo_ap(struct wlan_objmgr_vdev *vdev)
 }
 
 /**
+ * wlan_vdev_is_mlo_ap_with_multi_vdev() - whether it is mlo ap with vdev count
+ * more than 1
+ * @vdev: VDEV object
+ *
+ * Return: True if it is mlo ap and multi vdev, otherwise false.
+ */
+
+static inline
+bool wlan_vdev_is_mlo_ap_with_multi_vdev(struct wlan_objmgr_vdev *vdev)
+{
+	return wlan_vdev_mlme_is_mlo_ap(vdev) &&
+		(vdev->mlo_dev_ctx->wlan_vdev_count > 1);
+}
+
+#ifdef WLAN_FEATURE_MULTI_LINK_SAP
+/**
+ * wlan_vdev_mlme_is_mlo_ap_sync_disabled() - check if vdev up sync between
+ * vdev disabled for multi link sap
+ * @vdev: VDEV object
+ *
+ * if vdev up sync is enabled for mlo sap, vdev up and beacon template update
+ * of all vdevs will depend on last vdev start response. otherwise, each vdev
+ * will up and set beacon template separately.
+ *
+ * Return: True if vdev sync disabled.
+ */
+static inline bool wlan_vdev_mlme_is_mlo_ap_sync_disabled(
+				struct wlan_objmgr_vdev *vdev)
+{
+	return (wlan_vdev_mlme_get_opmode(vdev) == QDF_SAP_MODE) &&
+			wlan_vdev_mlme_get_mlo_sap_sync_disable(vdev);
+}
+#elif defined(WLAN_FEATURE_11BE_MLO_ADV_FEATURE)
+static inline bool wlan_vdev_mlme_is_mlo_ap_sync_disabled(
+					struct wlan_objmgr_vdev *vdev)
+{
+	return true;
+}
+#else
+static inline bool wlan_vdev_mlme_is_mlo_ap_sync_disabled(
+				struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+#endif
+
+/**
  * wlan_vdev_mlme_set_epcs_flag() - Set epcs flag for vdev
  * @vdev: VDEV object
  * @flag: True or Flase
@@ -1826,6 +1989,52 @@ wlan_vdev_mlme_is_mlo_link_switch_in_progress(struct wlan_objmgr_vdev *vdev)
 
 	return wlan_vdev_mlme_op_flags_get(vdev, flag);
 }
+
+/**
+ * wlan_vdev_mlme_set_mlo_link_rejection_in_progress() - Set link rejection in
+ * progress flag for VDEV.
+ * @vdev: VDEV object manager.
+ *
+ * Return: void
+ */
+static inline void
+wlan_vdev_mlme_set_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	unsigned long flag = WLAN_VDEV_OP_MLO_LINK_REJECTION_IN_PROGRESS;
+
+	wlan_vdev_mlme_op_flags_set(vdev, flag);
+}
+
+/**
+ * wlan_vdev_mlme_clear_mlo_link_rejection_in_progress() - Clear link rejection in
+ * progress flag for VDEV.
+ * @vdev: VDEV object manager
+ *
+ * Return: void
+ */
+static inline void
+wlan_vdev_mlme_clear_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	unsigned long flag = WLAN_VDEV_OP_MLO_LINK_REJECTION_IN_PROGRESS;
+
+	wlan_vdev_mlme_op_flags_clear(vdev, flag);
+}
+
+/**
+ * wlan_vdev_mlme_is_mlo_link_rejection_in_progress() - Return true if VDEV is
+ * in link rejection in progress.
+ * @vdev: VDEV object manager.
+ *
+ * Return: bool
+ */
+static inline bool
+wlan_vdev_mlme_is_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	unsigned long flag = WLAN_VDEV_OP_MLO_LINK_REJECTION_IN_PROGRESS;
+
+	return wlan_vdev_mlme_op_flags_get(vdev, flag);
+}
+
 #else
 static inline void
 wlan_vdev_mlme_set_mlo_link_switch_in_progress(struct wlan_objmgr_vdev *vdev)
@@ -1842,6 +2051,23 @@ wlan_vdev_mlme_is_mlo_link_switch_in_progress(struct wlan_objmgr_vdev *vdev)
 {
 	return false;
 }
+
+static inline void
+wlan_vdev_mlme_set_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline void
+wlan_vdev_mlme_clear_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline bool
+wlan_vdev_mlme_is_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+
 #endif /* WLAN_FEATURE_11BE_MLO_ADV_FEATURE  */
 
 #ifdef WLAN_MCAST_MLO
@@ -1945,6 +2171,18 @@ static inline bool wlan_vdev_mlme_is_mlo_ap(struct wlan_objmgr_vdev *vdev)
 	return false;
 }
 
+static inline bool wlan_vdev_mlme_is_mlo_ap_sync_disabled(
+				struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+
+static inline
+bool wlan_vdev_is_mlo_ap_with_multi_vdev(struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+
 static inline
 void wlan_vdev_mlme_set_mlo_vdev(struct wlan_objmgr_vdev *vdev)
 {
@@ -1998,6 +2236,23 @@ bool wlan_vdev_mlme_is_link_sta_vdev(struct wlan_objmgr_vdev *vdev)
 {
 	return false;
 }
+
+static inline void
+wlan_vdev_mlme_set_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline void
+wlan_vdev_mlme_clear_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline bool
+wlan_vdev_mlme_is_mlo_link_rejection_in_progress(struct wlan_objmgr_vdev *vdev)
+{
+	return false;
+}
+
 #endif
 
 /**
@@ -2502,4 +2757,31 @@ wlan_vdev_read_skip_pumac_cnt(struct wlan_objmgr_vdev *vdev)
 }
 #endif
 
+/**
+ * wlan_vdev_get_peer_sta_count: Get peer STA count
+ * @vdev: Pointer to vdev
+ *
+ * Return: STA peer count
+ */
+uint8_t wlan_vdev_get_peer_sta_count(struct wlan_objmgr_vdev *vdev);
+
+#ifdef FEATURE_WLAN_SUPPORT_USD
+/**
+ * wlan_vdev_mlme_get_wfd_mode() - get WFD mode from VDEV MLME object
+ * @vdev: VDEV object
+ *
+ * Return: WFD mode
+ */
+static inline uint8_t
+wlan_vdev_mlme_get_wfd_mode(struct wlan_objmgr_vdev *vdev)
+{
+	return vdev->vdev_mlme.wfd_mode;
+}
+#else
+static inline uint8_t
+wlan_vdev_mlme_get_wfd_mode(struct wlan_objmgr_vdev *vdev)
+{
+	return 0xFF;
+}
+#endif /* FEATURE_WLAN_SUPPORT_USD */
 #endif /* _WLAN_OBJMGR_VDEV_OBJ_H_*/
